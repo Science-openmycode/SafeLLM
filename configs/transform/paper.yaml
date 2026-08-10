@@ -1,0 +1,28 @@
+schema_version: 1
+seed: 20260803
+key_id: dev-qwen05b-paper-001
+vocab:
+  enabled: true
+linear:
+  mode: paper_expand
+  expansion_h: 128
+  lambda: 0.3
+  generation_dtype: float64
+  condition_number_max: 1.0e4
+  inverse_residual_max: 1.0e-5
+embedding_head:
+  alpha_e: 1.0
+  alpha_h: 0.2
+  untie_weights: true
+  noise_dtype: float32
+attention:
+  explicit_head_dim: 64
+  block_beta: 8
+  sampling_gamma: 1000.0
+  verify_kv_cache: true
+rmsnorm:
+  calibration_samples: 1024
+checkpoint:
+  shard_size_gb: 2
+  resume: true
+  hash: sha256

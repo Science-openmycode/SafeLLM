@@ -1,0 +1,14 @@
+schema_version: 1
+seed: 20260803
+key_id: dev-qwen05b-001
+vocab:
+  enabled: true
+linear:
+  mode: square_orthogonal
+  condition_number_max: 10.0
+  inverse_residual_max: 1.0e-6
+checkpoint:
+  shard_size_gb: 2
+  resume: true
+  hash: sha256
+

@@ -1,0 +1,22 @@
+[
+  "用三句话解释矩阵乘法，并给出一个二阶矩阵例子。",
+  "说明 Transformer 自注意力中 Q、K、V 的作用。",
+  "写一个 Python 函数，判断字符串是否为回文。",
+  "比较进程与线程的区别，列出三个关键点。",
+  "解释什么是大语言模型的 KV Cache。",
+  "给出二分查找的时间复杂度和适用条件。",
+  "简述 REST API 中幂等性的含义。",
+  "解释浮点数计算中舍入误差的来源。",
+  "列出部署机器学习模型前应检查的五项内容。",
+  "把十进制 42 转换为二进制并说明步骤。",
+  "Explain the difference between latency and throughput in inference serving.",
+  "Write a concise SQL query to count users grouped by country.",
+  "Explain why normalization is used in neural networks.",
+  "Describe two common causes of GPU out-of-memory errors.",
+  "Give pseudocode for breadth-first search on a graph.",
+  "What is the purpose of a cryptographic hash in a model manifest?",
+  "Explain tensor parallelism in two sentences.",
+  "List three tests required for a streaming text-generation API.",
+  "Describe the difference between FP32 and BF16.",
+  "Summarize the role of an embedding layer in a language model."
+]

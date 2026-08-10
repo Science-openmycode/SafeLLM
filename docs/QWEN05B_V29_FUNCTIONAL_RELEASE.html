@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang xml:lang>
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Qwen2.5-0.5B v29 正确性优先功能工件</title>
+  <style>
+
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+  <style type="text/css">:root { color-scheme: light; --ink: #18212f; --muted: #5e6b7d; --line: #dbe3ec; --brand: #167d68; --soft: #eef8f5; }
+html { background: #edf2f6; }
+body { max-width: 1180px; margin: 32px auto; padding: 52px 64px; background: #fff; color: var(--ink); font: 16px/1.72 "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; box-shadow: 0 14px 45px rgba(24,33,47,.10); }
+h1, h2, h3 { line-height: 1.25; color: #102a43; }
+h1 { margin-top: 0; padding-bottom: 18px; border-bottom: 4px solid var(--brand); font-size: 2.25rem; }
+h2 { margin-top: 2.4em; padding-left: 14px; border-left: 5px solid var(--brand); }
+h3 { margin-top: 1.8em; }
+a { color: #116b91; }
+code { padding: .12em .35em; border-radius: 4px; background: #f1f5f9; font-family: Consolas, monospace; }
+pre { overflow-x: auto; padding: 18px 20px; border: 1px solid #26384d; border-radius: 8px; background: #172232; color: #e7eef7; }
+pre code { padding: 0; background: transparent; }
+table { width: 100%; margin: 1.2em 0 1.8em; border-collapse: collapse; font-size: .94rem; }
+th { background: #173b4f; color: #fff; text-align: left; }
+th, td { padding: 10px 12px; border: 1px solid var(--line); vertical-align: top; }
+tbody tr:nth-child(even) { background: #f7fafc; }
+blockquote { margin: 1.2em 0; padding: 10px 18px; border-left: 4px solid var(--brand); background: var(--soft); color: #264653; }
+#TOC { padding: 18px 24px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+#TOC ul { columns: 2; }
+@media (max-width: 800px) { body { margin: 0; padding: 28px 20px; } #TOC ul { columns: 1; } }
+@media print { html { background: #fff; } body { max-width: none; margin: 0; padding: 0; box-shadow: none; } pre, table { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Qwen2.5-0.5B v29 正确性优先功能工件</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#qwen25-05b-v29-正确性优先功能工件" id="toc-qwen25-05b-v29-正确性优先功能工件">Qwen2.5-0.5B v29
+正确性优先功能工件</a>
+<ul>
+<li><a href="#1-工件定义" id="toc-1-工件定义">1. 工件定义</a></li>
+<li><a href="#2-代码改动" id="toc-2-代码改动">2. 代码改动</a></li>
+<li><a href="#3-功能结果" id="toc-3-功能结果">3. 功能结果</a></li>
+<li><a href="#4-工件路径" id="toc-4-工件路径">4. 工件路径</a></li>
+<li><a href="#5-启动与人工检查" id="toc-5-启动与人工检查">5.
+启动与人工检查</a></li>
+<li><a href="#6-发布边界" id="toc-6-发布边界">6. 发布边界</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="qwen25-05b-v29-正确性优先功能工件">Qwen2.5-0.5B v29
+正确性优先功能工件</h1>
+<h2 id="1-工件定义">1. 工件定义</h2>
+<p>v29
+使用论文的词表置换、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mo>→</mo><mi>d</mi><mo>+</mo><mn>2</mn><mi>h</mi></mrow><annotation encoding="application/x-tex">d\to d+2h</annotation></semantics></math>
+的 P/Q 坐标变换、Attention 与 FFN 结构变换、 精确度量 RMSNorm
+修正式和客户端逆置换。参数如下：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th style="text-align: right;">值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原模型</td>
+<td style="text-align: right;"><code>Qwen2.5-0.5B-Instruct</code></td>
+</tr>
+<tr>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>
+/
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>h</mi><annotation encoding="application/x-tex">h</annotation></semantics></math>
+/ 私有维度</td>
+<td style="text-align: right;">896 / 128 / 1152</td>
+</tr>
+<tr>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>λ</mi><annotation encoding="application/x-tex">\lambda</annotation></semantics></math></td>
+<td style="text-align: right;">0.3</td>
+</tr>
+<tr>
+<td>key seed</td>
+<td style="text-align: right;">20260803</td>
+</tr>
+<tr>
+<td>Algorithm 2</td>
+<td style="text-align: right;">开启</td>
+</tr>
+<tr>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>β</mi><annotation encoding="application/x-tex">\beta</annotation></semantics></math></td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr>
+<td>Q/K scale</td>
+<td style="text-align: right;">0.5–2.0</td>
+</tr>
+<tr>
+<td>FFN scale</td>
+<td style="text-align: right;">0.5–2.0</td>
+</tr>
+<tr>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">cond</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\operatorname{cond}(U_{vo})</annotation></semantics></math></td>
+<td style="text-align: right;">不超过 42</td>
+</tr>
+<tr>
+<td>Embedding/Head 噪声</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>Attention Q/K/V/O</td>
+<td style="text-align: right;">权重 FP64、计算 FP64</td>
+</tr>
+<tr>
+<td>其余权重</td>
+<td style="text-align: right;">FP32</td>
+</tr>
+</tbody>
+</table>
+<p>Attention 使用 FP64
+是同一组论文矩阵公式的数值实现，不增加新的可训练层，不加载明文
+模型，也不向服务器提供
+P/Q、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>τ</mi><annotation encoding="application/x-tex">\tau</annotation></semantics></math>
+或随机 seed。服务端只加载转换后的混合精度权重。</p>
+<h2 id="2-代码改动">2. 代码改动</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/aloepri/models/configuration_aloepri_qwen2.py</code></td>
+<td>checkpoint 记录 Attention 计算精度</td>
+</tr>
+<tr>
+<td><code>src/aloepri/models/modeling_aloepri_qwen2.py</code></td>
+<td>FP64 Q/K/V/O 与 FP64 score 两种可验证运行路径</td>
+</tr>
+<tr>
+<td><code>src/aloepri/conversion/paper_qwen2.py</code></td>
+<td>按目标权重 dtype 执行 Attention P/Q 离线变换</td>
+</tr>
+<tr>
+<td><code>src/aloepri/transforms/qwen_structural.py</code></td>
+<td>Q/K/V 结构矩阵以 FP64 写入离线 key</td>
+</tr>
+<tr>
+<td><code>src/aloepri/serving/hf_runtime.py</code></td>
+<td><code>dtype=auto</code> 保留 checkpoint 混合精度</td>
+</tr>
+<tr>
+<td><code>src/aloepri/cli.py</code></td>
+<td>convert/verify 传递 Attention 计算精度</td>
+</tr>
+<tr>
+<td><code>scripts/verify_layerwise_equivalence.py</code></td>
+<td>记录 FP32、FP64 score、完整 FP64 的逐层证据</td>
+</tr>
+<tr>
+<td><code>scripts/search_uvo_key_seeds.py</code></td>
+<td>在预定 seed 集合内筛选高斯
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow></msub><annotation encoding="application/x-tex">U_{vo}</annotation></semantics></math>
+条件数</td>
+</tr>
+<tr>
+<td><code>scripts/upgrade_structural_key_precision.py</code></td>
+<td>确定性重建 FP64 结构 key 并更新 manifest</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-功能结果">3. 功能结果</h2>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th style="text-align: right;">v25 FP32</th>
+<th style="text-align: right;">v29</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>460 个内部边界通过数</td>
+<td style="text-align: right;">457</td>
+<td style="text-align: right;">457</td>
+<td>未达到 460/460</td>
+</tr>
+<tr>
+<td>最终 logits NRMSE</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>6.155</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">6.155\times10^{-6}</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>4.756</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">4.756\times10^{-6}</annotation></semantics></math></td>
+<td>v29 更低，均通过
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup><annotation encoding="application/x-tex">10^{-5}</annotation></semantics></math></td>
+</tr>
+<tr>
+<td>Prefill mean absolute error</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.521</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.521\times10^{-5}</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.168</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.168\times10^{-5}</annotation></semantics></math></td>
+<td>v29 更低</td>
+</tr>
+<tr>
+<td>Decode mean absolute error</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>9.074</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">9.074\times10^{-6}</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>5.439</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">5.439\times10^{-6}</annotation></semantics></math></td>
+<td>v29 更低</td>
+</tr>
+<tr>
+<td>Prefill Top-1</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">100%</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>单样本 greedy</td>
+<td style="text-align: right;">一致</td>
+<td style="text-align: right;">一致</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>固定 200 prompt</td>
+<td style="text-align: right;">200/200</td>
+<td style="text-align: right;">200/200</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>新生成 token</td>
+<td style="text-align: right;">3200/3200</td>
+<td style="text-align: right;">3200/3200</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>KV Cache 长度</td>
+<td style="text-align: right;">正确</td>
+<td style="text-align: right;">36→37</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>私有模型 CUDA peak</td>
+<td style="text-align: right;">3,451,209,216 B</td>
+<td style="text-align: right;">3,692,543,488 B</td>
+<td>约占 6 GiB 的 57%</td>
+</tr>
+<tr>
+<td>Server package 扫描</td>
+<td style="text-align: right;">通过</td>
+<td style="text-align: right;">通过</td>
+<td><code>findings=[]</code></td>
+</tr>
+<tr>
+<td>HTTP 隐私边界</td>
+<td style="text-align: right;">通过</td>
+<td style="text-align: right;">全部检查 true</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>HTTP/SSE token 顺序</td>
+<td style="text-align: right;">通过</td>
+<td style="text-align: right;">完全一致</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>实际恢复回答</td>
+<td style="text-align: right;">正常中文</td>
+<td style="text-align: right;">“矩阵乘法是一种将一个矩阵与另一个矩阵相乘的运算，其”</td>
+<td>通过</td>
+</tr>
+</tbody>
+</table>
+<p>v29 仍超过
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup><annotation encoding="application/x-tex">10^{-5}</annotation></semantics></math>
+的 3 个内部边界为：</p>
+<table>
+<thead>
+<tr>
+<th>算子</th>
+<th style="text-align: right;">NRMSE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>layer 0 Attention softmax</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.0881</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.0881\times10^{-5}</annotation></semantics></math></td>
+</tr>
+<tr>
+<td>layer 22 Attention value aggregate</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.5809</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.5809\times10^{-5}</annotation></semantics></math></td>
+</tr>
+<tr>
+<td>layer 22 O projection</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.2784</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.2784\times10^{-5}</annotation></semantics></math></td>
+</tr>
+</tbody>
+</table>
+<p>Attention residual、FFN residual、final RMSNorm、KV Cache、最终
+logits 和生成 token 均在门禁内。</p>
+<h2 id="4-工件路径">4. 工件路径</h2>
+<table>
+<thead>
+<tr>
+<th>工件</th>
+<th>路径</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>checkpoint</td>
+<td><code>data/checkpoints/qwen2.5-0.5b-product-v29-attnfp64-uvo42-no-noise</code></td>
+</tr>
+<tr>
+<td>full key</td>
+<td><code>data/keys/dev-qwen05b-product-v29-attnfp64-uvo42-no-noise</code></td>
+</tr>
+<tr>
+<td>online key</td>
+<td><code>data/keys/qwen05b-product-v29-online</code></td>
+</tr>
+<tr>
+<td>offline key</td>
+<td><code>data/keys/qwen05b-product-v29-offline</code></td>
+</tr>
+<tr>
+<td>server package</td>
+<td><code>data/packages/qwen05b-functional-v29</code></td>
+</tr>
+<tr>
+<td>产品配置</td>
+<td><code>configs/product/qwen05b_v29_functional.yaml</code></td>
+</tr>
+<tr>
+<td>逐层证据</td>
+<td><code>artifacts/verification/qwen05b-product-v29-layerwise-fp64-key.json</code></td>
+</tr>
+<tr>
+<td>200 prompt 证据</td>
+<td><code>artifacts/verification/qwen05b-product-v29-greedy200.json</code></td>
+</tr>
+<tr>
+<td>prefill/decode 证据</td>
+<td><code>artifacts/verification/qwen05b-product-v29-checkpoint.json</code></td>
+</tr>
+<tr>
+<td>边界证据</td>
+<td><code>artifacts/verification/qwen05b-functional-v29/privacy-boundary.json</code></td>
+</tr>
+<tr>
+<td>HTTP/SSE 证据</td>
+<td><code>artifacts/verification/qwen05b-functional-v29/http-sse-smoke.json</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-启动与人工检查">5. 启动与人工检查</h2>
+<p>终端 A：</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> E<span class="op">:</span>\AloePri</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="va">$OutputEncoding</span> <span class="op">=</span> <span class="op">[</span>Console<span class="op">]::</span>OutputEncoding <span class="op">=</span> <span class="op">[</span>System<span class="op">.</span><span class="fu">Text</span><span class="op">.</span><span class="fu">UTF8Encoding</span><span class="op">]::</span>new<span class="op">()</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="va">$env</span><span class="op">:</span><span class="va">PYTHONUTF8</span> <span class="op">=</span> <span class="st">&#39;1&#39;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>uv run aloepri inspect-package <span class="op">--</span>server-package <span class="kw">data</span><span class="op">/</span>packages<span class="op">/</span>qwen05b-functional-v29</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>uv run aloepri serve <span class="op">--</span>config configs<span class="op">/</span>product<span class="op">/</span>qwen05b_v29_functional<span class="op">.</span><span class="fu">yaml</span></span></code></pre></div>
+<p>终端 B：</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> E<span class="op">:</span>\AloePri</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="va">$OutputEncoding</span> <span class="op">=</span> <span class="op">[</span>Console<span class="op">]::</span>OutputEncoding <span class="op">=</span> <span class="op">[</span>System<span class="op">.</span><span class="fu">Text</span><span class="op">.</span><span class="fu">UTF8Encoding</span><span class="op">]::</span>new<span class="op">()</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="va">$env</span><span class="op">:</span><span class="va">PYTHONUTF8</span> <span class="op">=</span> <span class="st">&#39;1&#39;</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>uv run aloepri chat `</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>server http<span class="op">://</span><span class="dv">127.0</span><span class="op">.</span><span class="dv">0.1</span><span class="op">:</span><span class="dv">8000</span> `</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>key-dir <span class="kw">data</span><span class="op">/</span>keys<span class="op">/</span>qwen05b-product-v29-online `</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>tokenizer <span class="kw">data</span><span class="op">/</span>models<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b `</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>max-new-tokens <span class="dv">128</span></span></code></pre></div>
+<p>人工检查顺序：输入中文问题；确认客户端显示正常回答；执行
+<code>/stats</code> 查看 TTFT/TPOT；
+检查服务端终端只出现请求状态，不出现明文问题；执行 <code>/clear</code>
+后确认本地历史被清空。</p>
+<h2 id="6-发布边界">6. 发布边界</h2>
+<p>v29 的
+<code>alpha_e=0</code>、<code>alpha_h=0</code>，用于证明论文变换在
+Qwen2.5-0.5B 上的功能闭环。 它通过 token 置换、拆钥、server package
+扫描和网络边界检查；没有通过“非零噪声同时满足
+精度与攻击阈值”的安全发布条件。非零噪声 checkpoint
+必须单独转换、测试和出具攻击证据， 不得复用 v29 的 200/200 结果。</p>
+</body>
+</html>

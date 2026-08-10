@@ -1,0 +1,44 @@
+schema_version: 2
+status: piqa_pupa_pass_ceval_fail
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-paper-v4-beta1-cond100-noise05-01-seed20260001
+key_dir: data/keys/dev-qwen05b-paper-v4-beta1-cond100-noise05-01-seed20260001
+seed: 20260001
+key_id: dev-qwen05b-paper-v4-beta1-cond100-noise05-01-seed20260001
+vocab:
+  enabled: true
+linear:
+  mode: paper_d_plus_2h
+  expansion_h: 128
+  lambda: 0.3
+embedding_head:
+  alpha_e: 0.5
+  alpha_h: 0.1
+  untie_weights: true
+attention:
+  algorithm2: true
+  explicit_head_dim: 64
+  block_beta: 1
+  sampling_gamma: 1000.0
+  uvo_distribution: gaussian_0_1_over_head_dim
+  uvo_condition_max: 100.0
+rmsnorm:
+  kappa_mode: covariant-rms
+checkpoint:
+  dtype: bfloat16
+  max_shard_size: 1GB
+  hash: sha256
+evidence:
+  plaintext_piqa_acc_norm: 0.70185
+  private_piqa_acc_norm: 0.6849836779107725
+  piqa_absolute_drop: 0.01686632208922756
+  pupa_candidate_size: 4096
+  pupa_wewh_piirsr: 0.043674698795180725
+  pupa_wewgate_piirsr: 0.009036144578313253
+  plaintext_ceval_acc_norm: 0.5297176820208024
+  private_ceval_acc_norm: 0.4442793462109955
+  ceval_absolute_drop: 0.08543833580980686
+  ceval_pass: false
+  piqa_artifact: artifacts/accuracy/piqa-paper-v4-beta1-cond100-noise05-01-seed20260001-full.json
+  pupa_artifact: artifacts/privacy/vma-pupa-paper-v4-beta1-cond100-noise05-01-seed20260001-c4096.json
+  ceval_artifact: artifacts/accuracy/ceval-paper-v4-beta1-cond100-noise05-01-seed20260001-full.json

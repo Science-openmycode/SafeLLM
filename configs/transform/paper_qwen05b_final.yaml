@@ -1,0 +1,60 @@
+schema_version: 2
+status: engineering_tuned_candidate
+claim_scope: qwen05b_functional_engineering_variant_not_paper_default
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-paper-v14-engineering-secure-fp32
+key_dir: data/keys/dev-qwen05b-paper-v14-engineering-secure-fp32
+seed: 20260803
+key_id: dev-qwen05b-paper-v14-engineering-secure-fp32
+vocab:
+  enabled: true
+linear:
+  mode: paper_d_plus_2h
+  expansion_h: 128
+  lambda: 0.3
+embedding_head:
+  alpha_e: 0.1
+  alpha_h: 0.01
+  embedding_noise_seed: 31005
+  head_noise_seed: 41005
+  untie_weights: true
+attention:
+  algorithm2: true
+  explicit_head_dim: 64
+  block_beta: 1
+  sampling_gamma: 1000.0
+  blockperm_mode: gamma-corrected
+  qk_scale_min: 1.0
+  qk_scale_max: 1.0
+  uvo_distribution: gaussian_0_1_over_head_dim
+  uvo_condition_max: 100.0
+rmsnorm:
+  kappa_mode: covariant-rms
+  kappa: 0.9543678234697268
+checkpoint:
+  dtype: float32
+  max_shard_size: 1GB
+  hash: sha256
+acceptance:
+  maximum_absolute_accuracy_drop: 0.035
+  require_paired_ci_noninferiority: true
+  maximum_ttrsr: 0.15
+  maximum_piirsr: 0.03
+  maximum_bleu4: 2.5
+  maximum_cossim: 0.5
+  performance_quantiles: [p50, p95, p99]
+  minimum_prefill_top1_agreement: 0.80
+evidence:
+  ifeval_comparison: artifacts/accuracy/ifeval-paper-v11-e01-h001-fp32-comparison.json
+  piqa_comparison: artifacts/accuracy/piqa-paper-v11-e01-h001-fp32-comparison.json
+  ceval_comparison: artifacts/accuracy/ceval-paper-v11-e01-h001-fp32-comparison.json
+  mmlu_comparison: artifacts/accuracy/mmlu-paper-v11-e01-h001-fp32-comparison.json
+  humaneval_plaintext: artifacts/eval/humaneval-plaintext-full.json
+  humaneval_candidate: artifacts/eval/humaneval-paper-v11-e01-h001-fp32-full.json
+  humaneval_comparison: artifacts/accuracy/humaneval-paper-v11-e01-h001-fp32-comparison.json
+  pupa_full_vocab: artifacts/privacy/vma-pupa-paper-v11-e01-h001-fp32-full-vocab.json
+  api: artifacts/api/paper-qwen05b-v14-engineering-secure-fp32.json
+  checkpoint: artifacts/verification/paper-qwen05b-v14-engineering-secure-fp32.json
+  reused_metric_tensor_equivalence: artifacts/verification/v11-v14-exact-tensor-equivalence.json
+  performance_plaintext: artifacts/performance/hf-plaintext-v11-baseline-20x16-fp32.json
+  performance_candidate: artifacts/performance/hf-paper-v11-e01-h001-fp32-20x16.json

@@ -1,0 +1,71 @@
+schema_version: 3
+status: paper_corrected_complete_candidate
+method_profile: corrected-paper
+claim_scope: qwen2.5_0.5b_corrected_paper_method_local_validation
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-paper-v15-complete-bf16
+key_dir: data/keys/dev-qwen05b-paper-v15-complete-bf16
+seed: 20260803
+key_id: dev-qwen05b-paper-v15-complete-bf16
+vocab:
+  enabled: true
+linear:
+  mode: paper_d_plus_2h
+  expansion_h: 128
+  lambda: 0.3
+  inverse_key_mode: shared_p_independent_compatible_right_inverses
+embedding_head:
+  alpha_e: 1.0
+  alpha_h: 0.2
+  embedding_noise_seed: 31005
+  head_noise_seed: 41005
+  untie_weights: true
+attention:
+  algorithm2: true
+  explicit_head_dim: 64
+  block_beta: 8
+  sampling_gamma: 1000.0
+  blockperm_mode: gamma-corrected
+  rope_frequency_mode: qwen-actual
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  uvo_distribution: gaussian_0_1_over_head_dim
+  uvo_condition_max: null
+ffn:
+  scale_min: 0.5
+  scale_max: 2.0
+rmsnorm:
+  kappa_mode: paper-expectation
+  calibration: artifacts/calibration/qwen05b-paper-seed20260803-rms-expectation-bf16-20.json
+checkpoint:
+  dtype: bfloat16
+  max_shard_size: 1GB
+  hash: sha256
+acceptance:
+  maximum_absolute_accuracy_drop: 0.035
+  require_paired_ci_noninferiority: true
+  maximum_ttrsr: 0.15
+  maximum_piirsr: 0.03
+  maximum_bleu4: 2.5
+  maximum_cossim: 0.5
+  maximum_latency_degradation: 0.15
+  performance_quantiles: [p50, p95, p99]
+  minimum_prefill_top1_agreement: 0.80
+evidence:
+  ifeval_comparison: artifacts/accuracy/ifeval-paper-v15-complete-bf16-comparison.json
+  piqa_comparison: artifacts/accuracy/piqa-paper-v15-complete-bf16-comparison.json
+  ceval_comparison: artifacts/accuracy/ceval-paper-v15-complete-bf16-comparison.json
+  mmlu_comparison: artifacts/accuracy/mmlu-paper-v15-complete-bf16-comparison.json
+  humaneval_comparison: artifacts/accuracy/humaneval-paper-v15-complete-bf16-comparison.json
+  pupa_conservative_candidate: artifacts/privacy/vma-pupa-paper-v15-complete-bf16-c16384.json
+  gate_ia: artifacts/privacy/gate-ia-paper-v15-complete-bf16-full-vocab.json
+  attn_ia_proxy: artifacts/privacy/attn-ia-paper-v15-complete-bf16-proxy.json
+  ima: artifacts/privacy/ima-paper-v15-complete-bf16.json
+  isa: artifacts/privacy/isa-paper-v15-complete-bf16.json
+  tfma: artifacts/privacy/tfma-paper-v15-complete-bf16.json
+  sda: artifacts/privacy/sda-paper-v15-complete-bf16.json
+  api: artifacts/api/paper-qwen05b-v15-complete-bf16.json
+  checkpoint: artifacts/verification/paper-qwen05b-v15-complete-bf16.json
+  performance_plaintext: artifacts/performance/hf-plaintext-bf16-20x100.json
+  performance_candidate: artifacts/performance/hf-paper-v15-complete-bf16-20x100.json
+  performance_comparison: artifacts/performance/hf-paper-v15-complete-bf16-comparison.json

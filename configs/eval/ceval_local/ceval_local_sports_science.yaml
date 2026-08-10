@@ -1,0 +1,41 @@
+task: ceval_local_sports_science
+dataset_path: parquet
+dataset_kwargs:
+  data_files:
+    validation: E:\AloePri\data\eval\ceval\sports_science\val-00000-of-00001.parquet
+    dev: E:\AloePri\data\eval\ceval\sports_science\dev-00000-of-00001.parquet
+    test: E:\AloePri\data\eval\ceval\sports_science\test-00000-of-00001.parquet
+output_type: multiple_choice
+validation_split: validation
+fewshot_split: dev
+doc_to_text: '{{question.strip()}}
+
+  A. {{A}}
+
+  B. {{B}}
+
+  C. {{C}}
+
+  D. {{D}}
+
+  答案：'
+doc_to_choice:
+- A
+- B
+- C
+- D
+doc_to_target: '{{[''A'', ''B'', ''C'', ''D''].index(answer)}}'
+description: '以下是中国关于体育学的单项选择题，请选出其中的正确答案。
+
+
+  '
+num_fewshot: 0
+metric_list:
+- metric: acc
+  aggregation: mean
+  higher_is_better: true
+- metric: acc_norm
+  aggregation: mean
+  higher_is_better: true
+metadata:
+  version: 2.0

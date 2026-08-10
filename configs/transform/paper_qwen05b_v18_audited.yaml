@@ -1,0 +1,46 @@
+schema_version: 3
+status: paper_corrected_line_audited_candidate
+method_profile: corrected-paper
+claim_scope: qwen2.5_0.5b_corrected_paper_method_line_audit
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-paper-v18-audited-bf16
+key_dir: data/keys/dev-qwen05b-paper-v18-audited-bf16
+seed: 20260803
+key_id: dev-qwen05b-paper-v18-audited-bf16
+vocab:
+  enabled: true
+linear:
+  mode: paper_d_plus_2h
+  expansion_h: 128
+  lambda: 0.3
+  inverse_key_mode: algorithm1_shared_init_independent_d
+embedding_head:
+  alpha_e: 1.0
+  alpha_h: 0.2
+  embedding_noise_seed: 31005
+  head_noise_seed: 41005
+  untie_weights: true
+attention:
+  algorithm2: true
+  explicit_head_dim: 64
+  block_beta: 8
+  sampling_gamma: 1000.0
+  blockperm_mode: gamma-corrected
+  rope_frequency_mode: qwen-actual
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  uvo_distribution: gaussian_0_1_over_head_dim
+  uvo_condition_max: null
+ffn:
+  scale_min: 0.5
+  scale_max: 2.0
+rmsnorm:
+  kappa_mode: paper-expectation
+  calibration: artifacts/calibration/qwen05b-paper-seed20260803-rms-expectation-bf16-20.json
+checkpoint:
+  dtype: bfloat16
+  max_shard_size: 1GB
+  hash: sha256
+verification:
+  formula_reconstruction: artifacts/audit/paper-formula-checkpoint-v18.json
+  model_execution: artifacts/verification/paper-qwen05b-v18-audited-bf16.json

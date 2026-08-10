@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "purpose": "Gate 1 fixed bilingual greedy-equivalence corpus",
+  "prompt_count": 200,
+  "languages": {
+    "zh": 100,
+    "en": 100
+  },
+  "data_file": "configs\\eval\\gate1_prompts_200.json",
+  "sha256": "24fe0135d5551caec0378b3724eb3f28ff7dd1291e03f4d4baf07b3c3df7588b",
+  "generation_script": "E:\\AloePri\\scripts\\build_gate1_prompt_manifest.py"
+}

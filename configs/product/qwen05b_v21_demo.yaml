@@ -1,0 +1,20 @@
+schema_version: 1
+model_id: qwen05b-product-v21-beta1-no-noise-fp32
+key_id: dev-qwen05b-product-v21-beta1-no-noise-fp32
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-product-v21-beta1-no-noise-fp32
+full_key_dir: data/keys/dev-qwen05b-product-v21-beta1-no-noise-fp32
+online_key_dir: data/keys/qwen05b-product-v21-online
+offline_key_dir: data/keys/qwen05b-product-v21-offline
+evidence_dir: artifacts/verification/qwen05b-product-v21
+conversion:
+  dtype: float32
+server:
+  host: 127.0.0.1
+  port: 8000
+  device: cuda
+  dtype: float32
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_BEARER_TOKEN

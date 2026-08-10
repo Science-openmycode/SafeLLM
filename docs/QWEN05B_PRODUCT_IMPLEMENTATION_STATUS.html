@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang xml:lang>
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Qwen2.5-0.5B AloePri 复现与产品化实施状态</title>
+  <style>
+
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+  <style type="text/css">:root {
+--ink: #172033;
+--muted: #61708a;
+--line: #dbe3ef;
+--paper: #ffffff;
+--wash: #f4f7fb;
+--accent: #176b87;
+--accent-soft: #e8f4f7;
+--danger: #a43737;
+}
+* { box-sizing: border-box; }
+html {
+background: linear-gradient(135deg, #edf3f8 0%, #f8fafc 48%, #edf6f4 100%);
+}
+body {
+width: min(1180px, calc(100% - 48px));
+margin: 32px auto;
+padding: 0 clamp(24px, 6vw, 82px) 72px;
+color: var(--ink);
+background: var(--paper);
+box-shadow: 0 22px 70px rgba(31, 59, 80, 0.12);
+font-family: "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+font-size: 16px;
+line-height: 1.75;
+}
+h1 {
+margin-top: 0;
+margin-bottom: 0;
+padding-top: 62px;
+padding-bottom: 30px;
+color: #10263b;
+border-top: 8px solid var(--accent);
+font-size: clamp(32px, 5vw, 58px);
+line-height: 1.15;
+letter-spacing: -0.04em;
+}
+h2 {
+margin-top: 52px;
+padding-top: 58px;
+border-top: 1px solid var(--line);
+color: #123b51;
+font-size: 29px;
+}
+h3 { color: #24536a; font-size: 21px; }
+p, ul, ol { margin-top: 0; margin-bottom: 18px; }
+code {
+border: 1px solid #d8e3ec;
+border-radius: 5px;
+background: #f5f8fb;
+color: #7a2845;
+padding: 0.1em 0.32em;
+font-family: Consolas, "Cascadia Mono", monospace;
+}
+pre {
+overflow-x: auto;
+border-left: 4px solid var(--accent);
+background: #101925;
+color: #e9f1f7;
+padding: 20px 24px;
+}
+pre code { border: 0; background: transparent; color: inherit; padding: 0; }
+table {
+width: 100%;
+border-collapse: collapse;
+margin-top: 20px;
+margin-bottom: 34px;
+background: var(--paper);
+font-size: 14px;
+line-height: 1.5;
+}
+th {
+background: #173b51;
+color: white;
+text-align: left;
+font-weight: 650;
+}
+th, td { border: 1px solid var(--line); padding: 11px 12px; vertical-align: top; }
+tr:nth-child(even) td { background: #f7f9fc; }
+blockquote {
+border-left: 4px solid var(--danger);
+background: #fff5f5;
+color: #6f2a2a;
+padding: 14px 20px;
+}
+a { color: var(--accent); }
+.math.display {
+display: block;
+overflow-x: auto;
+padding: 16px 0;
+color: #132d3d;
+}
+@media (max-width: 760px) {
+body { width: 100%; margin: 0; box-shadow: none; }
+body { font-size: 15px; }
+table { display: block; overflow-x: auto; white-space: nowrap; }
+h2 { font-size: 24px; }
+}
+@media print {
+body { background: white; }
+body > * { max-width: none; }
+pre, table { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<h1 id="qwen2.5-0.5b-aloepri-复现与产品化实施状态">Qwen2.5-0.5B AloePri
+复现与产品化实施状态</h1>
+<p>更新日期：2026-08-09<br />
+模型：<code>Qwen2.5-0.5B-Instruct</code><br />
+设备：NVIDIA GeForce RTX 3060 Laptop GPU，6 GiB<br />
+当前发布判定：<code>NO-GO</code><br />
+当前可用工件：无噪声功能演示包 <code>qwen05b-functional-v25</code></p>
+<h2 id="论文方法要执行的完整数据流">1. 论文方法要执行的完整数据流</h2>
+<h3 id="客户端输入">1.1 客户端输入</h3>
+<p>客户端保留原始 tokenizer、对话历史、词表置换
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>τ</mi><annotation encoding="application/x-tex">\tau</annotation></semantics></math>
+和逆置换
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>τ</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><annotation encoding="application/x-tex">\tau^{-1}</annotation></semantics></math>。用户输入消息
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+后，客户端先执行 Qwen Chat Template：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>x</mi><mo>=</mo><mrow><mi mathvariant="normal">Tokenizer</mi><mo>⁡</mo></mrow><mo minsize="120%" maxsize="120%" stretchy="true" form="prefix">(</mo><mrow><mi mathvariant="normal">ChatTemplate</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>m</mi><mo>,</mo><mtext mathvariant="normal">history</mtext><mo stretchy="false" form="postfix">)</mo><mo minsize="120%" maxsize="120%" stretchy="true" form="postfix">)</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+x=\operatorname{Tokenizer}\bigl(\operatorname{ChatTemplate}(m,\text{history})\bigr).
+</annotation></semantics></math></p>
+<p>默认 <code>privacy_mode=permutation</code> 时直接置换 token ID：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>x</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo>=</mo><mi>τ</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>x</mi><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\widetilde{x}_i=\tau(x_i).
+</annotation></semantics></math></p>
+<p>可选 <code>privacy_mode=rmdp</code> 时，先使用 M1 指数机制得到
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><msup><mi>x</mi><mo>′</mo></msup><mi>i</mi></msub><annotation encoding="application/x-tex">x&#39;_i</annotation></semantics></math>，再置换：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">Pr</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">[</mo><msub><msup><mi>x</mi><mo>′</mo></msup><mi>i</mi></msub><mo>=</mo><mi>j</mi><mo>∣</mo><msub><mi>x</mi><mi>i</mi></msub><mo stretchy="false" form="postfix">]</mo><mo>=</mo><mfrac><mrow><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mi>−</mi><msub><mi>ϵ</mi><mn>1</mn></msub><mi>d</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>x</mi><mi>i</mi></msub><mo>,</mo><mi>j</mi><mo stretchy="false" form="postfix">)</mo><mi>/</mi><mn>2</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><mrow><munder><mo>∑</mo><mrow><mi>k</mi><mo>∈</mo><mi>𝒱</mi></mrow></munder><mrow><mi mathvariant="normal">exp</mi><mo>⁡</mo></mrow><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mi>−</mi><msub><mi>ϵ</mi><mn>1</mn></msub><mi>d</mi><mo stretchy="false" form="prefix">(</mo><msub><mi>x</mi><mi>i</mi></msub><mo>,</mo><mi>k</mi><mo stretchy="false" form="postfix">)</mo><mi>/</mi><mn>2</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>x</mi><mo accent="true">̃</mo></mover><mi>i</mi></msub><mo>=</mo><mi>τ</mi><mo stretchy="false" form="prefix">(</mo><msub><msup><mi>x</mi><mo>′</mo></msup><mi>i</mi></msub><mo stretchy="false" form="postfix">)</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\Pr[x&#39;_i=j\mid x_i]
+=\frac{\exp\!\left(-\epsilon_1 d(x_i,j)/2\right)}
+{\sum_{k\in\mathcal V}\exp\!\left(-\epsilon_1 d(x_i,k)/2\right)},
+\qquad
+\widetilde{x}_i=\tau(x&#39;_i).
+</annotation></semantics></math></p>
+<p>本实现按论文单 token 置换距离取
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mo stretchy="false" form="prefix">(</mo><mi>i</mi><mo>,</mo><mi>i</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">d(i,i)=0</annotation></semantics></math>、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mo stretchy="false" form="prefix">(</mo><mi>i</mi><mo>,</mo><mi>j</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mn>2</mn></mrow><annotation encoding="application/x-tex">d(i,j)=2</annotation></semantics></math>。因此原
+token 权重为 1，其余每个词表项权重为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>e</mi><mrow><mi>−</mi><msub><mi>ϵ</mi><mn>1</mn></msub></mrow></msup><annotation encoding="application/x-tex">e^{-\epsilon_1}</annotation></semantics></math>。长序列采用逐
+token 组合，并在客户端保存本地隐私账本。</p>
+<h3 id="词表embedding-与-lm-head">1.2 词表、Embedding 与 LM Head</h3>
+<p>设置换矩阵为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Π</mi><annotation encoding="application/x-tex">\Pi</annotation></semantics></math>，明文
+Embedding 和 Head 为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>W</mi><mi>e</mi></msub><mo>,</mo><msub><mi>W</mi><mi>h</mi></msub></mrow><annotation encoding="application/x-tex">W_e,W_h</annotation></semantics></math>。加入论文噪声后：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>W</mi><mi>e</mi><mo>⋆</mo></msubsup><mo>=</mo><msub><mi>W</mi><mi>e</mi></msub><mo>+</mo><msub><mi>α</mi><mi>e</mi></msub><msub><mi>ℰ</mi><mi>e</mi></msub><mo>,</mo><mspace width="2.0em"></mspace><msubsup><mi>W</mi><mi>h</mi><mo>⋆</mo></msubsup><mo>=</mo><msub><mi>W</mi><mi>h</mi></msub><mo>+</mo><msub><mi>α</mi><mi>h</mi></msub><msub><mi>ℰ</mi><mi>h</mi></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+W_e^\star=W_e+\alpha_e\mathcal E_e,
+\qquad
+W_h^\star=W_h+\alpha_h\mathcal E_h.
+</annotation></semantics></math></p>
+<p>模型转换使用：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mi>e</mi></msub><mo>=</mo><mi mathvariant="normal">Π</mi><msubsup><mi>W</mi><mi>e</mi><mo>⋆</mo></msubsup><msub><mi>P</mi><mi>e</mi></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mi>h</mi></msub><mo>=</mo><msub><mi>Q</mi><mi>h</mi></msub><msubsup><mi>W</mi><mi>h</mi><mo>⋆</mo></msubsup><msup><mi mathvariant="normal">Π</mi><mi>⊤</mi></msup><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\widetilde W_e=\Pi W_e^\star P_e,
+\qquad
+\widetilde W_h=Q_hW_h^\star\Pi^\top.
+</annotation></semantics></math></p>
+<p>客户端发送
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo stretchy="false" form="prefix">(</mo><mi>x</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\tau(x)</annotation></semantics></math>，服务器模型的
+Embedding 行和 LM Head 输出列使用同一
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi mathvariant="normal">Π</mi><annotation encoding="application/x-tex">\Pi</annotation></semantics></math>。生成的私有
+token 会作为下一步 decode 输入继续回灌，不在服务器上逆置换。</p>
+<h3 id="pq-扩维">1.3 P/Q 扩维</h3>
+<p>明文残差维度为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>，私有维度为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>D</mi><mo>=</mo><mi>d</mi><mo>+</mo><mn>2</mn><mi>h</mi></mrow><annotation encoding="application/x-tex">D=d+2h</annotation></semantics></math>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>d</mi><mo>×</mo><mi>D</mi></mrow></msup><mo>,</mo><mspace width="2.0em"></mspace><mi>Q</mi><mo>∈</mo><msup><mi>ℝ</mi><mrow><mi>D</mi><mo>×</mo><mi>d</mi></mrow></msup><mo>,</mo><mspace width="2.0em"></mspace><mi>P</mi><mi>Q</mi><mo>=</mo><msub><mi>I</mi><mi>d</mi></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+P\in\mathbb R^{d\times D},
+\qquad
+Q\in\mathbb R^{D\times d},
+\qquad
+PQ=I_d.
+</annotation></semantics></math></p>
+<p>若明文行向量为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>x</mi><annotation encoding="application/x-tex">x</annotation></semantics></math>，私有坐标为
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>z</mi><mo>=</mo><mi>x</mi><mi>P</mi></mrow><annotation encoding="application/x-tex">z=xP</annotation></semantics></math>。相邻线性层分别乘
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math>
+和
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Q</mi><annotation encoding="application/x-tex">Q</annotation></semantics></math>，
+使中间坐标抵消。实现保留论文 Algorithm 1 的共享 <code>Init</code> 和独立
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mi>j</mi></msub><annotation encoding="application/x-tex">D_j</annotation></semantics></math>，没有
+换成自行设计的可逆方阵。</p>
+<h3 id="rmsnorm-修正式">1.4 RMSNorm 修正式</h3>
+<p>论文标量
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>κ</mi><annotation encoding="application/x-tex">\kappa</annotation></semantics></math>
+对一般矩形
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math>
+不能保证逐输入等价。精确实现由
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mi>Q</mi><mo>=</mo><msub><mi>I</mi><mi>d</mi></msub></mrow><annotation encoding="application/x-tex">PQ=I_d</annotation></semantics></math>
+构造公开派生度量：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>G</mi><mo>=</mo><mi>Q</mi><msup><mi>Q</mi><mi>⊤</mi></msup><mo>,</mo><mspace width="2.0em"></mspace><mi>z</mi><mi>G</mi><msup><mi>z</mi><mi>⊤</mi></msup><mo>=</mo><mi>x</mi><mi>P</mi><mi>Q</mi><msup><mi>Q</mi><mi>⊤</mi></msup><msup><mi>P</mi><mi>⊤</mi></msup><msup><mi>x</mi><mi>⊤</mi></msup><mo>=</mo><mi>x</mi><msup><mi>x</mi><mi>⊤</mi></msup><mi>.</mi></mrow><annotation encoding="application/x-tex">
+G=QQ^\top,
+\qquad
+zGz^\top=xPQ Q^\top P^\top x^\top=xx^\top.
+</annotation></semantics></math></p>
+<p>私有 RMS 使用：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mi mathvariant="normal">PrivRMS</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><mi>z</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mfrac><mi>z</mi><msqrt><mrow><mi>z</mi><mi>G</mi><msup><mi>z</mi><mi>⊤</mi></msup><mi>/</mi><mi>d</mi><mo>+</mo><mi>ε</mi></mrow></msqrt></mfrac><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\operatorname{PrivRMS}(z)
+=\frac{z}{\sqrt{zGz^\top/d+\varepsilon}}.
+</annotation></semantics></math></p>
+<p>该修改保留 P/Q
+扩维和所有论文结构变换，只替换无法满足函数等价的标量归一化。 完整推导见
+<code>docs/paper_errata/E15_RMSNorm_Scalar_Kappa_Is_Not_Exact.md</code>。</p>
+<h3 id="qwen-attention">1.5 Qwen Attention</h3>
+<p>Qwen2.5-0.5B 每层有 14 个 Q head 和 2 个 KV head，即每个 KV head 对应
+7 个 Q head。实现对这 7 个 Q head 与对应 KV head 同步置换。Q/K、V/O
+的变换为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mi>q</mi></msub><mo>=</mo><msub><mi>Q</mi><mi>q</mi></msub><msub><mi>W</mi><mi>q</mi></msub><msub><mi>R</mi><mrow><mi>q</mi><mi>k</mi></mrow></msub><msub><mi>H</mi><mrow><mi>q</mi><mi>k</mi></mrow></msub><mi>Z</mi><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mi>k</mi></msub><mo>=</mo><msub><mi>Q</mi><mi>k</mi></msub><msub><mi>W</mi><mi>k</mi></msub><msub><mi>R</mi><mrow><mi>q</mi><mi>k</mi></mrow></msub><msubsup><mi>H</mi><mrow><mi>q</mi><mi>k</mi></mrow><mrow><mi>−</mi><mn>1</mn></mrow></msubsup><mi>Z</mi><mo>,</mo></mrow><annotation encoding="application/x-tex">
+\widetilde W_q=Q_qW_qR_{qk}H_{qk}Z,
+\qquad
+\widetilde W_k=Q_kW_kR_{qk}H_{qk}^{-1}Z,
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mi>v</mi></msub><mo>=</mo><msub><mi>Q</mi><mi>v</mi></msub><msub><mi>W</mi><mi>v</mi></msub><msub><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mi>o</mi></msub><mo>=</mo><msubsup><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow><mrow><mi>−</mi><mn>1</mn></mrow></msubsup><msub><mi>W</mi><mi>o</mi></msub><msub><mi>P</mi><mi>o</mi></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\widetilde W_v=Q_vW_vU_{vo},
+\qquad
+\widetilde W_o=U_{vo}^{-1}W_oP_o.
+</annotation></semantics></math></p>
+<p>其中
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>R</mi><mrow><mi>q</mi><mi>k</mi></mrow></msub><annotation encoding="application/x-tex">R_{qk}</annotation></semantics></math>
+是 Q/K head
+同步置换，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>H</mi><mrow><mi>q</mi><mi>k</mi></mrow></msub><annotation encoding="application/x-tex">H_{qk}</annotation></semantics></math>
+是逐 head
+缩放，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Z</mi><annotation encoding="application/x-tex">Z</annotation></semantics></math>
+是二维 RoPE block 置换。Qwen 不同二维块使用不同频率。只有
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Z</mi><mi>R</mi><mo stretchy="false" form="prefix">(</mo><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>R</mi><mo stretchy="false" form="prefix">(</mo><mi>t</mi><mo stretchy="false" form="postfix">)</mo><mi>Z</mi></mrow><annotation encoding="application/x-tex">ZR(t)=R(t)Z</annotation></semantics></math>
+时置换 才保持函数，而跨频率块一般不满足该式。因此：</p>
+<ul>
+<li><code>paper-default</code> 保留论文
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi><mo>=</mo><mn>8</mn></mrow><annotation encoding="application/x-tex">\beta=8</annotation></semantics></math>，作为有损论文参数实验；</li>
+<li>无噪声函数等价配置使用
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\beta=1</annotation></semantics></math>；</li>
+<li>GQA、head permutation、Q/K 缩放、V/O 变换仍全部启用。</li>
+</ul>
+<p>推导见
+<code>docs/paper_errata/E16_RoPE_Block_Permutation_Is_Not_Function_Preserving.md</code>。</p>
+<h3 id="ffnresidual-与-kv-cache">1.6 FFN、Residual 与 KV Cache</h3>
+<p>Qwen SwiGLU 的 Gate 和 Up 使用同一个中间维置换
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math>
+与缩放
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mi>f</mi></msub><annotation encoding="application/x-tex">D_f</annotation></semantics></math>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mrow><mi>g</mi><mi>a</mi><mi>t</mi><mi>e</mi></mrow></msub><mo>=</mo><msub><mi>Q</mi><mi>g</mi></msub><msub><mi>W</mi><mrow><mi>g</mi><mi>a</mi><mi>t</mi><mi>e</mi></mrow></msub><mi>S</mi><msub><mi>D</mi><mi>f</mi></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mrow><mi>u</mi><mi>p</mi></mrow></msub><mo>=</mo><msub><mi>Q</mi><mi>u</mi></msub><msub><mi>W</mi><mrow><mi>u</mi><mi>p</mi></mrow></msub><mi>S</mi><msub><mi>D</mi><mi>f</mi></msub><mo>,</mo></mrow><annotation encoding="application/x-tex">
+\widetilde W_{gate}=Q_gW_{gate}SD_f,
+\qquad
+\widetilde W_{up}=Q_uW_{up}SD_f,
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>W</mi><mo accent="true">̃</mo></mover><mrow><mi>d</mi><mi>o</mi><mi>w</mi><mi>n</mi></mrow></msub><mo>=</mo><msubsup><mi>D</mi><mi>f</mi><mrow><mi>−</mi><mn>1</mn></mrow></msubsup><msup><mi>S</mi><mi>⊤</mi></msup><msub><mi>W</mi><mrow><mi>d</mi><mi>o</mi><mi>w</mi><mi>n</mi></mrow></msub><msub><mi>P</mi><mrow><mi>o</mi><mi>u</mi><mi>t</mi></mrow></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\widetilde W_{down}=D_f^{-1}S^\top W_{down}P_{out}.
+</annotation></semantics></math></p>
+<p>Attention 和 FFN 的主支路、Residual
+支路在相加前使用同一个私有残差坐标。 Prefill 产生的私有 K/V Cache
+直接用于 decode，服务器不恢复明文坐标。</p>
+<h3 id="服务端输出与客户端恢复">1.7 服务端输出与客户端恢复</h3>
+<p>服务端返回私有 token：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>y</mi><mo accent="true">̃</mo></mover><mi>t</mi></msub><mo>=</mo><mover><mi>f</mi><mo accent="true">̃</mo></mover><mo stretchy="false" form="prefix">(</mo><mover><mi>x</mi><mo accent="true">̃</mo></mover><mo>,</mo><msub><mover><mi>y</mi><mo accent="true">̃</mo></mover><mrow><mo>&lt;</mo><mi>t</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\widetilde y_t=\widetilde f(\widetilde x,\widetilde y_{&lt;t}).
+</annotation></semantics></math></p>
+<p>客户端逐 token 执行：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>y</mi><mi>t</mi></msub><mo>=</mo><msup><mi>τ</mi><mrow><mi>−</mi><mn>1</mn></mrow></msup><mo stretchy="false" form="prefix">(</mo><msub><mover><mi>y</mi><mo accent="true">̃</mo></mover><mi>t</mi></msub><mo stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><msub><mtext mathvariant="normal">text</mtext><mi>t</mi></msub><mo>=</mo><mrow><mi mathvariant="normal">Tokenizer.decode</mi><mo>⁡</mo></mrow><mo stretchy="false" form="prefix">(</mo><msub><mi>y</mi><mrow><mo>≤</mo><mi>t</mi></mrow></msub><mo stretchy="false" form="postfix">)</mo><mi>.</mi></mrow><annotation encoding="application/x-tex">
+y_t=\tau^{-1}(\widetilde y_t),
+\qquad
+\text{text}_t=\operatorname{Tokenizer.decode}(y_{\le t}).
+</annotation></semantics></math></p>
+<p>SDK 对累计文本做前缀差分，SSE 每次只打印新增文本。</p>
+<h2 id="已实现的代码">2. 已实现的代码</h2>
+<h3 id="仓库入口">2.1 仓库入口</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>功能</th>
+<th>文件</th>
+<th>实现内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>统一 CLI</td>
+<td><code>src/aloepri/cli.py</code></td>
+<td><code>convert</code>、<code>verify</code>、<code>serve</code>、<code>chat</code>、打包、拆钥、RmDP
+计算</td>
+</tr>
+<tr>
+<td>客户端 SDK</td>
+<td><code>src/aloepri/client/sdk.py</code></td>
+<td>Chat Template、本地历史、token 置换、SSE 增量恢复、M1、Bearer
+Token</td>
+</tr>
+<tr>
+<td>HF 服务</td>
+<td><code>src/aloepri/serving/app.py</code></td>
+<td>token-ID-only FastAPI、认证、请求限制、安全错误响应</td>
+</tr>
+<tr>
+<td>HF 运行时</td>
+<td><code>src/aloepri/serving/hf_runtime.py</code></td>
+<td>私有 checkpoint、prefill/decode、KV Cache、TTFT/TPOT</td>
+</tr>
+<tr>
+<td>协议</td>
+<td><code>src/aloepri/serving/protocol.py</code></td>
+<td>请求、响应、SSE 数据结构和边界校验</td>
+</tr>
+<tr>
+<td>审计日志</td>
+<td><code>src/aloepri/serving/audit_log.py</code></td>
+<td>只记录 ID、token 数、状态和耗时</td>
+</tr>
+<tr>
+<td>模型转换</td>
+<td><code>src/aloepri/conversion/paper_qwen2.py</code></td>
+<td>Algorithm 1、Algorithm 2、噪声、逐层权重转换和分片保存</td>
+</tr>
+<tr>
+<td>私有 Qwen</td>
+<td><code>src/aloepri/models/modeling_aloepri_qwen2.py</code></td>
+<td>精确度量 RMSNorm、自定义 Qwen 加载和 forward</td>
+</tr>
+<tr>
+<td>结构变换</td>
+<td><code>src/aloepri/transforms/qwen_structural.py</code></td>
+<td>GQA、RoPE、Q/K/V/O、FFN 置换和缩放</td>
+</tr>
+<tr>
+<td>P/Q</td>
+<td><code>src/aloepri/transforms/paper_key_matrix.py</code></td>
+<td>论文 Algorithm 1 共享初始化和独立右逆</td>
+</tr>
+<tr>
+<td>论文噪声</td>
+<td><code>src/aloepri/transforms/paper_noise.py</code></td>
+<td>Embedding、Head 高斯噪声</td>
+</tr>
+<tr>
+<td>RmDP/M1</td>
+<td><code>src/aloepri/privacy/rmdp.py</code></td>
+<td>论文预算计算器和客户端逐 token 指数机制</td>
+</tr>
+<tr>
+<td>密钥打包</td>
+<td><code>src/aloepri/packaging.py</code></td>
+<td>在线/离线拆钥、服务器包、SHA-256、秘密扫描</td>
+</tr>
+<tr>
+<td>证据绑定</td>
+<td><code>src/aloepri/evidence.py</code></td>
+<td>模型、key、数据、脚本和运行时指纹</td>
+</tr>
+</tbody>
+</table>
+<h3 id="诊断与验收脚本">2.2 诊断与验收脚本</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>脚本</th>
+<th>检查内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scripts/verify_layerwise_equivalence.py</code></td>
+<td>460 个逐层边界，首个失败算子、误差、Cache</td>
+</tr>
+<tr>
+<td><code>scripts/verify_greedy_corpus.py</code></td>
+<td>固定 200 条中英文 prompt 的 greedy 逐 token 对齐</td>
+</tr>
+<tr>
+<td><code>scripts/verify_paper_qwen2_checkpoint.py</code></td>
+<td>prefill、decode、Cache、greedy 与显存</td>
+</tr>
+<tr>
+<td><code>scripts/inspect_structural_key.py</code></td>
+<td>V/O 条件数、RoPE 移动块、Q/K 代数误差</td>
+</tr>
+<tr>
+<td><code>scripts/verify_product_privacy_boundary.py</code></td>
+<td>抓包、唯一标记、错误 key/model、越界 token、包扫描</td>
+</tr>
+<tr>
+<td><code>scripts/screen_qwen05b_multiseed_vma.py</code></td>
+<td>PUPA VMA、TTRSR、PIIRSR、BLEU-4、CosSim</td>
+</tr>
+<tr>
+<td><code>scripts/run_prompt_regression.py</code></td>
+<td>噪声 checkpoint 的真实问答和 token 分叉</td>
+</tr>
+<tr>
+<td><code>scripts/product_chat_smoke.py</code></td>
+<td>真实 HTTP 问答闭环</td>
+</tr>
+</tbody>
+</table>
+<h2 id="交付工件和用途">3. 交付工件和用途</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th>工件</th>
+<th>路径</th>
+<th>用途</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原模型</td>
+<td><code>data/models/qwen2.5-0.5b</code></td>
+<td>明文基准</td>
+<td>已使用</td>
+</tr>
+<tr>
+<td>v20</td>
+<td><code>data/checkpoints/qwen2.5-0.5b-paper-v20-exact-rms-alg2-fp32</code></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi><mo>=</mo><mn>8</mn></mrow><annotation encoding="application/x-tex">\beta=8</annotation></semantics></math>
+结构消融</td>
+<td>有损，不发布</td>
+</tr>
+<tr>
+<td>v21</td>
+<td><code>data/checkpoints/qwen2.5-0.5b-product-v21-beta1-no-noise-fp32</code></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow></msub><mo>≤</mo><mn>100</mn></mrow><annotation encoding="application/x-tex">U_{vo}\le100</annotation></semantics></math>
+的无噪声函数等价</td>
+<td>历史功能基线</td>
+</tr>
+<tr>
+<td>v22</td>
+<td><code>data/checkpoints/qwen2.5-0.5b-product-v22-alpha1-head02-fp32</code></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>α</mi><mi>e</mi></msub><mo>=</mo><mn>1</mn><mo>,</mo><msub><mi>α</mi><mi>h</mi></msub><mo>=</mo><mn>0.2</mn></mrow><annotation encoding="application/x-tex">\alpha_e=1,\alpha_h=0.2</annotation></semantics></math>
+隐私候选</td>
+<td>效用失败</td>
+</tr>
+<tr>
+<td>v25</td>
+<td><code>data/checkpoints/qwen2.5-0.5b-product-v25-fp64proj-uvo45-no-noise-fp32</code></td>
+<td>FP64
+离线投影、<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow></msub><mo>≤</mo><mn>45</mn></mrow><annotation encoding="application/x-tex">U_{vo}\le45</annotation></semantics></math></td>
+<td>当前最佳功能基线</td>
+</tr>
+<tr>
+<td>在线 key</td>
+<td><code>data/keys/qwen05b-product-v25-online</code></td>
+<td>客户端 <code>tau</code>、<code>inverse_tau</code>、特殊 token</td>
+<td>manifest 通过</td>
+</tr>
+<tr>
+<td>离线 key</td>
+<td><code>data/keys/qwen05b-product-v25-offline</code></td>
+<td>P/Q、结构、噪声和重建材料</td>
+<td>仅离线保存</td>
+</tr>
+<tr>
+<td>服务器包</td>
+<td><code>data/packages/qwen05b-functional-v25</code></td>
+<td>不含 tokenizer 和密钥的 HF 服务包</td>
+<td>扫描通过</td>
+</tr>
+</tbody>
+</table>
+<p>服务器包只包含模型配置、私有权重和 manifest。扫描拒绝
+<code>tau</code>、<code>inverse_tau</code>、
+P/Q、随机种子、原始权重和未登记文件。在线 key 加载前校验文件集合、大小和
+SHA-256。</p>
+<h2 id="实际运行命令">4. 实际运行命令</h2>
+<h3 id="安装和代码检查">4.1 安装和代码检查</h3>
+<div class="sourceCode" id="cb1"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> E<span class="op">:</span>\AloePri</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>uv sync <span class="op">--</span>frozen <span class="op">--</span>all-groups <span class="op">--</span>extra eval</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>uv run ruff check src scripts tests</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>uv run mypy src</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>uv run pytest <span class="op">-</span>q</span></code></pre></div>
+<h3 id="从配置转换">4.2 从配置转换</h3>
+<div class="sourceCode" id="cb2"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>uv run aloepri convert <span class="op">--</span>config configs<span class="op">/</span>product<span class="op">/</span>qwen05b<span class="op">.</span><span class="fu">yaml</span></span></code></pre></div>
+<p>该命令读取原模型，转换 checkpoint，生成完整 key，再拆分
+online/offline key。 <code>configs/product/qwen05b.yaml</code>
+当前是无噪声功能候选，不是安全发布参数。</p>
+<h3 id="验证-v25">4.3 验证 v25</h3>
+<div class="sourceCode" id="cb3"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>uv run python scripts<span class="op">/</span>verify_layerwise_equivalence<span class="op">.</span><span class="fu">py</span> `</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>original <span class="kw">data</span><span class="op">/</span>models<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b `</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>private <span class="kw">data</span><span class="op">/</span>checkpoints<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b-product-v25-fp64proj-uvo45-no-noise-fp32 `</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>key-dir <span class="kw">data</span><span class="op">/</span>keys<span class="op">/</span>dev-qwen05b-product-v25-fp64proj-uvo45-no-noise-fp32 `</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>nrmse-limit <span class="dv">1e-5</span> `</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>out artifacts<span class="op">/</span>verification<span class="op">/</span>qwen05b-product-v25-layerwise<span class="op">.</span><span class="fu">json</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>uv run python scripts<span class="op">/</span>verify_greedy_corpus<span class="op">.</span><span class="fu">py</span> `</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>original <span class="kw">data</span><span class="op">/</span>models<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b `</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>private <span class="kw">data</span><span class="op">/</span>checkpoints<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b-product-v25-fp64proj-uvo45-no-noise-fp32 `</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>key-dir <span class="kw">data</span><span class="op">/</span>keys<span class="op">/</span>dev-qwen05b-product-v25-fp64proj-uvo45-no-noise-fp32 `</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>prompts configs<span class="op">/</span>eval<span class="op">/</span>gate1_prompts_200<span class="op">.</span><span class="fu">json</span> `</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>max-new-tokens <span class="dv">16</span> `</span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>batch-size <span class="dv">4</span> `</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>dtype float32 `</span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>out artifacts<span class="op">/</span>verification<span class="op">/</span>qwen05b-product-v25-greedy200<span class="op">.</span><span class="fu">json</span></span></code></pre></div>
+<h3 id="启动服务和真实问答">4.4 启动服务和真实问答</h3>
+<p>终端 A：</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> E<span class="op">:</span>\AloePri</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>uv run aloepri inspect-package `</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>server-package <span class="kw">data</span><span class="op">/</span>packages<span class="op">/</span>qwen05b-functional-v25</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>uv run aloepri serve `</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>config configs<span class="op">/</span>product<span class="op">/</span>qwen05b_v25_functional<span class="op">.</span><span class="fu">yaml</span></span></code></pre></div>
+<p>终端 B：</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> E<span class="op">:</span>\AloePri</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>uv run aloepri chat `</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>server http<span class="op">://</span><span class="dv">127.0</span><span class="op">.</span><span class="dv">0.1</span><span class="op">:</span><span class="dv">8000</span> `</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>key-dir <span class="kw">data</span><span class="op">/</span>keys<span class="op">/</span>qwen05b-product-v25-online `</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>tokenizer-dir <span class="kw">data</span><span class="op">/</span>models<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b</span></code></pre></div>
+<p>交互命令：<code>/clear</code> 清除本地历史，<code>/stats</code> 查看
+TTFT/TPOT，<code>/privacy</code> 查看本地 模式，<code>/quit</code>
+退出。非 localhost 部署时设置 <code>ALOEPRI_BEARER_TOKEN</code>，并在
+TLS 反向代理后启动服务。</p>
+<h3 id="rmdp-预算">4.5 RmDP 预算</h3>
+<div class="sourceCode" id="cb6"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>uv run aloepri rmdp-budget `</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>epsilon1 <span class="dv">2.0</span> `</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>noise-variance <span class="dv">1.0</span> `</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>embedding-sigma1 <span class="dv">1.0</span> `</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>embedding-sigma2 <span class="dv">0.8</span> `</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>head-sigma1 <span class="dv">1.0</span> `</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>head-sigma2 <span class="dv">0.8</span> `</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>vocab-size <span class="dv">151936</span></span></code></pre></div>
+<p><code>rmdp</code> 问答必须显式传入
+<code>epsilon1</code>。客户端显示预计 token 改变率，允许取消，
+且不向服务端发送 <code>epsilon1</code> 或扰动前 token。</p>
+<h2 id="当前实测结果">5. 当前实测结果</h2>
+<h3 id="无噪声函数等价">5.1 无噪声函数等价</h3>
+<table>
+<colgroup>
+<col style="width: 21%" />
+<col style="width: 28%" />
+<col style="width: 28%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr>
+<th>检查</th>
+<th style="text-align: right;">计划门槛</th>
+<th style="text-align: right;">v25 FP32 实测</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>逐层算子 NRMSE</td>
+<td style="text-align: right;">每项
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\le10^{-5}</annotation></semantics></math></td>
+<td style="text-align: right;">457/460 项通过；3 项在
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.343</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.343\times10^{-5}</annotation></semantics></math>
+至
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.540</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.540\times10^{-5}</annotation></semantics></math></td>
+<td>未严格通过</td>
+</tr>
+<tr>
+<td>最终 logits NRMSE</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\le10^{-5}</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>6.155</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">6.155\times10^{-6}</annotation></semantics></math></td>
+<td>通过</td>
+</tr>
+<tr>
+<td>Prefill Top-1</td>
+<td style="text-align: right;">100%</td>
+<td style="text-align: right;">当前样本 36/36 token 位置一致</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>Prefill 平均绝对误差</td>
+<td style="text-align: right;">记录值</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.521</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">1.521\times10^{-5}</annotation></semantics></math></td>
+<td>记录</td>
+</tr>
+<tr>
+<td>Decode 平均绝对误差</td>
+<td style="text-align: right;">记录值</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>9.074</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>6</mn></mrow></msup></mrow><annotation encoding="application/x-tex">9.074\times10^{-6}</annotation></semantics></math></td>
+<td>记录</td>
+</tr>
+<tr>
+<td>固定 prompt greedy</td>
+<td style="text-align: right;">200/200</td>
+<td style="text-align: right;">200/200；Wilson 95% CI 为 [98.115%,
+100%]</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>Cache/无 Cache</td>
+<td style="text-align: right;">token 完全一致</td>
+<td style="text-align: right;">当前验证样本一致</td>
+<td>通过</td>
+</tr>
+</tbody>
+</table>
+<p>3 个超阈值点为 layer 0 Attention softmax、layer 22 value aggregate 和
+O projection； Attention Residual、FFN Residual、Final RMSNorm、Logits
+和 KV Cache 均在阈值内。因为计划 规定每个边界都要通过，Gate 1
+仍不能写成完成。</p>
+<h3 id="论文-rmsnorm-与-rope-错误的影响">5.2 论文 RMSNorm 与 RoPE
+错误的影响</h3>
+<table>
+<colgroup>
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+<col style="width: 17%" />
+</colgroup>
+<thead>
+<tr>
+<th>配置</th>
+<th>变化</th>
+<th style="text-align: right;">Prefill 平均绝对误差</th>
+<th style="text-align: right;">Top-1</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v18</td>
+<td>论文标量
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>κ</mi><annotation encoding="application/x-tex">\kappa</annotation></semantics></math></td>
+<td style="text-align: right;">2.631565</td>
+<td style="text-align: right;">22.22%</td>
+<td>函数失败</td>
+</tr>
+<tr>
+<td>v20</td>
+<td>精确
+RMS，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi><mo>=</mo><mn>8</mn></mrow><annotation encoding="application/x-tex">\beta=8</annotation></semantics></math></td>
+<td style="text-align: right;">0.012042</td>
+<td style="text-align: right;">97.22%</td>
+<td>跨频率置换有损</td>
+</tr>
+<tr>
+<td>v21</td>
+<td>精确
+RMS，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>β</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\beta=1</annotation></semantics></math></td>
+<td style="text-align: right;">0.00001842</td>
+<td style="text-align: right;">100%</td>
+<td>200/200 greedy 一致</td>
+</tr>
+<tr>
+<td>v25</td>
+<td>v21 + FP64
+离线投影，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>U</mi><mrow><mi>v</mi><mi>o</mi></mrow></msub><mo>≤</mo><mn>45</mn></mrow><annotation encoding="application/x-tex">U_{vo}\le45</annotation></semantics></math></td>
+<td style="text-align: right;">0.00001521</td>
+<td style="text-align: right;">100%</td>
+<td>200/200 greedy 一致</td>
+</tr>
+</tbody>
+</table>
+<h3 id="当前-checkpoint-的效用隐私冲突">5.3 当前 checkpoint
+的效用—隐私冲突</h3>
+<table>
+<colgroup>
+<col style="width: 18%" />
+<col style="width: 25%" />
+<col style="width: 18%" />
+<col style="width: 18%" />
+<col style="width: 18%" />
+</colgroup>
+<thead>
+<tr>
+<th>checkpoint</th>
+<th style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>α</mi><mi>e</mi></msub><mi>/</mi><msub><mi>α</mi><mi>h</mi></msub></mrow><annotation encoding="application/x-tex">\alpha_e/\alpha_h</annotation></semantics></math></th>
+<th>功能结果</th>
+<th>VMA 结果</th>
+<th>产品判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v25</td>
+<td style="text-align: right;">0 / 0</td>
+<td>200/200 greedy 一致</td>
+<td>无噪声不改变权重匹配安全结论</td>
+<td>不满足隐私</td>
+</tr>
+<tr>
+<td>v22</td>
+<td style="text-align: right;">1.0 / 0.2</td>
+<td>20 条问答 0/20 完全一致；token agreement 61.125%</td>
+<td>当前单 key 的 We/Wh 与 We/Wgate 达到数值门槛</td>
+<td>不满足效用</td>
+</tr>
+</tbody>
+</table>
+<p>v22 的 0/20 exact 比例 Wilson 95% CI 为 [0%, 16.113%]。该 20
+条检查是候选筛选， 不是 MMLU、C-Eval、PIQA、IFEval 或 HumanEval
+的替代结果。</p>
+<h3 id="与论文和甲方目标同表比较仅列本轮已测项目">5.4
+与论文和甲方目标同表比较：仅列本轮已测项目</h3>
+<p>论文列是论文 Qwen3-14B 的 VMA，不是 Qwen2.5-0.5B 基准。当前列是 v22、
+seed <code>20260803</code>、PUPA 62,634 个 token occurrence、664 个 PII
+单元、16,384 候选的筛选结果。</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 16%" />
+<col style="width: 22%" />
+<col style="width: 22%" />
+<col style="width: 22%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>权重组合/指标</th>
+<th style="text-align: right;">论文 Qwen3-14B</th>
+<th style="text-align: right;">甲方目标</th>
+<th style="text-align: right;">0.5B v22 当前实测</th>
+<th>数值判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>We/Wh TTRSR</td>
+<td style="text-align: right;">25.05%</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>15</mn><mi>%</mi></mrow><annotation encoding="application/x-tex">\le15\%</annotation></semantics></math></td>
+<td style="text-align: right;">13.426%，Wilson 95% CI [13.161%,
+13.695%]</td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wh PIIRSR</td>
+<td style="text-align: right;">1.62%</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>3</mn><mi>%</mi></mrow><annotation encoding="application/x-tex">\le3\%</annotation></semantics></math></td>
+<td style="text-align: right;">0.151%，Wilson 95% CI [0.027%,
+0.848%]</td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wh BLEU-4</td>
+<td style="text-align: right;">1.72</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>2.5</mn></mrow><annotation encoding="application/x-tex">\le2.5</annotation></semantics></math></td>
+<td style="text-align: right;">0.00536</td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wh CosSim</td>
+<td style="text-align: right;">论文未给</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>0.5</mn></mrow><annotation encoding="application/x-tex">\le0.5</annotation></semantics></math></td>
+<td style="text-align: right;">-0.2942</td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wgate TTRSR</td>
+<td style="text-align: right;">论文主表未分组合</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>15</mn><mi>%</mi></mrow><annotation encoding="application/x-tex">\le15\%</annotation></semantics></math></td>
+<td style="text-align: right;">1.049%，Wilson 95% CI [0.972%,
+1.132%]</td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wgate PIIRSR</td>
+<td style="text-align: right;">论文主表未分组合</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>3</mn><mi>%</mi></mrow><annotation encoding="application/x-tex">\le3\%</annotation></semantics></math></td>
+<td style="text-align: right;">0.151%，Wilson 95% CI [0.027%,
+0.848%]</td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wgate BLEU-4</td>
+<td style="text-align: right;">论文主表未分组合</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>2.5</mn></mrow><annotation encoding="application/x-tex">\le2.5</annotation></semantics></math></td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>8.88</mn><mo>×</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>7</mn></mrow></msup></mrow><annotation encoding="application/x-tex">8.88\times10^{-7}</annotation></semantics></math></td>
+<td>达到</td>
+</tr>
+<tr>
+<td>We/Wgate CosSim</td>
+<td style="text-align: right;">论文未给</td>
+<td style="text-align: right;"><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mn>0.5</mn></mrow><annotation encoding="application/x-tex">\le0.5</annotation></semantics></math></td>
+<td style="text-align: right;">-0.3653</td>
+<td>达到</td>
+</tr>
+</tbody>
+</table>
+<p>上表的 Wilson 区间描述 occurrence 或 PII 单元抽样波动，不代表不同 key
+之间的 不确定性。计划要求 5 个独立 key；目前只完成 1 个
+key，因此不能据此通过攻击总门禁。</p>
+<h3 id="产品边界和资源">5.5 产品边界和资源</h3>
+<table>
+<colgroup>
+<col style="width: 42%" />
+<col style="width: 57%" />
+</colgroup>
+<thead>
+<tr>
+<th>项目</th>
+<th style="text-align: right;">实测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>唯一明文标记出现在请求/响应</td>
+<td style="text-align: right;">否</td>
+</tr>
+<tr>
+<td>完整明文 token 序列出现在请求/响应</td>
+<td style="text-align: right;">否</td>
+</tr>
+<tr>
+<td>请求 ID 是否等于
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>τ</mi><mo stretchy="false" form="prefix">(</mo><mi>x</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\tau(x)</annotation></semantics></math></td>
+<td style="text-align: right;">是</td>
+</tr>
+<tr>
+<td>错误 key/model/越界 token</td>
+<td style="text-align: right;">HTTP 400 安全失败</td>
+</tr>
+<tr>
+<td>v25 服务器包秘密扫描</td>
+<td style="text-align: right;">通过，0 findings</td>
+</tr>
+<tr>
+<td>恢复回答</td>
+<td style="text-align: right;"><code>42</code></td>
+</tr>
+<tr>
+<td>v25 真实问答样例</td>
+<td style="text-align: right;">“矩阵乘法是一种将一个矩阵与另一个矩阵相乘的运算……”</td>
+</tr>
+<tr>
+<td>v25 预热后 16-token HTTP TTFT</td>
+<td style="text-align: right;">242.08 ms</td>
+</tr>
+<tr>
+<td>v25 预热后 16-token HTTP TPOT</td>
+<td style="text-align: right;">45.05 ms</td>
+</tr>
+<tr>
+<td>明文 FP32 模型峰值 allocated</td>
+<td style="text-align: right;">2,112,222,720 bytes</td>
+</tr>
+<tr>
+<td>v25 FP32 私有模型峰值 allocated</td>
+<td style="text-align: right;">3,451,209,216 bytes</td>
+</tr>
+<tr>
+<td>Ruff</td>
+<td style="text-align: right;"><code>All checks passed</code></td>
+</tr>
+<tr>
+<td>Mypy</td>
+<td style="text-align: right;">44 个源文件，0 issues</td>
+</tr>
+<tr>
+<td>单元/普通集成测试</td>
+<td style="text-align: right;">96 passed，1 个真实模型测试默认跳过</td>
+</tr>
+<tr>
+<td>v25 真实模型集成测试</td>
+<td style="text-align: right;">1 passed；HTTP、SSE、逆置换、错误
+key</td>
+</tr>
+</tbody>
+</table>
+<p>TTFT/TPOT 只有私有模型单次产品冒烟值，没有同一请求分布下的明文 ABBA
+对照， 因此不用于 15% 性能门禁。</p>
+<h2 id="门禁状态">6. 门禁状态</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th>Gate</th>
+<th>必要条件</th>
+<th>当前状态</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gate 1</td>
+<td>逐层每项 NRMSE
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><msup><mn>10</mn><mrow><mi>−</mi><mn>5</mn></mrow></msup></mrow><annotation encoding="application/x-tex">\le10^{-5}</annotation></semantics></math>，200/200
+greedy</td>
+<td>未通过</td>
+<td>greedy 通过；460 项中 7 项略超阈值</td>
+</tr>
+<tr>
+<td>Gate 2</td>
+<td>至少一个非零噪声配置同时通过功能、精度、隐私</td>
+<td>未通过</td>
+<td>v25 无噪声隐私失败；v22 强噪声问答效用失败</td>
+</tr>
+<tr>
+<td>Gate 3</td>
+<td>产品闭环和密钥拆分</td>
+<td>功能演示已实现</td>
+<td>HF、CLI、SDK、SSE、拆钥和包扫描可用；不是安全发布包</td>
+</tr>
+<tr>
+<td>Gate 4</td>
+<td>全基准、全攻击、5 key、HF/vLLM/SGLang</td>
+<td>未执行正式验收</td>
+<td>Gate 2 未通过，不允许用旧 v15 代替</td>
+</tr>
+<tr>
+<td>Gate 5</td>
+<td>当前工件全部绑定且前四门通过</td>
+<td><code>NO-GO</code></td>
+<td>停止条件“非零噪声未同时满足效用和隐私”已发生</td>
+</tr>
+</tbody>
+</table>
+<h2 id="尚未执行的正式验收">7. 尚未执行的正式验收</h2>
+<p>下列项目没有写入当前结果表：</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>项目</th>
+<th>必须执行的下一步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gate 1 剩余数值点</td>
+<td>对 3 个 Attention 边界做 FP64 在线参考与舍入误差定位；修复后重跑 460
+项和 200 prompts</td>
+</tr>
+<tr>
+<td>参数校准</td>
+<td>按配置网格运行独立 calibration/candidate/test
+manifest；不能在最终集调参</td>
+</tr>
+<tr>
+<td>完整精度</td>
+<td>当前产品候选运行 MMLU 14,042、C-Eval 1,346、PIQA 1,838、IFEval
+541、HumanEval 164</td>
+</tr>
+<tr>
+<td>多 key 攻击</td>
+<td>20260803–20260807 五个 key；VMA 五组 Dense 组合、24 层、16,384
+候选</td>
+</tr>
+<tr>
+<td>其他攻击</td>
+<td>Gate-IA、Attention-IA、IMA、ISA、TFMA、SDA、known-plaintext
+全部绑定当前候选</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>同硬件、同请求分布明文/私有 ABBA；TTFT/TPOT/吞吐/显存
+p50/p95/p99</td>
+</tr>
+<tr>
+<td>vLLM</td>
+<td>WSL2、上下文 2048、batch 1、显存上限 75%，与 HF 做 32-token greedy
+一致性</td>
+</tr>
+<tr>
+<td>SGLang</td>
+<td>同一 checkpoint 的注册、KV Cache、EOS 和 SSE 一致性</td>
+</tr>
+<tr>
+<td>TLS</td>
+<td>用 <code>deploy/</code> 下反向代理配置做远程部署和 Bearer Token
+实测</td>
+</tr>
+</tbody>
+</table>
+<h2 id="人工检查路径">8. 人工检查路径</h2>
+<ol type="1">
+<li>打开
+<code>configs/product/qwen05b_functional_package.yaml</code>，确认服务只加载
+<code>data/packages/qwen05b-functional-v25</code>。</li>
+<li>运行 <code>aloepri inspect-package</code>，确认
+<code>pass=true</code> 且 <code>findings=[]</code>。</li>
+<li>打开
+<code>data/keys/qwen05b-product-v25-online/manifest.json</code>，核对只列
+<code>key.json</code> 和 <code>online_key.safetensors</code>。</li>
+<li>打开
+<code>artifacts/verification/qwen05b-functional-v25/privacy-boundary.json</code>，
+核对 <code>checks</code> 全部为 <code>true</code>。</li>
+<li>打开
+<code>artifacts/verification/qwen05b-product-v25-layerwise.json</code>，从
+<code>first_failure</code> 和 <code>records</code>
+查看每个算子的误差。</li>
+<li>打开
+<code>artifacts/verification/qwen05b-product-v25-greedy200.json</code>，核对
+<code>exact_prompt_count=200</code>、<code>prompt_count=200</code>、<code>all_exact=true</code>。</li>
+<li>打开
+<code>artifacts/verification/qwen05b-product-v22-prompt20.json</code>，直接查看
+20 条明文回答与恢复回答，确认强噪声候选不能发布。</li>
+<li>打开
+<code>artifacts/privacy/qwen05b-product-grid-screen-default-seed20260803.json</code>，
+核对 VMA 分子、分母、Wilson 区间和指标定义。</li>
+</ol>
+<h2 id="结论">9. 结论</h2>
+<p>当前 0.5B 已经具备真实客户端输入、Chat Template、本地分词、token ID
+置换、 私有 HF checkpoint、SSE
+生成、客户端逆置换和正常回答的完整产品闭环。服务器包 不含在线
+key、P/Q、转换种子、原 tokenizer 和原权重，抓包中不出现明文或明文 token
+序列。</p>
+<p>当前不能发布为“同时满足论文效用和甲方隐私门槛”的产品：无噪声 v25
+保持问答 但不能抵抗权重匹配；论文强噪声 v22 的当前 VMA 数值合格，但 20
+条问答 0/20 完全一致。按照既定停止条件，正式结论保持
+<code>NO-GO</code>，旧 v15、Toy 结果和代理攻击 均未用于当前 checkpoint
+验收。</p>
+</body>
+</html>

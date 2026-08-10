@@ -1,0 +1,120 @@
+:root {
+  --ink: #172033;
+  --muted: #61708a;
+  --line: #dbe3ef;
+  --paper: #ffffff;
+  --wash: #f4f7fb;
+  --accent: #176b87;
+  --accent-soft: #e8f4f7;
+  --danger: #a43737;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: linear-gradient(135deg, #edf3f8 0%, #f8fafc 48%, #edf6f4 100%);
+}
+
+body {
+  width: min(1180px, calc(100% - 48px));
+  margin: 32px auto;
+  padding: 0 clamp(24px, 6vw, 82px) 72px;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 0 22px 70px rgba(31, 59, 80, 0.12);
+  font-family: "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+h1 {
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 62px;
+  padding-bottom: 30px;
+  color: #10263b;
+  border-top: 8px solid var(--accent);
+  font-size: clamp(32px, 5vw, 58px);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+h2 {
+  margin-top: 52px;
+  padding-top: 58px;
+  border-top: 1px solid var(--line);
+  color: #123b51;
+  font-size: 29px;
+}
+
+h3 { color: #24536a; font-size: 21px; }
+
+p, ul, ol { margin-top: 0; margin-bottom: 18px; }
+
+code {
+  border: 1px solid #d8e3ec;
+  border-radius: 5px;
+  background: #f5f8fb;
+  color: #7a2845;
+  padding: 0.1em 0.32em;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+
+pre {
+  overflow-x: auto;
+  border-left: 4px solid var(--accent);
+  background: #101925;
+  color: #e9f1f7;
+  padding: 20px 24px;
+}
+
+pre code { border: 0; background: transparent; color: inherit; padding: 0; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+  margin-bottom: 34px;
+  background: var(--paper);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+th {
+  background: #173b51;
+  color: white;
+  text-align: left;
+  font-weight: 650;
+}
+
+th, td { border: 1px solid var(--line); padding: 11px 12px; vertical-align: top; }
+tr:nth-child(even) td { background: #f7f9fc; }
+
+blockquote {
+  border-left: 4px solid var(--danger);
+  background: #fff5f5;
+  color: #6f2a2a;
+  padding: 14px 20px;
+}
+
+a { color: var(--accent); }
+
+.math.display {
+  display: block;
+  overflow-x: auto;
+  padding: 16px 0;
+  color: #132d3d;
+}
+
+@media (max-width: 760px) {
+  body { width: 100%; margin: 0; box-shadow: none; }
+  body { font-size: 15px; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+  h2 { font-size: 24px; }
+}
+
+@media print {
+  body { background: white; }
+  body > * { max-width: none; }
+  pre, table { break-inside: avoid; }
+}

@@ -1,0 +1,38 @@
+schema_version: 2
+status: qwen05b_paper_tuned_secure_candidate
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-paper-v12-secure-beta8-fp32
+key_dir: data/keys/dev-qwen05b-paper-v12-secure-beta8-fp32
+seed: 20260805
+key_id: dev-qwen05b-paper-v12-secure-beta8-fp32
+scope: Qwen2.5-0.5B-Instruct-only
+linear:
+  mode: paper_d_plus_2h
+  expansion_h: 128
+  lambda: 0.3
+embedding_head:
+  # Tuned inside the paper's own alpha_e/alpha_h mechanism for the much smaller 0.5B model.
+  alpha_e: 0.1
+  alpha_h: 0.01
+  untie_weights: true
+attention:
+  algorithm2: true
+  block_beta: 8
+  sampling_gamma: 1000.0
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  uvo_distribution: gaussian_0_1_over_head_dim
+  uvo_condition_max: 100.0
+ffn:
+  scale_min: 0.5
+  scale_max: 2.0
+rmsnorm:
+  kappa_mode: covariant-rms
+checkpoint:
+  dtype: float32
+  max_shard_size: 1GB
+  public_metadata_must_exclude_seeds: true
+acceptance:
+  maximum_absolute_accuracy_drop: 0.035
+  maximum_ttrsr: 0.15
+  maximum_piirsr: 0.03

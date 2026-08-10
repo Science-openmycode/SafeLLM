@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Qwen2.5-0.5B 噪声调参与产品状态</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <link rel="stylesheet" href="aloepri_internal_report.css" />
+  <script
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"
+  type="text/javascript"></script>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Qwen2.5-0.5B 噪声调参与产品状态</h1>
+</header>
+<h1 id="qwen2.5-0.5b-噪声调参与产品状态">Qwen2.5-0.5B
+噪声调参与产品状态</h1>
+<p>更新时间：2026-08-09</p>
+<h2 id="论文噪声与当前实现">1. 论文噪声与当前实现</h2>
+<p>论文分别对 Embedding 权重和 LM Head 权重采样独立高斯噪声：</p>
+<p><span class="math display">\[
+E_{\mathrm{embed}} \sim \mathcal{N}(0, \sigma_e^2 I),
+\qquad
+E_{\mathrm{head}} \sim \mathcal{N}(0, \sigma_h^2 I),
+\]</span></p>
+<p>其中 <span
+class="math inline">\(\sigma_e=\operatorname{Std}(W_e)\)</span>、<span
+class="math inline">\(\sigma_h=\operatorname{Std}(W_h)\)</span>。加噪权重为：</p>
+<p><span class="math display">\[
+W&#39;_{\mathrm{embed}}=W_e+\alpha_eE_{\mathrm{embed}},
+\qquad
+W&#39;_{\mathrm{head}}=W_h+\alpha_hE_{\mathrm{head}}.
+\]</span></p>
+<p>随后执行词表置换和扩维矩阵变换：</p>
+<p><span class="math display">\[
+\widetilde W_{\mathrm{embed}}=\Pi W&#39;_{\mathrm{embed}}\widehat
+P_{\mathrm{embed}},
+\qquad
+\widetilde W_{\mathrm{head}}=\widehat
+Q_{\mathrm{head}}W&#39;_{\mathrm{head}}\Pi^T.
+\]</span></p>
+<p>代码位置：</p>
+<ul>
+<li><code>src/aloepri/transforms/paper_noise.py</code>：按源权重总体标准差采样高斯矩阵并乘以
+<span class="math inline">\(\alpha\)</span>；</li>
+<li><code>src/aloepri/conversion/paper_qwen2.py</code>：Embedding 和
+Head 使用独立 seed，加噪后再执行 <span
+class="math inline">\(\Pi/P/Q\)</span> 变换；</li>
+<li><code>scripts/verify_paper_formula_checkpoint.py</code>：从原始权重和密钥重新计算私有
+checkpoint，逐张量比较。</li>
+</ul>
+<p>本轮没有改变噪声分布、加噪位置或计算顺序，只调整 <span
+class="math inline">\(\alpha_e\)</span> 和 <span
+class="math inline">\(\alpha_h\)</span>。</p>
+<h2 id="两个可复核档位">2. 两个可复核档位</h2>
+<table>
+<colgroup>
+<col style="width: 15%" />
+<col style="width: 15%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 15%" />
+<col style="width: 15%" />
+</colgroup>
+<thead>
+<tr>
+<th>档位</th>
+<th>Checkpoint</th>
+<th style="text-align: right;"><span
+class="math inline">\(\alpha_e\)</span></th>
+<th style="text-align: right;"><span
+class="math inline">\(\alpha_h\)</span></th>
+<th>用途</th>
+<th>当前结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Utility 产品档</td>
+<td><code>qwen2.5-0.5b-product-v30-noise001-0002</code></td>
+<td style="text-align: right;">0.01</td>
+<td style="text-align: right;">0.002</td>
+<td>实际问答、API、客户端置换</td>
+<td>功能通过；校准精度保持；VMA 不通过</td>
+</tr>
+<tr>
+<td>Paper-default 研究档</td>
+<td><code>qwen2.5-0.5b-product-v34-paper-noise10-02</code></td>
+<td style="text-align: right;">1.0</td>
+<td style="text-align: right;">0.2</td>
+<td>论文推荐噪声强度、攻击实验</td>
+<td>VMA 通过；MMLU 归一化精度不通过</td>
+</tr>
+</tbody>
+</table>
+<p>Utility 产品档的服务端不持有
+<code>tau</code>、<code>inverse_tau</code>、P/Q
+或随机种子。它满足“服务端请求中不出现明文 prompt 和明文 token
+ID”的产品边界。它不满足“恶意服务器通过权重攻击也无法恢复置换”的强攻击门禁。</p>
+<h2 id="参数搜索结果">3. 参数搜索结果</h2>
+<h3 id="vmapupa16384-候选单-key">3.1 VMA/PUPA，16,384 候选，单 key</h3>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 13%" />
+<col style="width: 13%" />
+<col style="width: 13%" />
+<col style="width: 13%" />
+<col style="width: 13%" />
+<col style="width: 13%" />
+<col style="width: 10%" />
+</colgroup>
+<thead>
+<tr>
+<th>候选</th>
+<th style="text-align: right;"><span
+class="math inline">\(\alpha_e\)</span></th>
+<th style="text-align: right;"><span
+class="math inline">\(\alpha_h\)</span></th>
+<th style="text-align: right;">We–Wh TTRSR</th>
+<th style="text-align: right;">We–Wh PIIRSR</th>
+<th style="text-align: right;">We–Wgate TTRSR</th>
+<th style="text-align: right;">We–Wgate PIIRSR</th>
+<th>15%/3%门禁</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v30</td>
+<td style="text-align: right;">0.01</td>
+<td style="text-align: right;">0.002</td>
+<td style="text-align: right;">100.00%</td>
+<td style="text-align: right;">100.00%</td>
+<td style="text-align: right;">100.00%</td>
+<td style="text-align: right;">100.00%</td>
+<td>不通过</td>
+</tr>
+<tr>
+<td>扫描点</td>
+<td style="text-align: right;">0.60</td>
+<td style="text-align: right;">0.20</td>
+<td style="text-align: right;">26.58%</td>
+<td style="text-align: right;">2.26%</td>
+<td style="text-align: right;">10.06%</td>
+<td style="text-align: right;">0.60%</td>
+<td>不通过</td>
+</tr>
+<tr>
+<td>扫描点</td>
+<td style="text-align: right;">0.80</td>
+<td style="text-align: right;">0.20</td>
+<td style="text-align: right;">16.72%</td>
+<td style="text-align: right;">0.15%</td>
+<td style="text-align: right;">2.59%</td>
+<td style="text-align: right;">0.30%</td>
+<td>不通过</td>
+</tr>
+<tr>
+<td>v32</td>
+<td style="text-align: right;">0.80</td>
+<td style="text-align: right;">0.40</td>
+<td style="text-align: right;">14.09%</td>
+<td style="text-align: right;">0.15%</td>
+<td style="text-align: right;">2.59%</td>
+<td style="text-align: right;">0.30%</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>v33</td>
+<td style="text-align: right;">0.90</td>
+<td style="text-align: right;">0.30</td>
+<td style="text-align: right;">13.75%</td>
+<td style="text-align: right;">0.15%</td>
+<td style="text-align: right;">1.24%</td>
+<td style="text-align: right;">0.30%</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>v34</td>
+<td style="text-align: right;">1.00</td>
+<td style="text-align: right;">0.20</td>
+<td style="text-align: right;">13.43%</td>
+<td style="text-align: right;">0.15%</td>
+<td style="text-align: right;">1.05%</td>
+<td style="text-align: right;">0.15%</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>v31</td>
+<td style="text-align: right;">1.00</td>
+<td style="text-align: right;">0.50</td>
+<td style="text-align: right;">7.85%</td>
+<td style="text-align: right;">0.15%</td>
+<td style="text-align: right;">1.05%</td>
+<td style="text-align: right;">0.15%</td>
+<td>通过</td>
+</tr>
+</tbody>
+</table>
+<p>证据文件：</p>
+<ul>
+<li><code>artifacts/privacy/qwen05b-product-grid-screen-seed20260803.json</code></li>
+<li><code>artifacts/privacy/qwen05b-v31-noise-breakpoint-screen.json</code></li>
+<li><code>artifacts/privacy/qwen05b-v32-noise-fine-screen.json</code></li>
+<li><code>artifacts/privacy/qwen05b-v34-paper-default-noise-screen.json</code></li>
+</ul>
+<p>以上置信区间是 token occurrence/PII unit 的 Wilson
+区间；当前表只有一个变换 key，不代表 key 间不确定性。</p>
+<h3 id="固定校准题精度">3.2 固定校准题精度</h3>
+<p>表中分数为答对数/样本数。括号内为相对原模型的绝对百分点变化。</p>
+<table>
+<colgroup>
+<col style="width: 13%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+</colgroup>
+<thead>
+<tr>
+<th>候选</th>
+<th style="text-align: right;">MMLU acc</th>
+<th style="text-align: right;">MMLU acc_norm</th>
+<th style="text-align: right;">C-Eval acc</th>
+<th style="text-align: right;">PIQA acc</th>
+<th style="text-align: right;">PIQA acc_norm</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>原模型</td>
+<td style="text-align: right;">20/60</td>
+<td style="text-align: right;">23/60</td>
+<td style="text-align: right;">20/58</td>
+<td style="text-align: right;">72/100</td>
+<td style="text-align: right;">70/100</td>
+</tr>
+<tr>
+<td>v30 0.01/0.002</td>
+<td style="text-align: right;">20/60 (0.00)</td>
+<td style="text-align: right;">23/60 (0.00)</td>
+<td style="text-align: right;">20/58 (0.00)</td>
+<td style="text-align: right;">72/100 (0.00)</td>
+<td style="text-align: right;">70/100 (0.00)</td>
+</tr>
+<tr>
+<td>v31 1.0/0.5</td>
+<td style="text-align: right;">18/60 (-3.33)</td>
+<td style="text-align: right;">18/60 (-8.33)</td>
+<td style="text-align: right;">15/58 (-8.62)</td>
+<td style="text-align: right;">63/100 (-9.00)</td>
+<td style="text-align: right;">64/100 (-6.00)</td>
+</tr>
+<tr>
+<td>v32 0.8/0.4</td>
+<td style="text-align: right;">19/60 (-1.67)</td>
+<td style="text-align: right;">19/60 (-6.67)</td>
+<td style="text-align: right;">17/58 (-5.17)</td>
+<td style="text-align: right;">60/100 (-12.00)</td>
+<td style="text-align: right;">62/100 (-8.00)</td>
+</tr>
+<tr>
+<td>v33 0.9/0.3</td>
+<td style="text-align: right;">19/60 (-1.67)</td>
+<td style="text-align: right;">16/60 (-11.67)</td>
+<td style="text-align: right;">未测试</td>
+<td style="text-align: right;">未测试</td>
+<td style="text-align: right;">未测试</td>
+</tr>
+<tr>
+<td>v34 1.0/0.2</td>
+<td style="text-align: right;">18/60 (-3.33)</td>
+<td style="text-align: right;">18/60 (-8.33)</td>
+<td style="text-align: right;">未测试</td>
+<td style="text-align: right;">未测试</td>
+<td style="text-align: right;">未测试</td>
+</tr>
+</tbody>
+</table>
+<p>v34 在 MMLU 归一化指标上已超过 3.5 个百分点停止线，因此没有继续运行
+C-Eval 和 PIQA。表中没有使用未测试值补齐结论。</p>
+<h3 id="生成回归">3.3 生成回归</h3>
+<table>
+<thead>
+<tr>
+<th>候选</th>
+<th style="text-align: right;">20条逐序列完全相同</th>
+<th style="text-align: right;">生成 token 一致率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v30 0.01/0.002</td>
+<td style="text-align: right;">19/20</td>
+<td style="text-align: right;">99.82%</td>
+</tr>
+<tr>
+<td>v31 1.0/0.5</td>
+<td style="text-align: right;">0/20</td>
+<td style="text-align: right;">75.47%</td>
+</tr>
+<tr>
+<td>v32 0.8/0.4</td>
+<td style="text-align: right;">0/20</td>
+<td style="text-align: right;">75.78%</td>
+</tr>
+<tr>
+<td>v33 0.9/0.3</td>
+<td style="text-align: right;">0/20</td>
+<td style="text-align: right;">76.09%</td>
+</tr>
+<tr>
+<td>v34 1.0/0.2</td>
+<td style="text-align: right;">0/20</td>
+<td style="text-align: right;">76.41%</td>
+</tr>
+</tbody>
+</table>
+<p>生成一致率只描述与原模型的 token 重合，不等同于任务准确率。</p>
+<h2 id="v30-产品闭环结果">4. v30 产品闭环结果</h2>
+<h3 id="服务包与密钥">4.1 服务包与密钥</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>工件</th>
+<th>路径</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>服务端模型</td>
+<td><code>data/packages/qwen05b-product-v30-utility</code></td>
+<td>私有权重、配置、manifest；包扫描通过</td>
+</tr>
+<tr>
+<td>客户端在线密钥</td>
+<td><code>data/keys/qwen05b-product-v30-online</code></td>
+<td><code>tau</code>、<code>inverse_tau</code>、特殊 token 映射</td>
+</tr>
+<tr>
+<td>离线主密钥</td>
+<td><code>data/keys/qwen05b-product-v30-offline</code></td>
+<td>P/Q、Attention/FFN 变换与重建材料</td>
+</tr>
+<tr>
+<td>产品配置</td>
+<td><code>configs/product/qwen05b_v30_utility.yaml</code></td>
+<td>转换参数、服务限制和路径</td>
+</tr>
+</tbody>
+</table>
+<p>服务包扫描结果：<code>pass=true</code>，未发现在线密钥、P/Q、随机种子或原始权重。</p>
+<h3 id="功能验证">4.2 功能验证</h3>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>完整公式重建</td>
+<td>292/292 张量通过</td>
+</tr>
+<tr>
+<td>Algorithm 1</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>Algorithm 2</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>私有 next token 逆置换</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>decode 输入等于 <code>tau(plain_next)</code></td>
+<td>通过</td>
+</tr>
+<tr>
+<td>KV Cache：36 → 37</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>固定问答 greedy IDs</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>有噪声逐层差异</td>
+<td>记录为诊断；首个差异为 Embedding，NRMSE 0.009875</td>
+</tr>
+</tbody>
+</table>
+<p>有噪声模型不要求逐层输出与明文模型相等。必须相等的是公式生成的私有权重、私有坐标流、token
+逆置换和 cache 状态；回答质量由任务精度评测决定。</p>
+<h3 id="真实问答">4.3 真实问答</h3>
+<p>输入：<code>请用一句话解释什么是光合作用。</code></p>
+<p>输出：<code>光合作用是植物、藻类和某些细菌利用阳光、二氧化碳和水进行的化学反应，将二氧化碳和水转化为葡萄糖和氧气的过程。</code></p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align: right;">实测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>输入 token</td>
+<td style="text-align: right;">38</td>
+</tr>
+<tr>
+<td>输出 token</td>
+<td style="text-align: right;">34</td>
+</tr>
+<tr>
+<td>TTFT</td>
+<td style="text-align: right;">660.31 ms</td>
+</tr>
+<tr>
+<td>TPOT</td>
+<td style="text-align: right;">66.81 ms</td>
+</tr>
+<tr>
+<td>明文/私有输入 ID 是否相同</td>
+<td style="text-align: right;">否</td>
+</tr>
+</tbody>
+</table>
+<p>机器证据：<code>artifacts/product/qwen05b-v30-private-chat-smoke.json</code>。</p>
+<h2 id="复现命令">5. 复现命令</h2>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>uv sync <span class="op">--</span>frozen</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>uv run aloepri inspect-package <span class="op">--</span>server-package <span class="kw">data</span><span class="op">/</span>packages<span class="op">/</span>qwen05b-product-v30-utility</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>uv run aloepri verify <span class="op">--</span>config configs<span class="op">/</span>product<span class="op">/</span>qwen05b_v30_utility<span class="op">.</span><span class="fu">yaml</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="va">$env</span><span class="op">:</span><span class="va">ALOEPRI_BEARER_TOKEN</span><span class="op">=</span><span class="st">&#39;replace-with-local-token&#39;</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>uv run aloepri serve <span class="op">--</span>config configs<span class="op">/</span>product<span class="op">/</span>qwen05b_v30_utility<span class="op">.</span><span class="fu">yaml</span></span></code></pre></div>
+<p>另开终端：</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">$env</span><span class="op">:</span><span class="va">PYTHONUTF8</span><span class="op">=</span><span class="st">&#39;1&#39;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>uv run python scripts<span class="op">/</span>run_product_chat_smoke<span class="op">.</span><span class="fu">py</span> `</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>server http<span class="op">://</span><span class="dv">127.0</span><span class="op">.</span><span class="dv">0.1</span><span class="op">:</span><span class="dv">8000</span> `</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>tokenizer <span class="kw">data</span><span class="op">/</span>models<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b `</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>online-key <span class="kw">data</span><span class="op">/</span>keys<span class="op">/</span>qwen05b-product-v30-online `</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>prompt <span class="st">&#39;请用一句话解释什么是光合作用。&#39;</span> `</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>bearer-token replace-with-local-token `</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>max-new-tokens <span class="dv">48</span> `</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>out artifacts<span class="op">/</span>product<span class="op">/</span>qwen05b-v30-private-chat-smoke<span class="op">.</span><span class="fu">json</span></span></code></pre></div>
+<p>交互式客户端：</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>uv run aloepri chat `</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>server http<span class="op">://</span><span class="dv">127.0</span><span class="op">.</span><span class="dv">0.1</span><span class="op">:</span><span class="dv">8000</span> `</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>key-dir <span class="kw">data</span><span class="op">/</span>keys<span class="op">/</span>qwen05b-product-v30-online `</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>tokenizer <span class="kw">data</span><span class="op">/</span>models<span class="op">/</span>qwen2<span class="op">.</span><span class="dv">5</span><span class="op">-</span><span class="dv">0.</span>5b</span></code></pre></div>
+<h2 id="当前结论">6. 当前结论</h2>
+<p>Qwen2.5-0.5B 已实现论文稠密架构范围内的转换、独立 Embedding/Head
+高斯噪声、词表置换、扩维 P/Q、Attention、FFN、RMSNorm
+修正式、Residual、KV Cache、checkpoint、服务端
+API、客户端恢复和真实问答。</p>
+<p>当前可运行产品采用
+v30：功能闭环和校准精度通过，服务端直接请求中没有明文
+prompt。当前不能宣称 v30 抵抗权重级 VMA。达到 VMA 15% 门禁的 v32/v34
+在0.5B客观题上超过精度停止线；该矛盾来自同一全权重高斯噪声在0.5B上的实测效用—隐私折中。</p>
+</body>
+</html>

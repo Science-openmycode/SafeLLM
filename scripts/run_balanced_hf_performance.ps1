@@ -1,0 +1,60 @@
+param(
+  [Parameter(Mandatory=$true)][string]$BaselineModel,
+  [Parameter(Mandatory=$true)][string]$CandidateModel,
+  [Parameter(Mandatory=$true)][string]$Tokenizer,
+  [Parameter(Mandatory=$true)][string]$Prompts,
+  [Parameter(Mandatory=$true)][string]$CandidateKey,
+  [Parameter(Mandatory=$true)][string]$OutputDir,
+  [string]$PythonExe = ".\.venv\Scripts\python.exe",
+  [int]$MaxNewTokens = 100,
+  [int]$Warmup = 2
+)
+
+$ErrorActionPreference = "Stop"
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+$runs = @(
+  @{Order=1; Role="baseline";  Pair="abba-1"},
+  @{Order=2; Role="candidate"; Pair="abba-1"},
+  @{Order=3; Role="candidate"; Pair="abba-2"},
+  @{Order=4; Role="baseline";  Pair="abba-2"},
+  @{Order=5; Role="candidate"; Pair="baab-1"},
+  @{Order=6; Role="baseline";  Pair="baab-1"},
+  @{Order=7; Role="baseline";  Pair="baab-2"},
+  @{Order=8; Role="candidate"; Pair="baab-2"}
+)
+
+$baselineFiles = @()
+$candidateFiles = @()
+foreach ($run in $runs) {
+  $model = if ($run.Role -eq "baseline") { $BaselineModel } else { $CandidateModel }
+  $out = Join-Path $OutputDir ("run-{0:D2}-{1}-{2}.json" -f $run.Order, $run.Role, $run.Pair)
+  $arguments = @(
+    "scripts\benchmark_hf.py",
+    "--model", $model,
+    "--tokenizer", $Tokenizer,
+    "--prompts", $Prompts,
+    "--dtype", "bfloat16",
+    "--max-new-tokens", $MaxNewTokens,
+    "--warmup", $Warmup,
+    "--run-id", $run.Pair,
+    "--run-order", $run.Order,
+    "--model-role", $run.Role,
+    "--out", $out
+  )
+  if ($run.Role -eq "candidate") {
+    $arguments += @("--key", $CandidateKey)
+    $candidateFiles += $out
+  } else {
+    $baselineFiles += $out
+  }
+  & $PythonExe @arguments
+  if ($LASTEXITCODE -ne 0) { throw "benchmark run $($run.Order) failed" }
+}
+
+$comparison = Join-Path $OutputDir "balanced-comparison.json"
+& $PythonExe scripts\compare_performance.py `
+  --baseline $baselineFiles `
+  --candidate $candidateFiles `
+  --out $comparison
+if ($LASTEXITCODE -ne 0) { throw "performance comparison failed" }
+Write-Output $comparison

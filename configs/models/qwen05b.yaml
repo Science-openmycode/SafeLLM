@@ -1,0 +1,7 @@
+model_id: Qwen/Qwen2.5-0.5B-Instruct
+revision: 7ae557604adf67be50417f59c2c2f167def9a775
+source_dir: data/models/qwen2.5-0.5b
+output_dir: data/checkpoints/qwen2.5-0.5b-obfuscated
+dtype: bfloat16
+trust_remote_code: false
+attention_implementation: eager

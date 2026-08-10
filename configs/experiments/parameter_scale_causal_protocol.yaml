@@ -1,0 +1,62 @@
+protocol_id: aloepri-parameter-scale-causal-v1
+question: "0.5B上不存在精度-隐私联合可行域，是否由参数规模而非实现错误导致？"
+frozen_method:
+  paper: arXiv:2603.01499v2
+  transform_config: configs/transform/paper_qwen05b_v12_secure.yaml
+  implementation_commit: record_at_run_time
+  dtype: float32
+  decoding: greedy
+  candidate_size: 2048
+  transform_seeds: [20260803, 20260001, 20260805, 20260807, 20260809,
+                    20260811, 20260813, 20260815, 20260817, 20260819]
+observational_scale_ladder:
+  models:
+    - Qwen/Qwen2.5-0.5B-Instruct
+    - Qwen/Qwen2.5-1.5B-Instruct
+    - Qwen/Qwen2.5-3B-Instruct
+    - Qwen/Qwen2.5-7B-Instruct
+    - Qwen/Qwen2.5-14B-Instruct
+  blocks:
+    - {id: fixed_h, h: 128}
+    - {id: fixed_ratio, h_over_d: 0.142857}
+  noise_pairs:
+    - [0.10, 0.01]
+    - [0.20, 0.05]
+    - [0.40, 0.10]
+    - [0.50, 0.10]
+    - [0.80, 0.50]
+    - [1.00, 0.20]
+controlled_factorial:
+  purpose: "固定数据、tokenizer和训练预算，构造宽度×深度干预以补足模型梯级的混杂问题"
+  widths: [512, 1024, 2048]
+  depths: [8, 16, 24]
+  training_seeds: [41, 43, 47]
+  transform_seeds_per_checkpoint: 5
+  controls: {tokenizer: fixed, corpus_and_order: fixed, optimizer_and_schedule: fixed, token_budget: fixed, context_length: fixed}
+primary_endpoints:
+  utility: [prompt_exact_match, generated_token_agreement, prefill_top1_agreement, benchmark_absolute_drop_pp]
+  privacy: [vma_wewh_ttrsr, vma_gate_ttrsr, vma_wewh_piirsr, vma_gate_piirsr]
+  numerical: [layerwise_relative_error, logits_relative_error, condition_number]
+  performance: [ttft_ms, tpot_ms, peak_vram_mib]
+joint_feasibility_gate:
+  benchmark_absolute_drop_pp_max: 3.5
+  prompt_exact_match_min: 0.95
+  generated_token_agreement_min: 0.99
+  vma_ttrsr_max: 0.15
+  ttft_degradation_max: 0.15
+  tpot_degradation_max: 0.15
+analysis:
+  unit: "model × block × noise_pair × transform_seed"
+  mixed_effects_formula: "endpoint ~ log10(parameters) + h_over_d + alpha_e + alpha_h + log10(parameters):alpha_e + log10(parameters):alpha_h + (1|transform_seed)"
+  uncertainty: "seed-cluster bootstrap 95% CI"
+  multiplicity: "Benjamini-Hochberg FDR 0.05"
+  causal_claim_requires:
+    - "规模梯级中联合可行率随log参数量单调上升，效应95% CI不跨0"
+    - "fixed_h和fixed_ratio两块方向一致"
+    - "受控宽度×深度实验复现方向，排除家族、训练语料和tokenizer混杂"
+    - "误差定位不指向单个实现缺陷，且无噪声等价测试持续通过"
+artifacts:
+  raw: artifacts/parameter_scale/raw
+  checkpoints: artifacts/parameter_scale/checkpoints
+  analysis: artifacts/parameter_scale/analysis
+  report: artifacts/parameter_scale/report

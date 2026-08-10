@@ -1,0 +1,20 @@
+:root { color-scheme: light; --ink: #18212f; --muted: #5e6b7d; --line: #dbe3ec; --brand: #167d68; --soft: #eef8f5; }
+html { background: #edf2f6; }
+body { max-width: 1180px; margin: 32px auto; padding: 52px 64px; background: #fff; color: var(--ink); font: 16px/1.72 "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; box-shadow: 0 14px 45px rgba(24,33,47,.10); }
+h1, h2, h3 { line-height: 1.25; color: #102a43; }
+h1 { margin-top: 0; padding-bottom: 18px; border-bottom: 4px solid var(--brand); font-size: 2.25rem; }
+h2 { margin-top: 2.4em; padding-left: 14px; border-left: 5px solid var(--brand); }
+h3 { margin-top: 1.8em; }
+a { color: #116b91; }
+code { padding: .12em .35em; border-radius: 4px; background: #f1f5f9; font-family: Consolas, monospace; }
+pre { overflow-x: auto; padding: 18px 20px; border: 1px solid #26384d; border-radius: 8px; background: #172232; color: #e7eef7; }
+pre code { padding: 0; background: transparent; }
+table { width: 100%; margin: 1.2em 0 1.8em; border-collapse: collapse; font-size: .94rem; }
+th { background: #173b4f; color: #fff; text-align: left; }
+th, td { padding: 10px 12px; border: 1px solid var(--line); vertical-align: top; }
+tbody tr:nth-child(even) { background: #f7fafc; }
+blockquote { margin: 1.2em 0; padding: 10px 18px; border-left: 4px solid var(--brand); background: var(--soft); color: #264653; }
+#TOC { padding: 18px 24px; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
+#TOC ul { columns: 2; }
+@media (max-width: 800px) { body { margin: 0; padding: 28px 20px; } #TOC ul { columns: 1; } }
+@media print { html { background: #fff; } body { max-width: none; margin: 0; padding: 0; box-shadow: none; } pre, table { break-inside: avoid; } }

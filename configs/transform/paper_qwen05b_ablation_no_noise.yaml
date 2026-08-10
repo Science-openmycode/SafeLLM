@@ -1,0 +1,46 @@
+schema_version: 3
+status: causal_ablation_no_embedding_or_head_noise
+method_profile: corrected-paper-noise-ablation
+claim_scope: qwen2.5_0.5b_isolate_default_noise_effect
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-paper-v17-no-noise-bf16
+key_dir: data/keys/dev-qwen05b-paper-v17-no-noise-bf16
+seed: 20260803
+key_id: dev-qwen05b-paper-v17-no-noise-bf16
+vocab:
+  enabled: true
+linear:
+  mode: paper_d_plus_2h
+  expansion_h: 128
+  lambda: 0.3
+  inverse_key_mode: shared_p_independent_compatible_right_inverses
+embedding_head:
+  alpha_e: 0.0
+  alpha_h: 0.0
+  embedding_noise_seed: 31005
+  head_noise_seed: 41005
+attention:
+  algorithm2: true
+  block_beta: 8
+  sampling_gamma: 1000.0
+  blockperm_mode: gamma-corrected
+  rope_frequency_mode: qwen-actual
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  uvo_distribution: gaussian_0_1_over_head_dim
+  uvo_condition_max: null
+ffn:
+  scale_min: 0.5
+  scale_max: 2.0
+rmsnorm:
+  kappa_mode: paper-expectation
+  calibration: artifacts/calibration/qwen05b-paper-seed20260803-rms-expectation-bf16-20.json
+checkpoint:
+  dtype: bfloat16
+  max_shard_size: 1GB
+  hash: sha256
+ablation:
+  controlled_against: data/checkpoints/qwen2.5-0.5b-paper-v15-complete-bf16
+  only_intended_changes: [alpha_e, alpha_h]
+  alpha_e: [1.0, 0.0]
+  alpha_h: [0.2, 0.0]

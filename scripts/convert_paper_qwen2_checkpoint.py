@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import torch
+from safetensors.torch import save_file
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from aloepri.conversion.metadata import strip_secret_metadata
+from aloepri.conversion.paper_qwen2 import (
+    convert_qwen2_modules,
+    frobenius_norm_ratio_proxy,
+)
+from aloepri.conversion.vocab_checkpoint import sha256_file
+from aloepri.keys.generate import generate_vocab_key
+from aloepri.models.configuration_aloepri_qwen2 import AloePriQwen2Config
+from aloepri.models.modeling_aloepri_qwen2 import AloePriQwen2ForCausalLM
+from aloepri.transforms.paper_key_matrix import (
+    make_compatible_inverse_family,
+    make_paper_key_pair,
+)
+from aloepri.transforms.qwen_structural import transform_qwen_layers
+
+
+def get_rope_theta(config: object) -> float:
+    """Read RoPE theta from legacy and Transformers 5-style configs."""
+    rope_theta = getattr(config, "rope_theta", None)
+    if rope_theta is not None:
+        return float(rope_theta)
+    rope_parameters = getattr(config, "rope_parameters", None)
+    if isinstance(rope_parameters, dict):
+        return float(rope_parameters.get("rope_theta", 10000.0))
+    return 10000.0
+
+
+def resolve_noise_seeds(
+    seed: int, embedding_noise_seed: int | None, head_noise_seed: int | None
+) -> tuple[int, int]:
+    """Resolve independent paper noise draws while preserving legacy defaults."""
+    return (
+        embedding_noise_seed if embedding_noise_seed is not None else seed + 2,
+        head_noise_seed if head_noise_seed is not None else seed + 3,
+    )
+
+
+def public_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Strip every deterministic secret from metadata shipped with the server model."""
+    return strip_secret_metadata(metadata)
+
+
+def paper_alignment_profile(args: argparse.Namespace) -> dict[str, object]:
+    """Describe formula-level departures without turning them into secret metadata.
+
+    This profile is shipped with the server checkpoint so a reviewer can tell
+    which paper construction is literal, corrected, disabled, or numerically
+    stabilized without access to the offline key.
+    """
+    return {
+        "algorithm1": "shape-corrected-nullspaces",
+        "rmsnorm": (
+            "corrected-exact-derived-metric"
+            if args.rms_mode == "exact-metric"
+            else "paper-scalar-kappa-approximation"
+        ),
+        "blockperm": (
+            "disabled-beta-one-due-noncommuting-rope"
+            if args.block_beta == 1
+            else "corrected-runtime-synchronized-rope-conjugation"
+        ),
+        "rope_frequencies": (
+            "architecture-correct-qwen"
+            if args.rope_frequency_mode == "qwen-actual"
+            else "paper-literal-exponent"
+        ),
+        "uvo_sampling": (
+            "paper-gaussian"
+            if args.uvo_condition_max is None
+            else "conditioned-paper-gaussian-for-numerical-stability"
+        ),
+        "attention_precision": args.attention_compute_dtype,
+        "embedding_noise_active": args.alpha_e != 0.0,
+        "head_noise_active": args.alpha_h != 0.0,
+    }
+
+
+def _map_token_id(value: int | list[int] | None, tau: torch.Tensor) -> int | list[int] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [int(tau[item]) for item in value]
+    return int(tau[value])
+
+
+def _git_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Convert Qwen2 to the corrected-paper d+2h model")
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--key-dir", type=Path, required=True)
+    parser.add_argument("--h", type=int, default=128)
+    parser.add_argument("--lambda", dest="coefficient_lambda", type=float, default=0.3)
+    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument(
+        "--embedding-noise-seed",
+        type=int,
+        help="Independent paper Gaussian seed for W_e; defaults to --seed + 2.",
+    )
+    parser.add_argument(
+        "--head-noise-seed",
+        type=int,
+        help="Independent paper Gaussian seed for W_h; defaults to --seed + 3.",
+    )
+    parser.add_argument("--alpha-e", type=float, default=1.0)
+    parser.add_argument("--alpha-h", type=float, default=0.2)
+    parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="bfloat16")
+    parser.add_argument(
+        "--attention-compute-dtype",
+        choices=["float32", "float64"],
+        default="float32",
+        help="Storage/runtime dtype for Q/K/V/O; float64 prioritizes function equivalence.",
+    )
+    parser.add_argument("--max-shard-size", default="2GB")
+    parser.add_argument("--model-id")
+    parser.add_argument("--key-id")
+    parser.add_argument("--source-revision", default="unknown")
+    parser.add_argument("--rms-calibration", type=Path)
+    parser.add_argument("--kappa-override", type=float)
+    parser.add_argument(
+        "--kappa-mode",
+        choices=["covariant-rms", "paper-norm-ratio-proxy", "paper-expectation"],
+        default="paper-norm-ratio-proxy",
+    )
+    parser.add_argument(
+        "--rms-mode",
+        choices=["paper-kappa", "exact-metric"],
+        default="paper-kappa",
+        help="Paper approximation or exact corrected plaintext-metric RMSNorm.",
+    )
+    parser.add_argument("--algorithm2", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--ffn-scale-min", type=float, default=0.5)
+    parser.add_argument("--ffn-scale-max", type=float, default=2.0)
+    parser.add_argument("--block-beta", type=int, default=8)
+    parser.add_argument("--sampling-gamma", type=float, default=1000.0)
+    parser.add_argument(
+        "--blockperm-mode",
+        choices=["paper-distribution-boundary-corrected", "gamma-corrected"],
+        default="paper-distribution-boundary-corrected",
+    )
+    parser.add_argument(
+        "--rope-frequency-mode",
+        choices=["qwen-actual", "paper-literal"],
+        default="qwen-actual",
+    )
+    parser.add_argument("--qk-scale-min", type=float, default=0.5)
+    parser.add_argument("--qk-scale-max", type=float, default=2.0)
+    parser.add_argument(
+        "--uvo-condition-max",
+        type=float,
+        help="Reject Algorithm 2 Gaussian U_vo samples above this condition number.",
+    )
+    args = parser.parse_args()
+    embedding_noise_seed, head_noise_seed = resolve_noise_seeds(
+        args.seed, args.embedding_noise_seed, args.head_noise_seed
+    )
+
+    if args.output.exists() or args.key_dir.exists():
+        raise FileExistsError("output or key directory already exists")
+    output_partial = args.output.with_name(f"{args.output.name}.partial")
+    key_partial = args.key_dir.with_name(f"{args.key_dir.name}.partial")
+    if output_partial.exists() or key_partial.exists():
+        raise FileExistsError("stale partial directory exists; inspect and remove it explicitly")
+    output_partial.mkdir(parents=True)
+    key_partial.mkdir(parents=True)
+
+    dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
+    source = AutoModelForCausalLM.from_pretrained(
+        args.source,
+        local_files_only=True,
+        dtype=dtype,
+        attn_implementation="eager",
+    ).eval()
+    config = AloePriQwen2Config.from_qwen2_config(
+        source.config,
+        expansion_h=args.h,
+        rms_mode=args.rms_mode.replace("-", "_"),
+        attention_compute_dtype=args.attention_compute_dtype,
+    )
+    old_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        target = AloePriQwen2ForCausalLM(config).eval()
+    finally:
+        torch.set_default_dtype(old_dtype)
+
+    tau, inverse_tau = generate_vocab_key(config.vocab_size, seed=args.seed + 1)
+    key_pair = make_paper_key_pair(
+        source.config.hidden_size,
+        args.h,
+        coefficient_lambda=args.coefficient_lambda,
+        seed=args.seed,
+    )
+    inverse_family = make_compatible_inverse_family(key_pair, seed=args.seed + 5000)
+    rms_kappas = None
+    if args.rms_calibration:
+        calibration = json.loads(args.rms_calibration.read_text(encoding="utf-8"))
+        rms_kappas = {name: float(value) for name, value in calibration["kappas"].items()}
+    elif args.kappa_mode == "paper-expectation":
+        parser.error("--kappa-mode paper-expectation requires --rms-calibration")
+    if args.kappa_override is not None:
+        if args.kappa_override <= 0:
+            raise ValueError("kappa override must be positive")
+        rms_kappas = {
+            **{
+                f"layers.{index}.{norm}": args.kappa_override
+                for index in range(source.config.num_hidden_layers)
+                for norm in ("input_layernorm", "post_attention_layernorm")
+            },
+            "model.norm": args.kappa_override,
+        }
+    elif args.kappa_mode == "paper-norm-ratio-proxy":
+        literal_kappa = frobenius_norm_ratio_proxy(key_pair.p)
+        rms_kappas = {
+            **{
+                f"layers.{index}.{norm}": literal_kappa
+                for index in range(source.config.num_hidden_layers)
+                for norm in ("input_layernorm", "post_attention_layernorm")
+            },
+            "model.norm": literal_kappa,
+        }
+    stats = convert_qwen2_modules(
+        source,
+        target,
+        key_pair=key_pair,
+        inverse_family=inverse_family,
+        tau=tau,
+        alpha_e=args.alpha_e,
+        alpha_h=args.alpha_h,
+        embedding_noise_seed=embedding_noise_seed,
+        head_noise_seed=head_noise_seed,
+        rms_kappas=rms_kappas,
+    )
+    structural_key: dict[str, torch.Tensor] = {}
+    if args.algorithm2:
+        structural_key = transform_qwen_layers(
+            target,
+            seed=args.seed + 10000,
+            coordinate_mode="dense_orthogonal",
+            ffn_scale_min=args.ffn_scale_min,
+            ffn_scale_max=args.ffn_scale_max,
+            block_beta=args.block_beta,
+            sampling_gamma=args.sampling_gamma,
+            blockperm_mode=args.blockperm_mode,
+            rope_frequency_mode=args.rope_frequency_mode,
+            rope_theta=get_rope_theta(source.config),
+            qk_scale_min=args.qk_scale_min,
+            qk_scale_max=args.qk_scale_max,
+            value_condition_max=args.uvo_condition_max,
+        )
+    model_id = args.model_id or args.output.name
+    key_id = args.key_id or args.key_dir.name
+    metadata = {
+        "schema_version": 2,
+        "model_id": model_id,
+        "key_id": key_id,
+        "transform_mode": "paper_d_plus_2h",
+        "source": str(args.source.resolve()),
+        "source_revision": args.source_revision,
+        "plain_hidden_size": source.config.hidden_size,
+        "private_hidden_size": config.hidden_size,
+        "expansion_h": args.h,
+        "lambda": args.coefficient_lambda,
+        "alpha_e": args.alpha_e,
+        "alpha_h": args.alpha_h,
+        "embedding_noise_seed": embedding_noise_seed,
+        "head_noise_seed": head_noise_seed,
+        "seed": args.seed,
+        "kappa": stats.kappa,
+        "rms_mode": stats.rms_mode,
+        "kappa_mode": args.kappa_mode,
+        "kappa_override": args.kappa_override,
+        "rms_calibration": str(args.rms_calibration) if args.rms_calibration else None,
+        "algorithm2": args.algorithm2,
+        "attention_compute_dtype": args.attention_compute_dtype,
+        "algorithm2_seed": args.seed + 10000 if args.algorithm2 else None,
+        "attention_block_beta": args.block_beta if args.algorithm2 else 1,
+        "attention_sampling_gamma": args.sampling_gamma,
+        "attention_blockperm_mode": args.blockperm_mode,
+        "attention_rope_frequency_mode": args.rope_frequency_mode,
+        "qk_scale_min": args.qk_scale_min if args.algorithm2 else 1.0,
+        "qk_scale_max": args.qk_scale_max if args.algorithm2 else 1.0,
+        "uvo_condition_max": args.uvo_condition_max if args.algorithm2 else None,
+        "ffn_scale_min": args.ffn_scale_min if args.algorithm2 else 1.0,
+        "ffn_scale_max": args.ffn_scale_max if args.algorithm2 else 1.0,
+        "b_condition_number": key_pair.condition_b,
+        "pq_relative_error_fp64": key_pair.pq_relative_error,
+        "spectral_norm_p": key_pair.spectral_norm_p,
+        "spectral_norm_q": key_pair.spectral_norm_q,
+        "inverse_key_mode": "algorithm1_shared_init_independent_d",
+        "inverse_key_count": 6,
+        "inverse_key_maximum_pq_relative_error_fp64": (inverse_family.maximum_relative_error),
+        "paper_alignment": paper_alignment_profile(args),
+        "git_commit": _git_commit(),
+    }
+    server_metadata = public_metadata(metadata)
+    target.config.aloepri = server_metadata
+    target.generation_config = source.generation_config
+    for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
+        value = getattr(target.generation_config, name, None)
+        setattr(target.generation_config, name, _map_token_id(value, tau))
+        config_value = getattr(target.config, name, None)
+        setattr(target.config, name, _map_token_id(config_value, tau))
+    target.save_pretrained(
+        output_partial, safe_serialization=True, max_shard_size=args.max_shard_size
+    )
+    tokenizer = AutoTokenizer.from_pretrained(args.source, local_files_only=True)
+    tokenizer.save_pretrained(output_partial)
+
+    key_tensors = {
+        "p": key_pair.p,
+        "q": key_pair.q,
+        "tau": tau,
+        "inverse_tau": inverse_tau,
+        **(key_pair.algorithm1_base.tensors() if key_pair.algorithm1_base is not None else {}),
+        **inverse_family.tensors(),
+        **structural_key,
+    }
+    save_file(key_tensors, key_partial / "paper_key.safetensors")
+    # key.json belongs to the trusted client package.  Seeds remain here only for
+    # reproducibility; the server receives neither this directory nor its contents.
+    key_metadata = {**metadata, "vocab_file": "paper_key.safetensors"}
+    (key_partial / "key.json").write_text(
+        json.dumps(key_metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    key_files = [
+        {"path": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
+        for path in (key_partial / "key.json", key_partial / "paper_key.safetensors")
+    ]
+    (key_partial / "key_manifest.json").write_text(
+        json.dumps({"key_id": key_id, "files": key_files}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    files = [
+        {"path": path.name, "bytes": path.stat().st_size, "sha256": sha256_file(path)}
+        for path in sorted(output_partial.iterdir())
+        if path.is_file()
+    ]
+    (output_partial / "aloepri_manifest.json").write_text(
+        json.dumps({"metadata": server_metadata, "files": files}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(output_partial, args.output)
+    os.replace(key_partial, args.key_dir)
+    del target, source
+    if output_partial.exists():
+        shutil.rmtree(output_partial)
+    print(json.dumps(server_metadata, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

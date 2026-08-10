@@ -1,0 +1,35 @@
+schema_version: 1
+model_id: qwen05b-product-candidate
+key_id: qwen05b-product-candidate-key
+source_model: data/models/qwen2.5-0.5b
+output_model: data/checkpoints/qwen2.5-0.5b-product-candidate
+full_key_dir: data/keys/qwen05b-product-candidate-full
+online_key_dir: data/keys/qwen05b-product-candidate-online
+offline_key_dir: data/keys/qwen05b-product-candidate-offline
+evidence_dir: artifacts/verification/qwen05b-product-candidate
+conversion:
+  expansion_h: 128
+  lambda: 0.3
+  seed: 20260803
+  alpha_e: 0.0
+  alpha_h: 0.0
+  dtype: float32
+  rms_mode: exact-metric
+  block_beta: 1
+  sampling_gamma: 1000.0
+  blockperm_mode: gamma-corrected
+  rope_frequency_mode: qwen-actual
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  ffn_scale_min: 0.5
+  ffn_scale_max: 2.0
+  uvo_condition_max: 100.0
+server:
+  host: 127.0.0.1
+  port: 8000
+  device: cuda
+  dtype: float32
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_BEARER_TOKEN
