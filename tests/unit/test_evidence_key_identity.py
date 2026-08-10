@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -35,7 +36,7 @@ def test_online_key_package_has_verifiable_provenance_identity(tmp_path) -> None
 
     identity = key_directory_identity(tmp_path)
 
-    assert [item["path"].split("\\")[-1] for item in identity["files"]] == [
+    assert [Path(item["path"]).name for item in identity["files"]] == [
         "manifest.json",
         "key.json",
         "online_key.safetensors",
