@@ -8,9 +8,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-import sacrebleu
 import torch
-from datasets import load_dataset
 from safetensors import safe_open
 from safetensors.torch import load_file
 from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerBase
@@ -202,6 +200,8 @@ def load_head(model_dir: Path) -> torch.Tensor:
 def pupa_tokens(
     tokenizer_path: Path,
 ) -> tuple[PreTrainedTokenizerBase, list[list[int]], list[list[int]], torch.Tensor]:
+    from datasets import load_dataset
+
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, local_files_only=True)
     dataset = load_dataset("Columbia-NLP/PUPA", "pupa_tnb", split="train")
     units: list[list[int]] = []
@@ -230,6 +230,8 @@ def score_mapping(
     tokenizer: PreTrainedTokenizerBase,
     plaintext_embedding: torch.Tensor,
 ) -> dict[str, float | int | str]:
+    import sacrebleu
+
     token_total = sum(len(text) for text in texts)
     token_correct = sum(
         recovered.get(token, -1) == int(tau[token]) for text in texts for token in text
