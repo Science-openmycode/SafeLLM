@@ -1,4 +1,4 @@
-from aloepri.cli import summarize_product_verification
+from aloepri.cli import append_optional_noise_seed_arguments, summarize_product_verification
 
 
 def _generation() -> dict[str, object]:
@@ -38,9 +38,26 @@ def test_paper_noise_makes_layerwise_difference_diagnostic() -> None:
     assert result["accuracy_gate"] == "external_task_evaluation_required"
 
 
-def test_noisy_model_still_requires_formula_and_runtime_checks() -> None:
+def test_noisy_model_treats_greedy_divergence_as_accuracy_evidence() -> None:
     broken_runtime = _generation()
     broken_runtime["greedy_ids_equal"] = False
+    broken_runtime["next_token_equal_after_inverse"] = False
+    result = summarize_product_verification(
+        {"alpha_e": 0.01, "alpha_h": 0.002},
+        {"overall_pass": True},
+        {"all_pass": False},
+        broken_runtime,
+    )
+    assert result["functional_pass"] is True
+    assert result["runtime_required_checks"] == {
+        "decode_input_is_tau_plain_next": True,
+        "cache_lengths_advance": True,
+    }
+
+
+def test_noisy_model_still_requires_cache_and_coordinate_checks() -> None:
+    broken_runtime = _generation()
+    broken_runtime["decode_cache_length"] = 99
     result = summarize_product_verification(
         {"alpha_e": 0.01, "alpha_h": 0.002},
         {"overall_pass": True},
@@ -48,3 +65,12 @@ def test_noisy_model_still_requires_formula_and_runtime_checks() -> None:
         broken_runtime,
     )
     assert result["functional_pass"] is False
+
+
+def test_optional_noise_seeds_are_forwarded_to_converter() -> None:
+    command = ["python", "converter.py"]
+    append_optional_noise_seed_arguments(
+        command,
+        {"embedding_noise_seed": 7, "head_noise_seed": 11},
+    )
+    assert command[-4:] == ["--embedding-noise-seed", "7", "--head-noise-seed", "11"]

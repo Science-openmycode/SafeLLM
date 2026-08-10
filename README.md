@@ -1,28 +1,19 @@
 # AloePri 在 Qwen2.5-0.5B 上的复现与工程实现
 
-> 2026-08-09 非平凡 BlockPerm 更新：`qwen05b-product-v31-blockperm8` 已在真实 0.5B
-> checkpoint 使用 `beta=8` 和同步 RoPE。316/316 个 checkpoint 张量有独立公式覆盖，
-> HF cache/generation、FastAPI/SSE、vLLM、SGLang 均通过；三个推理后端的 32 个私有
-> greedy token 完全相同。实现、命令、显存和证据路径见
-> `docs/QWEN05B_V31_BLOCKPERM8_FUNCTIONAL_COMPLETION.md`。
+当前唯一正式目标是 `qwen05b-candidate-v47-best-single`。模型配置为 `h=128`、
+`lambda=0.3`、`beta=8`、`alpha_e=0.65`、`alpha_h=0.6`、FP32 权重和 FP64 Attention
+计算。现有 checkpoint 的 24 层公式重建、Algorithm 1、Algorithm 2、词表往返、
+prefill/decode 输入坐标和 KV Cache 长度检查已经通过。
 
-> 2026-08-09 产品闭环更新：v30 使用与论文相同的 Embedding/LM Head 独立高斯加噪方法，参数调为
-> `alpha_e=0.01`、`alpha_h=0.002`。292/292 个私有张量公式重建、token 逆置换、KV Cache、
-> FastAPI、在线/离线密钥拆分和真实中文问答均已通过；218 道校准题与原模型同分。v30 的
-> 权重级 VMA 未通过，因此它是可运行的 Utility 产品档，不是强攻击安全档。强噪声 v32/v34
-> 的 VMA 通过，但 0.5B 精度超过停止线。完整实测表、命令和工件见
-> `docs/QWEN05B_NOISE_TUNING_AND_PRODUCT_STATUS.md`。
+版本 0.2.0 将攻击实验拆为“可信观测生成 → 不读取目标密钥的攻击 → 独立真值评分”，
+覆盖 Gate-IA、修正维度后的 Attention-IA、IMA、Attention/Hidden ISA、TFMA 和 SDA。
+正式验收配置为 `configs/acceptance/qwen05b_v47.yaml`，当前报告由原始工件重新计算，
+缺失的全量攻击、五项完整精度、产品 100 问、抓包和性能工件直接记为 `NOT_TESTED`，
+不会再引用 v15/v29/v31 的结果替代 v47。
 
-> 2026-08-09 当前正确性优先基线为 v29：精确度量 RMSNorm、$\beta=1$、无噪声、
-> Attention Q/K/V/O 权重与计算使用 FP64，其余权重使用 FP32，高斯 $U_{vo}$ 条件数
-> 上限 42。固定 200 条中英文 prompt 达到 200/200 greedy 序列逐 token 一致；
-> prefill、decode、KV Cache、HTTP、SSE、在线/离线拆钥和隐私边界均已实测。
-> 严格的 460 个内部边界仍为 457/460，因此 v29 是“功能验收工件”，不是通过全部
-> 隐私/精度门禁的安全发布。当前命令与证据见
-> `docs/QWEN05B_V29_FUNCTIONAL_RELEASE.md`；逐项论文对齐结论见
-> `docs/QWEN05B_V29_PAPER_ALIGNMENT_AUDIT.md`。下文 v15 数据仅是历史实验。
-
-本仓库只处理 `Qwen2.5-0.5B-Instruct`。v15 使用论文数值超参数和公式勘误后的 `corrected-paper` 算法；无噪声消融和低噪声工程参数分别保存为独立 checkpoint，不把不同配置的结果混在一起。
+直接执行位置和每条命令见 `docs/QWEN05B_V47_EXECUTION.md`；0.2.0 的代码变更和兼容性
+说明见 `docs/VERSION_0.2.0.md`。README 后文的 v15/v16/v17/v29/v30/v31 数值仅作为历史
+实验记录，不进入 v47 的验收结论。
 
 ## 1. 论文要求实现的完整流程
 

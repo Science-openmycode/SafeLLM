@@ -297,7 +297,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="PUPA-scoped paper VMA for dense Qwen")
     parser.add_argument("--original", type=Path, required=True)
     parser.add_argument("--private", type=Path, required=True)
-    parser.add_argument("--key-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--key-dir", type=Path)
+    source.add_argument("--candidate-observations", type=Path)
     parser.add_argument("--candidate-sizes", type=int, nargs="+", default=[1024, 4096])
     parser.add_argument("--layers", type=int, nargs="+", default=[0, 4, 8, 12, 16, 20, 23])
     parser.add_argument(
@@ -322,10 +324,25 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    tau = load_file(args.key_dir / "paper_key.safetensors", device="cpu")["tau"]
     tokenizer, texts, units, query_ids = pupa_tokens(args.original)
+    candidate_artifact: dict[str, object] | None = None
+    if args.candidate_observations is not None:
+        candidate_artifact = json.loads(
+            args.candidate_observations.read_text(encoding="utf-8")
+        )
+        if (
+            candidate_artifact.get("schema") != "aloepri-vma-candidate-observations-v1"
+            or candidate_artifact.get("mapping_disclosed") is not False
+            or candidate_artifact.get("query_ids") != query_ids.tolist()
+        ):
+            parser.error("candidate observation artifact is incompatible with PUPA queries")
+        tau = None
+        vocabulary_size = int(candidate_artifact["vocabulary_size"])
+    else:
+        tau = load_file(args.key_dir / "paper_key.safetensors", device="cpu")["tau"]
+        vocabulary_size = tau.numel()
     max_candidates = max(args.candidate_sizes)
-    if max_candidates > tau.numel():
+    if max_candidates > vocabulary_size:
         parser.error("candidate size exceeds vocabulary")
     if min(args.candidate_sizes) < query_ids.numel():
         parser.error(
@@ -333,18 +350,30 @@ def main() -> None:
         )
 
     generator = torch.Generator().manual_seed(20260805)
-    query_mask = torch.zeros(tau.numel(), dtype=torch.bool)
-    query_mask[query_ids] = True
-    decoys = torch.randperm(tau.numel(), generator=generator)
-    decoys = decoys[~query_mask[decoys]][: max_candidates - query_ids.numel()]
-    plain_candidates = torch.cat((query_ids, decoys))
+    if candidate_artifact is not None:
+        plain_candidates = torch.tensor(candidate_artifact["plain_candidates"])
+        if plain_candidates.numel() < max_candidates:
+            parser.error("candidate artifact does not cover requested maximum")
+    else:
+        query_mask = torch.zeros(vocabulary_size, dtype=torch.bool)
+        query_mask[query_ids] = True
+        decoys = torch.randperm(vocabulary_size, generator=generator)
+        decoys = decoys[~query_mask[decoys]][: max_candidates - query_ids.numel()]
+        plain_candidates = torch.cat((query_ids, decoys))
 
     cache_inputs: dict[str, object] = {
         "algorithm_version": CACHE_ALGORITHM_VERSION,
         "original": verified_model_identity(args.original),
         "private": verified_model_identity(args.private),
-        "key_manifest_sha256": sha256_file(args.key_dir / "key_manifest.json"),
-        "paper_key_sha256": sha256_file(args.key_dir / "paper_key.safetensors"),
+        "candidate_observations_sha256": (
+            sha256_file(args.candidate_observations) if args.candidate_observations else None
+        ),
+        "key_manifest_sha256": (
+            sha256_file(args.key_dir / "key_manifest.json") if args.key_dir else None
+        ),
+        "paper_key_sha256": (
+            sha256_file(args.key_dir / "paper_key.safetensors") if args.key_dir else None
+        ),
         "query_ids_sha256": tensor_sha256(query_ids),
         "plain_candidates_sha256": tensor_sha256(plain_candidates),
         "candidate_sizes": args.candidate_sizes,
@@ -391,7 +420,8 @@ def main() -> None:
             "each pii_units entry, stripped, tokenizer.encode(add_special_tokens=False)"
         ),
         "unique_text_and_pii_token_ids": query_ids.numel(),
-        "vocabulary_size": tau.numel(),
+        "vocabulary_size": vocabulary_size,
+        "target_key_loaded": tau is not None,
         "candidate_space_note": (
             "all PUPA user_query/PII tokens plus deterministic random vocabulary decoys"
         ),
@@ -406,10 +436,16 @@ def main() -> None:
 
     for candidate_size in sorted(set(args.candidate_sizes)):
         candidates = plain_candidates[:candidate_size]
-        private_candidates = tau[candidates]
-        private_candidates = private_candidates[
-            torch.randperm(candidate_size, generator=generator)
-        ]
+        if candidate_artifact is not None:
+            private_candidates = torch.tensor(
+                candidate_artifact["private_candidates_by_size"][str(candidate_size)],
+                dtype=torch.int64,
+            )
+        else:
+            private_candidates = tau[candidates]
+            private_candidates = private_candidates[
+                torch.randperm(candidate_size, generator=generator)
+            ]
         query_embedding = original_embedding[query_ids].to(device)
         candidate_embedding = original_embedding[candidates].to(device)
         private_candidate_embedding = private_embedding[private_candidates].to(device)
@@ -586,18 +622,26 @@ def main() -> None:
                 int(token): int(predicted_private_ids[index])
                 for index, token in enumerate(query_ids)
             }
-            result = score_mapping(
-                recovered,
-                tau,
-                texts,
-                units,
-                tokenizer=tokenizer,
-                plaintext_embedding=original_embedding,
-            )
-            result["vote_count"] = len(predictions)
-            result["unique_mapping_recovery_rate"] = sum(
-                recovered[int(token)] == int(tau[token]) for token in query_ids
-            ) / query_ids.numel()
+            if tau is None:
+                result = {
+                    "plain_token_ids": query_ids.tolist(),
+                    "predicted_private_ids": predicted_private_ids.tolist(),
+                    "target_key_loaded": False,
+                    "vote_count": len(predictions),
+                }
+            else:
+                result = score_mapping(
+                    recovered,
+                    tau,
+                    texts,
+                    units,
+                    tokenizer=tokenizer,
+                    plaintext_embedding=original_embedding,
+                )
+                result["vote_count"] = len(predictions)
+                result["unique_mapping_recovery_rate"] = sum(
+                    recovered[int(token)] == int(tau[token]) for token in query_ids
+                ) / query_ids.numel()
             size_results[combination] = result
         payload["results"][str(candidate_size)] = size_results  # type: ignore[index]
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import math
@@ -44,7 +45,10 @@ def tensor_map(root: Path) -> dict[str, Path]:
 
 def load_tensor(mapping: dict[str, Path], name: str) -> Tensor:
     with safe_open(mapping[name], framework="pt", device="cpu") as handle:
-        value: Tensor = handle.get_tensor(name)
+        # Detach the tensor from the safetensors memory map before closing the
+        # handle.  Keeping views into many multi-GB shards alive can exhaust
+        # the Windows commit limit and has produced os error 1455/0xC0000005.
+        value: Tensor = handle.get_tensor(name).clone()
         return value
 
 
@@ -277,20 +281,15 @@ def main() -> None:
             "reason": "checkpoint key package predates storage of B,E,F,Z",
         }
 
-    embedding_dtype = load_tensor(private_map, "model.embed_tokens.weight").dtype
+    private_embedding_sample = load_tensor(private_map, "model.embed_tokens.weight")
+    embedding_dtype = private_embedding_sample.dtype
+    del private_embedding_sample
     rms_mode = str(metadata.get("rms_mode", "paper_kappa"))
     embedding_seed = int(metadata["embedding_noise_seed"])
     head_seed = int(metadata["head_noise_seed"])
     source_embedding = load_tensor(source_map, "model.embed_tokens.weight")
-    source_head_name = (
-        "lm_head.weight" if "lm_head.weight" in source_map else "model.embed_tokens.weight"
-    )
-    source_head = load_tensor(source_map, source_head_name)
     noisy_embedding, _ = add_paper_weight_noise(
         source_embedding, alpha=float(metadata["alpha_e"]), seed=embedding_seed
-    )
-    noisy_head, _ = add_paper_weight_noise(
-        source_head, alpha=float(metadata["alpha_h"]), seed=head_seed
     )
 
     records: list[dict[str, Any]] = []
@@ -304,6 +303,8 @@ def main() -> None:
         expected=embedding_expected,
         actual=load_tensor(private_map, "model.embed_tokens.weight"),
     )
+    del source_embedding, noisy_embedding, embedding_expected
+    gc.collect()
 
     calibration_path = metadata.get("rms_calibration")
     kappas: dict[str, float] = {}
@@ -680,6 +681,13 @@ def main() -> None:
             expected=key["q"].double() @ key["q"].double().mT,
             actual=load_tensor(private_map, metric_name),
         )
+    source_head_name = (
+        "lm_head.weight" if "lm_head.weight" in source_map else "model.embed_tokens.weight"
+    )
+    source_head = load_tensor(source_map, source_head_name)
+    noisy_head, _ = add_paper_weight_noise(
+        source_head, alpha=float(metadata["alpha_h"]), seed=head_seed
+    )
     private_head_expected = (
         (noisy_head.float() * final_norm.float().unsqueeze(0)) @ key["q.head"].float().mT
     ).index_select(0, inverse_permutation(tau))
@@ -690,6 +698,8 @@ def main() -> None:
         expected=private_head_expected,
         actual=load_tensor(private_map, "lm_head.weight"),
     )
+    del source_head, noisy_head, private_head_expected
+    gc.collect()
 
     checked_names = {record["name"] for record in records}
     expected_scope_names = {

@@ -33,6 +33,18 @@ def run_checked(arguments: list[str]) -> None:
     subprocess.run(arguments, check=True)
 
 
+def append_optional_noise_seed_arguments(
+    command: list[str], conversion: dict[str, Any]
+) -> None:
+    for key, option in (
+        ("embedding_noise_seed", "--embedding-noise-seed"),
+        ("head_noise_seed", "--head-noise-seed"),
+    ):
+        value = conversion.get(key)
+        if value is not None:
+            command.extend((option, str(int(value))))
+
+
 def summarize_product_verification(
     conversion: dict[str, Any],
     formula: dict[str, Any],
@@ -61,7 +73,17 @@ def summarize_product_verification(
             == int(generation.get("private_prefill_cache_length", -2)) + 1
         ),
     }
-    runtime_pass = all(runtime_checks.values())
+    runtime_required_checks = (
+        {
+            "decode_input_is_tau_plain_next": runtime_checks[
+                "decode_input_is_tau_plain_next"
+            ],
+            "cache_lengths_advance": runtime_checks["cache_lengths_advance"],
+        }
+        if noise_active
+        else runtime_checks
+    )
+    runtime_pass = all(runtime_required_checks.values())
     # Non-zero paper noise intentionally changes activations.  Its utility is
     # judged by task-level evaluation, not the zero-noise NRMSE identity gate.
     layerwise_required = not noise_active
@@ -79,6 +101,7 @@ def summarize_product_verification(
             "first_failure": layerwise.get("first_failure"),
         },
         "runtime_checks": runtime_checks,
+        "runtime_required_checks": runtime_required_checks,
         "runtime_pass": runtime_pass,
         "functional_pass": functional_pass,
         "accuracy_gate": "external_task_evaluation_required" if noise_active else "not_applicable",
@@ -142,6 +165,7 @@ def convert(
         str(cfg["key_id"]),
         "--algorithm2",
     ]
+    append_optional_noise_seed_arguments(command, conversion)
     run_checked(command)
     split_key_package(
         Path(cfg["full_key_dir"]),

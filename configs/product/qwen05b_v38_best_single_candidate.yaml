@@ -1,0 +1,38 @@
+schema_version: 1
+model_id: qwen05b-candidate-v38-best-single
+key_id: dev-qwen05b-candidate-v38-best-single
+source_model: data/models/qwen2.5-0.5b
+output_model: data/packages/qwen05b-candidate-v38-best-single
+full_key_dir: data/keys/dev-qwen05b-candidate-v38-best-single
+online_key_dir: data/keys/qwen05b-candidate-v38-best-single-online
+offline_key_dir: data/keys/qwen05b-candidate-v38-best-single-offline
+evidence_dir: artifacts/verification/qwen05b-candidate-v38-best-single
+conversion:
+  expansion_h: 128
+  lambda: 0.3
+  seed: 20260803
+  alpha_e: 0.65
+  alpha_h: 0.6
+  embedding_noise_seed: 20260807
+  head_noise_seed: 20260808
+  dtype: float32
+  attention_compute_dtype: float64
+  rms_mode: exact-metric
+  block_beta: 8
+  sampling_gamma: 1000.0
+  blockperm_mode: gamma-corrected
+  rope_frequency_mode: qwen-actual
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  ffn_scale_min: 0.5
+  ffn_scale_max: 2.0
+  uvo_condition_max: 42.0
+server:
+  host: 127.0.0.1
+  port: 8000
+  device: cuda
+  dtype: auto
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_BEARER_TOKEN

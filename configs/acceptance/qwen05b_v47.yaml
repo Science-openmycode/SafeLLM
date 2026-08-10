@@ -1,0 +1,124 @@
+schema: aloepri-qwen05b-acceptance-v2
+release_version: 0.2.0
+product_config: configs/product/qwen05b_v47_best_single_candidate.yaml
+source_model: data/models/qwen2.5-0.5b
+private_model: data/packages/qwen05b-candidate-v47-best-single
+full_key_dir: data/keys/dev-qwen05b-candidate-v47-best-single
+online_key_dir: data/keys/qwen05b-candidate-v47-best-single-online
+offline_key_dir: data/keys/qwen05b-candidate-v47-best-single-offline
+evidence:
+  - id: formula
+    path: artifacts/verification/qwen05b-candidate-v47-best-single/formula.json
+    binding: formula
+    rules:
+      - {path: vocabulary_round_trip_pass, equals: true}
+      - {path: algorithm1_pass, equals: true}
+      - {path: algorithm2.pass, equals: true}
+      - {path: layer_count_checked, equals: 24}
+  - id: runtime
+    path: artifacts/verification/qwen05b-candidate-v47-best-single/verification_summary.json
+    rules:
+      - {path: formula_pass, equals: true}
+      - {path: runtime_pass, equals: true}
+      - {path: functional_pass, equals: true}
+  - id: direct_weight_match
+    path: artifacts/privacy/v47/direct-weight-score.json
+    binding: isolated_score
+    rules:
+      - {path: top1_recovery_rate, maximum: 0.15}
+  - id: vma
+    path: artifacts/privacy/v47/vma-score.json
+    binding: isolated_score
+    rules:
+      - {path: top1_recovery_rate, maximum: 0.15}
+      - {path: ttrsr, maximum: 0.15}
+      - {path: piirsr, maximum: 0.03}
+      - {path: bleu4, maximum: 2.5}
+      - {path: cosine_similarity, maximum: 0.5}
+  - id: gate_ia
+    path: artifacts/privacy/v47/gate-ia-score.json
+    binding: isolated_score
+    rules:
+      - {path: top1_recovery_rate, maximum: 0.15}
+  - id: attention_ia
+    path: artifacts/privacy/v47/attention-ia-score.json
+    binding: isolated_score
+    rules:
+      - {path: top1_recovery_rate, maximum: 0.15}
+  - id: ima
+    path: artifacts/privacy/v47/ima-score.json
+    binding: isolated_score
+    rules:
+      - {path: ttrsr, maximum: 0.15}
+  - id: isa_attention
+    path: artifacts/privacy/v47/isa-attention-score.json
+    binding: isolated_score
+    rules:
+      - {path: ttrsr, maximum: 0.15}
+  - id: tfma
+    path: artifacts/privacy/v47/tfma-score.json
+    binding: isolated_score
+    rules:
+      - {path: top10_recovery_rate, maximum: 0.20}
+      - {path: attack_protocol.formal_corpus_complete, equals: true}
+  - id: sda
+    path: artifacts/privacy/v47/sda-score.json
+    binding: isolated_score
+    rules:
+      - {path: ttrsr, maximum: 0.15}
+      - {path: bleu4, maximum: 2.5}
+      - {path: attack_protocol.formal_corpus_complete, equals: true}
+  - id: known_plaintext
+    path: artifacts/privacy/v47/known-plaintext-score.json
+    binding: isolated_score
+    rules:
+      - {path: ttrsr, maximum: 0.15}
+  - id: mmlu
+    path: artifacts/accuracy/v47-final-mmlu-comparison.json
+    rules:
+      - {path: absolute_change, minimum: -0.035}
+      - {path: paired_change_95_percent_ci.0, minimum: -0.035}
+  - id: ceval
+    path: artifacts/accuracy/v47-final-ceval-comparison.json
+    rules:
+      - {path: absolute_change, minimum: -0.035}
+      - {path: paired_change_95_percent_ci.0, minimum: -0.035}
+  - id: piqa
+    path: artifacts/accuracy/v47-final-piqa-comparison.json
+    rules:
+      - {path: absolute_change, minimum: -0.035}
+      - {path: paired_change_95_percent_ci.0, minimum: -0.035}
+  - id: ifeval
+    path: artifacts/accuracy/v47-final-ifeval-comparison.json
+    rules:
+      - {path: metrics.prompt_level_strict_acc.absolute_change, minimum: -0.035}
+      - {path: metrics.prompt_level_strict_acc.paired_change_95_percent_ci.0, minimum: -0.035}
+      - {path: metrics.inst_level_strict_acc.absolute_change, minimum: -0.035}
+      - {path: metrics.inst_level_strict_acc.paired_change_95_percent_ci.0, minimum: -0.035}
+      - {path: metrics.prompt_level_loose_acc.absolute_change, minimum: -0.035}
+      - {path: metrics.prompt_level_loose_acc.paired_change_95_percent_ci.0, minimum: -0.035}
+      - {path: metrics.inst_level_loose_acc.absolute_change, minimum: -0.035}
+      - {path: metrics.inst_level_loose_acc.paired_change_95_percent_ci.0, minimum: -0.035}
+  - id: humaneval
+    path: artifacts/accuracy/v47-final-humaneval-comparison.json
+    rules:
+      - {path: absolute_change, minimum: -0.035}
+      - {path: paired_change_95_percent_ci.0, minimum: -0.035}
+  - id: product_questions
+    path: artifacts/product/v47/question-gate.json
+    rules:
+      - {path: empty_answers, equals: 0}
+      - {path: garbled_answers, equals: 0}
+      - {path: repetition_failures, equals: 0}
+      - {path: chat_template_failures, equals: 0}
+  - id: transport_privacy
+    path: artifacts/product/v47/transport-privacy.json
+    rules:
+      - {path: plaintext_found, equals: false}
+      - {path: plain_token_sequence_found, equals: false}
+      - {path: online_key_on_server, equals: false}
+  - id: performance
+    path: artifacts/performance/v47/comparison.json
+    rules:
+      - {path: ttft_relative_degradation, maximum: 0.15}
+      - {path: tpot_relative_degradation, maximum: 0.15}

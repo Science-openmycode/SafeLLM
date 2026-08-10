@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import cast
 
 import torch
 from run_vma_pupa import load_head, load_tensor, pupa_tokens, score_mapping
@@ -39,8 +40,25 @@ def main() -> None:
     parser.add_argument("--layers", type=int, nargs="+", default=[0, 4, 8, 12, 16, 20, 23])
     parser.add_argument("--h", type=int, default=128)
     parser.add_argument("--lambda", dest="coefficient_lambda", type=float, default=0.3)
+    parser.add_argument(
+        "--embedding-noise-seed",
+        type=int,
+        help="Independent W_e Gaussian seed; defaults to each structural seed + 2.",
+    )
+    parser.add_argument(
+        "--head-noise-seed",
+        type=int,
+        help="Independent W_h Gaussian seed; defaults to each structural seed + 3.",
+    )
+    parser.add_argument(
+        "--stop-ttrsr",
+        type=float,
+        help="Stop after both VMA paths reach this maximum TTRSR",
+    )
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.stop_ttrsr is not None and not 0.0 <= args.stop_ttrsr <= 1.0:
+        parser.error("--stop-ttrsr must be between 0 and 1")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer, texts, units, query_ids = pupa_tokens(args.model)
@@ -109,8 +127,20 @@ def main() -> None:
             private_gates[layer] = private_gates[layer].index_select(0, order)
 
         for alpha_e, alpha_h in args.pairs:
-            noisy_embedding, _ = add_paper_weight_noise(embedding, alpha=alpha_e, seed=seed + 2)
-            noisy_head, _ = add_paper_weight_noise(head, alpha=alpha_h, seed=seed + 3)
+            embedding_noise_seed = (
+                args.embedding_noise_seed
+                if args.embedding_noise_seed is not None
+                else seed + 2
+            )
+            head_noise_seed = (
+                args.head_noise_seed if args.head_noise_seed is not None else seed + 3
+            )
+            noisy_embedding, _ = add_paper_weight_noise(
+                embedding, alpha=alpha_e, seed=embedding_noise_seed
+            )
+            noisy_head, _ = add_paper_weight_noise(
+                head, alpha=alpha_h, seed=head_noise_seed
+            )
             private_embedding = transform_embedding(noisy_embedding, key.p, tau).to(device)
             private_head = transform_head(noisy_head, final_norm, key.q, tau).to(device)
 
@@ -143,6 +173,8 @@ def main() -> None:
 
             result: dict[str, object] = {
                 "seed": seed,
+                "embedding_noise_seed": embedding_noise_seed,
+                "head_noise_seed": head_noise_seed,
                 "alpha_e": alpha_e,
                 "alpha_h": alpha_h,
             }
@@ -179,6 +211,14 @@ def main() -> None:
             del private_embedding, private_head
             if device == "cuda":
                 torch.cuda.empty_cache()
+            if args.stop_ttrsr is not None:
+                wewh = cast(dict[str, object], result["We_Wh"])
+                wegate = cast(dict[str, object], result["We_Wgate"])
+                if (
+                    float(cast(float, wewh["ttrsr"])) <= args.stop_ttrsr
+                    and float(cast(float, wegate["ttrsr"])) <= args.stop_ttrsr
+                ):
+                    return
 
 
 if __name__ == "__main__":
