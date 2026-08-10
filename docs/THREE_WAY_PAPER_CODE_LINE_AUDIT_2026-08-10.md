@@ -1,8 +1,11 @@
 # AloePri 三方逐行复现审计
 
-审计日期：2026-08-10  
-本地代码：`eaa5da9fe8d49023583b60eb755f4995a86c9d91`  
-对方代码：`sheng1feng/Aloepri@60e8ea3cc04353b7a0058e9c86d67461c7d25763`  
+审计日期：2026-08-10
+
+本地代码：`eaa5da9fe8d49023583b60eb755f4995a86c9d91`
+
+对方代码：`sheng1feng/Aloepri@60e8ea3cc04353b7a0058e9c86d67461c7d25763`
+
 目标模型：`Qwen2.5-0.5B-Instruct`
 
 ## 1. 结论
@@ -629,4 +632,3 @@ uv run pytest -q tests/test_keymat.py tests/test_attention_keys.py `
 | “现有 vLLM/SGLang 无需修改” | 未满足 |
 | 对方仓库可作为 v2 官方基准 | 不可以 |
 | 对方仓库可借鉴部分 | IMA、VMA 报告结构 |
-
