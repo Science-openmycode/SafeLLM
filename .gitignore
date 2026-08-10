@@ -27,3 +27,4 @@ tmp/
 htmlcov/
 build/
 dist/
+release/

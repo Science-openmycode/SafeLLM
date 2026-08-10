@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 import torch
@@ -117,6 +119,7 @@ class PrivateStreamChunk:
     text: str
     elapsed_ms: float
     accumulated_text: str = ""
+    privacy: dict[str, float | int | str] | None = None
 
 
 class PrivateInferenceClient:
@@ -134,6 +137,12 @@ class PrivateInferenceClient:
         transport_mode: str = "token_ids",
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        parsed_url = urlsplit(self.base_url)
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+            raise ValueError("base_url must be an absolute HTTP(S) URL")
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        if parsed_url.scheme != "https" and parsed_url.hostname not in local_hosts:
+            raise ValueError("remote AloePri servers require HTTPS")
         self.tokenizer = tokenizer
         self.key = key
         if transport_mode not in {"token_ids", "encoded_text"}:
@@ -229,7 +238,7 @@ class PrivateInferenceClient:
         *,
         privacy_mode: str,
         epsilon1: float | None,
-        seed: int | None,
+        privacy_seed: int | None,
     ) -> tuple[list[int], M1Result | None]:
         if privacy_mode == "permutation":
             return plain_ids, None
@@ -241,9 +250,25 @@ class PrivateInferenceClient:
             torch.tensor(plain_ids, dtype=torch.int64),
             vocab_size=self.key.tau.numel(),
             epsilon1=epsilon1,
-            seed=seed,
+            seed=privacy_seed if privacy_seed is not None else secrets.randbits(63),
         )
         return result.token_ids.tolist(), result
+
+    @staticmethod
+    def _privacy_ledger(
+        privacy: M1Result | None, epsilon1: float | None
+    ) -> dict[str, float | int | str] | None:
+        if privacy is None:
+            return None
+        if epsilon1 is None:
+            raise AssertionError("M1 result requires epsilon1")
+        return {
+            "mode": "rmdp-tokenwise",
+            "epsilon1": epsilon1,
+            "changed_tokens": privacy.changed_tokens,
+            "total_tokens": privacy.total_tokens,
+            "expected_change_rate": privacy.expected_change_rate,
+        }
 
     def _chat_ids(self, messages: list[dict[str, str]]) -> list[int]:
         encoded = self.tokenizer.apply_chat_template(
@@ -277,10 +302,14 @@ class PrivateInferenceClient:
         seed: int | None = None,
         privacy_mode: str = "permutation",
         epsilon1: float | None = None,
+        privacy_seed: int | None = None,
     ) -> PrivateGeneration:
         plain_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
         plain_ids, privacy = self._apply_privacy(
-            plain_ids, privacy_mode=privacy_mode, epsilon1=epsilon1, seed=seed
+            plain_ids,
+            privacy_mode=privacy_mode,
+            epsilon1=epsilon1,
+            privacy_seed=privacy_seed,
         )
         response = self._client.post(
             self._endpoint(),
@@ -298,17 +327,7 @@ class PrivateInferenceClient:
         if payload.model_id != self.key.model_id or payload.key_id != self.key.key_id:
             raise ValueError("server response model/key mismatch")
         output_ids = self.key.decode_stream(private_output_ids)
-        privacy_ledger: dict[str, float | int | str] | None = None
-        if privacy is not None:
-            if epsilon1 is None:
-                raise AssertionError("M1 result requires epsilon1")
-            privacy_ledger = {
-                "mode": "rmdp-tokenwise",
-                "epsilon1": epsilon1,
-                "changed_tokens": privacy.changed_tokens,
-                "total_tokens": privacy.total_tokens,
-                "expected_change_rate": privacy.expected_change_rate,
-            }
+        privacy_ledger = self._privacy_ledger(privacy, epsilon1)
         return PrivateGeneration(
             request_id=payload.request_id,
             text=self._decode(output_ids),
@@ -331,12 +350,13 @@ class PrivateInferenceClient:
         seed: int | None = None,
         privacy_mode: str = "permutation",
         epsilon1: float | None = None,
+        privacy_seed: int | None = None,
     ) -> PrivateGeneration:
         plain_ids, privacy = self._apply_privacy(
             self._chat_ids(messages),
             privacy_mode=privacy_mode,
             epsilon1=epsilon1,
-            seed=seed,
+            privacy_seed=privacy_seed,
         )
         response = self._client.post(
             self._endpoint(),
@@ -354,17 +374,7 @@ class PrivateInferenceClient:
         if payload.model_id != self.key.model_id or payload.key_id != self.key.key_id:
             raise ValueError("server response model/key mismatch")
         output_ids = self.key.decode_stream(private_output_ids)
-        privacy_ledger: dict[str, float | int | str] | None = None
-        if privacy is not None:
-            if epsilon1 is None:
-                raise AssertionError("M1 result requires epsilon1")
-            privacy_ledger = {
-                "mode": "rmdp-tokenwise",
-                "epsilon1": epsilon1,
-                "changed_tokens": privacy.changed_tokens,
-                "total_tokens": privacy.total_tokens,
-                "expected_change_rate": privacy.expected_change_rate,
-            }
+        privacy_ledger = self._privacy_ledger(privacy, epsilon1)
         return PrivateGeneration(
             request_id=payload.request_id,
             text=self._decode(output_ids),
@@ -386,8 +396,6 @@ class PrivateInferenceClient:
         top_p: float = 1.0,
         seed: int | None = None,
     ) -> Iterable[PrivateStreamChunk]:
-        import json
-
         plain_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
         body = self._request_body(
             plain_ids,
@@ -397,34 +405,7 @@ class PrivateInferenceClient:
             top_p=top_p,
             seed=seed,
         )
-        decoded_ids: list[int] = []
-        accumulated_text = ""
-        with self._client.stream("POST", self._endpoint(stream=True), json=body) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line.startswith("data: "):
-                    continue
-                event = json.loads(line.removeprefix("data: "))
-                if event.get("done"):
-                    break
-                private_id = self._event_private_id(event)
-                output_id = int(self.key.decode_ids(torch.tensor([private_id]))[0])
-                decoded_ids.append(output_id)
-                decoded_text = self._decode(decoded_ids)
-                text_delta = (
-                    decoded_text[len(accumulated_text) :]
-                    if decoded_text.startswith(accumulated_text)
-                    else decoded_text
-                )
-                accumulated_text = decoded_text
-                yield PrivateStreamChunk(
-                    request_id=str(event["request_id"]),
-                    sequence_no=int(event["sequence_no"]),
-                    output_id=output_id,
-                    text=text_delta,
-                    elapsed_ms=float(event["elapsed_ms"]),
-                    accumulated_text=accumulated_text,
-                )
+        yield from self._stream_ids(body, privacy=None)
 
     def stream_chat(
         self,
@@ -437,12 +418,13 @@ class PrivateInferenceClient:
         seed: int | None = None,
         privacy_mode: str = "permutation",
         epsilon1: float | None = None,
+        privacy_seed: int | None = None,
     ) -> Iterable[PrivateStreamChunk]:
-        plain_ids, _privacy = self._apply_privacy(
+        plain_ids, privacy = self._apply_privacy(
             self._chat_ids(messages),
             privacy_mode=privacy_mode,
             epsilon1=epsilon1,
-            seed=seed,
+            privacy_seed=privacy_seed,
         )
         body = self._request_body(
             plain_ids,
@@ -452,16 +434,46 @@ class PrivateInferenceClient:
             top_p=top_p,
             seed=seed,
         )
+        yield from self._stream_ids(body, privacy=self._privacy_ledger(privacy, epsilon1))
+
+    def _stream_ids(
+        self,
+        body: dict[str, Any],
+        *,
+        privacy: dict[str, float | int | str] | None,
+    ) -> Iterable[PrivateStreamChunk]:
         decoded_ids: list[int] = []
         accumulated_text = ""
+        expected_request_id: str | None = None
+        expected_sequence_no = 0
+        done = False
         with self._client.stream("POST", self._endpoint(stream=True), json=body) as response:
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line.startswith("data: "):
                     continue
                 event = json.loads(line.removeprefix("data: "))
+                if not isinstance(event, dict):
+                    raise ValueError("SSE data event must be a JSON object")
+                request_id = str(event.get("request_id", ""))
+                if not request_id:
+                    raise ValueError("SSE event has no request_id")
+                if expected_request_id is None:
+                    expected_request_id = request_id
+                elif request_id != expected_request_id:
+                    raise ValueError("SSE request_id changed during stream")
                 if event.get("done"):
-                    break
+                    if done:
+                        raise ValueError("SSE stream contains more than one done event")
+                    done = True
+                    continue
+                if done:
+                    raise ValueError("SSE token received after done event")
+                sequence_no = int(event["sequence_no"])
+                if sequence_no != expected_sequence_no:
+                    raise ValueError(
+                        f"SSE sequence mismatch: expected {expected_sequence_no}, got {sequence_no}"
+                    )
                 private_id = self._event_private_id(event)
                 output_id = int(
                     self.key.decode_ids(torch.tensor([private_id], dtype=torch.int64))[0]
@@ -475,10 +487,14 @@ class PrivateInferenceClient:
                 )
                 accumulated_text = decoded_text
                 yield PrivateStreamChunk(
-                    request_id=str(event["request_id"]),
-                    sequence_no=int(event["sequence_no"]),
+                    request_id=request_id,
+                    sequence_no=sequence_no,
                     output_id=output_id,
                     text=text_delta,
                     elapsed_ms=float(event["elapsed_ms"]),
                     accumulated_text=accumulated_text,
+                    privacy=privacy,
                 )
+                expected_sequence_no += 1
+        if not done:
+            raise ValueError("SSE stream ended before the done event")

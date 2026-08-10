@@ -45,8 +45,21 @@ def create_app(
     async def security_boundary(request: Request, call_next: object) -> object:
         if request.method == "POST":
             content_length = request.headers.get("content-length")
-            if content_length is not None and int(content_length) > max_request_bytes:
-                return JSONResponse(status_code=413, content={"detail": "request body too large"})
+            if content_length is not None:
+                try:
+                    declared_bytes = int(content_length)
+                except ValueError:
+                    return JSONResponse(
+                        status_code=400, content={"detail": "invalid content-length"}
+                    )
+                if declared_bytes < 0:
+                    return JSONResponse(
+                        status_code=400, content={"detail": "invalid content-length"}
+                    )
+                if declared_bytes > max_request_bytes:
+                    return JSONResponse(
+                        status_code=413, content={"detail": "request body too large"}
+                    )
             if bearer_token is not None:
                 supplied = request.headers.get("authorization", "")
                 expected = f"Bearer {bearer_token}"

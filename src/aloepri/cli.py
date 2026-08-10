@@ -14,6 +14,7 @@ import yaml
 from aloepri.client.sdk import PrivateInferenceClient
 from aloepri.packaging import build_server_package, inspect_server_package, split_key_package
 from aloepri.privacy.rmdp import calculate_rmdp_budget, expected_m1_change_rate
+from aloepri.release import build_product_release, inspect_product_release
 from aloepri.serving.app import create_app
 from aloepri.serving.hf_runtime import PrivateHFRuntime
 
@@ -231,8 +232,17 @@ def serve(
     host = str(server.get("host", "127.0.0.1"))
     bearer_env = str(server.get("bearer_token_env", "ALOEPRI_BEARER_TOKEN"))
     bearer_token = os.environ.get(bearer_env)
-    if host not in {"127.0.0.1", "localhost", "::1"} and not bearer_token:
-        raise typer.BadParameter(f"remote binding requires bearer token in {bearer_env}")
+    local_host = host in {"127.0.0.1", "localhost", "::1"}
+    tls_certfile = server.get("tls_certfile")
+    tls_keyfile = server.get("tls_keyfile")
+    proxy_tls = bool(server.get("tls_terminated_by_proxy", False))
+    if not local_host:
+        if not bearer_token:
+            raise typer.BadParameter(f"remote binding requires bearer token in {bearer_env}")
+        if not proxy_tls and not (tls_certfile and tls_keyfile):
+            raise typer.BadParameter(
+                "remote binding requires a TLS certificate/key or tls_terminated_by_proxy=true"
+            )
     runtime = PrivateHFRuntime(
         Path(cfg["output_model"]),
         device=str(server.get("device", "auto")),
@@ -245,7 +255,14 @@ def serve(
         bearer_token=bearer_token,
         max_request_bytes=int(server.get("max_request_bytes", 1_000_000)),
     )
-    uvicorn.run(api, host=host, port=int(server.get("port", 8000)), access_log=False)
+    uvicorn.run(
+        api,
+        host=host,
+        port=int(server.get("port", 8000)),
+        access_log=False,
+        ssl_certfile=str(tls_certfile) if tls_certfile else None,
+        ssl_keyfile=str(tls_keyfile) if tls_keyfile else None,
+    )
 
 
 @app.command()
@@ -259,6 +276,9 @@ def chat(
     epsilon1: Annotated[float | None, typer.Option("--epsilon1")] = None,
     bearer_token_env: Annotated[str, typer.Option("--bearer-token-env")] = "ALOEPRI_BEARER_TOKEN",
     max_new_tokens: Annotated[int, typer.Option("--max-new-tokens", min=1, max=2048)] = 128,
+    assume_yes: Annotated[
+        bool, typer.Option("--yes", help="Do not ask before each local M1 perturbation")
+    ] = False,
 ) -> None:
     """Run an interactive client; plaintext and conversation history remain local."""
 
@@ -271,7 +291,7 @@ def chat(
         bearer_token=os.environ.get(bearer_token_env),
     )
     history: list[dict[str, str]] = []
-    last_stats: dict[str, float | int] | None = None
+    last_stats: dict[str, object] | None = None
     typer.echo("AloePri chat: /clear /stats /privacy /quit")
     try:
         while True:
@@ -293,6 +313,15 @@ def chat(
                     )
                 typer.echo(json.dumps(detail, ensure_ascii=False))
                 continue
+            if privacy_mode == "rmdp" and epsilon1 is not None:
+                expected_rate = expected_m1_change_rate(client.key.tau.numel(), epsilon1)
+                typer.echo(
+                    "local M1 expected token change rate: "
+                    f"{expected_rate:.6f} ({expected_rate * 100:.2f}%)"
+                )
+                if not assume_yes and not typer.confirm("send this perturbed request"):
+                    typer.echo("request cancelled locally")
+                    continue
             history.append({"role": "user", "content": prompt})
             typer.echo("assistant: ", nl=False)
             chunks = client.stream_chat(
@@ -303,10 +332,12 @@ def chat(
             )
             answer = ""
             elapsed: list[float] = []
+            privacy_ledger: dict[str, float | int | str] | None = None
             for chunk in chunks:
                 typer.echo(chunk.text, nl=False)
                 answer = chunk.accumulated_text
                 elapsed.append(chunk.elapsed_ms)
+                privacy_ledger = chunk.privacy
             typer.echo()
             history.append({"role": "assistant", "content": answer})
             last_stats = {
@@ -314,6 +345,8 @@ def chat(
                 "ttft_ms": elapsed[0] if elapsed else 0.0,
                 "tpot_ms": sum(elapsed[1:]) / max(1, len(elapsed) - 1),
             }
+            if privacy_ledger is not None:
+                last_stats["privacy"] = privacy_ledger
     finally:
         client.close()
 
@@ -348,6 +381,36 @@ def split_key(
     split_key_package(source_key_dir, online_dir, offline_dir)
     typer.echo(f"online key: {online_dir}")
     typer.echo(f"offline master key: {offline_dir}")
+
+
+@app.command("build-release")
+def build_release(
+    output: Annotated[Path, typer.Option("--output")],
+    server_package: Annotated[Path, typer.Option("--server-package", exists=True)],
+    config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
+    wheel: Annotated[Path | None, typer.Option("--wheel", exists=True, dir_okay=False)] = None,
+    report: Annotated[list[Path] | None, typer.Option("--report", exists=True)] = None,
+    evidence: Annotated[list[Path] | None, typer.Option("--evidence", exists=True)] = None,
+) -> None:
+    result = build_product_release(
+        output=output,
+        server_package=server_package,
+        config_path=config,
+        wheel=wheel,
+        reports=report,
+        evidence=evidence,
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@app.command("inspect-release")
+def inspect_release(
+    release: Annotated[Path, typer.Option("--release", exists=True, file_okay=False)],
+) -> None:
+    result = inspect_product_release(release)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result["pass"]:
+        raise typer.Exit(1)
 
 
 @app.command("rmdp-budget")

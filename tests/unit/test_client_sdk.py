@@ -199,3 +199,98 @@ def test_private_client_encoded_text_transport_never_sends_json_token_array() ->
         assert [chunk.output_id for chunk in chunks] == [3]
     finally:
         client.close()
+
+
+def test_private_client_requires_https_for_remote_servers() -> None:
+    tau, inverse = generate_vocab_key(10, seed=7)
+    with pytest.raises(ValueError, match="require HTTPS"):
+        PrivateInferenceClient(
+            base_url="http://example.test",
+            tokenizer=_Tokenizer(),  # type: ignore[arg-type]
+            key=TokenKey("model", "key", tau, inverse),
+        )
+
+
+def test_stream_chat_keeps_local_privacy_ledger_and_separates_seeds() -> None:
+    tau, inverse = generate_vocab_key(10, seed=7)
+    key = TokenKey("model", "key", tau, inverse)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["seed"] == 44
+        assert "privacy_seed" not in body
+        events = (
+            f'data: {{"request_id":"r","sequence_no":0,"output_id":{int(tau[3])},'
+            '"elapsed_ms":1.0}\n\n'
+            'data: {"request_id":"r","done":true}\n\n'
+        )
+        return httpx.Response(200, text=events)
+
+    client = PrivateInferenceClient(
+        base_url="https://example.test",
+        tokenizer=_Tokenizer(),  # type: ignore[arg-type]
+        key=key,
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        chunks = list(
+            client.stream_chat(
+                [{"role": "user", "content": "question"}],
+                privacy_mode="rmdp",
+                epsilon1=0.0,
+                privacy_seed=22,
+                seed=44,
+            )
+        )
+        assert chunks[0].privacy == {
+            "mode": "rmdp-tokenwise",
+            "epsilon1": 0.0,
+            "changed_tokens": 2,
+            "total_tokens": 2,
+            "expected_change_rate": 0.9,
+        }
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    ("events", "message"),
+    [
+        (
+            'data: {"request_id":"r","sequence_no":1,"output_id":1,"elapsed_ms":1}\n\n'
+            'data: {"request_id":"r","done":true}\n\n',
+            "sequence mismatch",
+        ),
+        (
+            'data: {"request_id":"r","sequence_no":0,"output_id":1,"elapsed_ms":1}\n\n',
+            "before the done event",
+        ),
+        (
+            'data: {"request_id":"r1","sequence_no":0,"output_id":1,"elapsed_ms":1}\n\n'
+            'data: {"request_id":"r2","done":true}\n\n',
+            "request_id changed",
+        ),
+        (
+            'data: {"request_id":"r","done":true}\n\n'
+            'data: {"request_id":"r","sequence_no":0,"output_id":1,"elapsed_ms":1}\n\n',
+            "after done",
+        ),
+    ],
+)
+def test_private_client_rejects_corrupt_sse(events: str, message: str) -> None:
+    tau, inverse = generate_vocab_key(10, seed=7)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=events)
+
+    client = PrivateInferenceClient(
+        base_url="https://example.test",
+        tokenizer=_Tokenizer(),  # type: ignore[arg-type]
+        key=TokenKey("model", "key", tau, inverse),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(ValueError, match=message):
+            list(client.stream("prompt"))
+    finally:
+        client.close()
