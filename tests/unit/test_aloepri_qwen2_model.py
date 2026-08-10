@@ -92,7 +92,12 @@ def test_fp64_attention_compute_returns_residual_dtype_and_cache() -> None:
     input_ids = torch.tensor([[1, 5, 7]])
     with torch.inference_mode():
         output = model(input_ids=input_ids, use_cache=True)
-        generated = model.generate(input_ids, max_new_tokens=2, do_sample=False)
+        generated = model.generate(
+            input_ids,
+            min_new_tokens=2,
+            max_new_tokens=2,
+            do_sample=False,
+        )
     assert output.logits.dtype == torch.float32
     assert output.past_key_values.layers[0].keys.dtype == torch.float64
     assert output.past_key_values.get_seq_length() == 3
@@ -110,7 +115,12 @@ def test_fp64_score_attention_keeps_projection_and_cache_dtype() -> None:
     input_ids = torch.tensor([[1, 5, 7]])
     with torch.inference_mode():
         output = model(input_ids=input_ids, use_cache=True)
-        generated = model.generate(input_ids, max_new_tokens=2, do_sample=False)
+        generated = model.generate(
+            input_ids,
+            min_new_tokens=2,
+            max_new_tokens=2,
+            do_sample=False,
+        )
     assert output.logits.dtype == torch.float32
     assert output.past_key_values.layers[0].keys.dtype == torch.float32
     assert output.past_key_values.get_seq_length() == 3
