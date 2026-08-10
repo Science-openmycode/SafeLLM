@@ -149,7 +149,7 @@ rms_plain^2 = x_private (Q Q^T) x_private^T / d
 | v31 精度验收 | 未完成 |
 | v31 隐私验收 | 未完成 |
 | v31 性能验收 | 未完成 |
-| 本地 Git 基线 | 已完成：`428758c6bc98f76f66de74c56fd5c4bddc3864c7` |
+| 本地 Git 基线 | 已完成：`1f9c290284c8d258b904cb8891adda1b33f3246f` |
 | GitHub 远程仓库 | 未配置；Dashboard 地址不能唯一确定目标仓库 |
 | 最终版本化发布 | 未完成 |
 
