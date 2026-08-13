@@ -48,4 +48,4 @@ uv run mypy src
 uv run pytest -q
 ```
 
-0.5.0默认发布基线：`245 passed, 1 skipped`。跳过项需要`ALOEPRI_RUN_MODEL_TESTS=1`才启动；该真实0.5B集成项已另行在CPU执行并得到`1 passed`。
+0.5.0默认发布基线：`246 passed, 1 skipped`。跳过项需要`ALOEPRI_RUN_MODEL_TESTS=1`才启动；该真实0.5B集成项已另行在CPU执行并得到`1 passed`。

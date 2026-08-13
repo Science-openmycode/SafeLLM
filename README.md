@@ -8,7 +8,7 @@ AloePri把“模型识别、权重私有化改造、密钥拆分、上传部署�
 |---|---|
 | 版本 | `0.5.0` |
 | 发布状态 | `CODE_COMPLETE_MOCK_CLOUD_PASS` |
-| 自动化测试 | 默认套件`245 passed, 1 skipped`；真实0.5B集成项单独`1 passed` |
+| 自动化测试 | 默认套件`246 passed, 1 skipped`；真实0.5B集成项单独`1 passed` |
 | Ruff / Mypy | PASS |
 | 官方DeepSeek-V3索引 | 91,991张量；missing=0；unknown=0 |
 | 真实Qwen2.5-0.5B | 私有token API、SSE、inverse_tau和错误key测试PASS |

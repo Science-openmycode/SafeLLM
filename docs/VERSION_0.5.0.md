@@ -29,7 +29,7 @@
 
 - Ruff：PASS；
 - Mypy strict：PASS；
-- Pytest默认套件：245 passed，1 skipped；真实0.5B集成项单独1 passed；
+- Pytest默认套件：246 passed，1 skipped；真实0.5B集成项单独1 passed；
 - Tiny DeepSeek-V3 FP8＋MTP真实Safetensors转换：PASS；
 - 官方固定commit索引：91,991张量，MTP 1,564，missing=0，unknown=0；
 - 官方静态计划门禁：PASS；
