@@ -18,12 +18,15 @@ from aloepri.conversion.paper_qwen2 import (
     transform_input_projection,
     transform_output_projection,
 )
+from aloepri.formats.deepseek_fp8 import dequantize_fp8, quantize_fp8
 from aloepri.keys.generate import generate_vocab_key
+from aloepri.tensor_io import SafeTensorRangeSource
 from aloepri.transforms.deepseek import (
     DeepseekLayerKey,
     make_deepseek_key,
     transform_deepseek_mla_tensors,
 )
+from aloepri.transforms.mtp import transform_mtp_eh_projection
 from aloepri.transforms.paper_key_matrix import (
     CompatibleInverseFamily,
     PaperKeyPair,
@@ -149,11 +152,51 @@ class IndexedSafeTensorSource:
                 self.weight_map = {str(name): single_path.name for name in handle.keys()}
         else:
             raise FileNotFoundError(f"no safetensors checkpoint found under {self.root}")
+        config_path = self.root / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        quantization = config.get("quantization_config") or {}
+        self.fp8_block = (
+            str(quantization.get("quant_method", "")).lower() == "fp8"
+            and tuple(quantization.get("weight_block_size", ())) == (128, 128)
+        )
+        self.range_source = SafeTensorRangeSource(self.root) if self.fp8_block else None
 
-    def get(self, name: str) -> Tensor:
+    def _raw(self, name: str) -> Tensor:
+        if self.range_source is not None:
+            metadata = self.range_source.metadata(name)
+            dtype_map = {
+                "F8_E4M3": torch.float8_e4m3fn,
+                "F8_E4M3FN": torch.float8_e4m3fn,
+                "F16": torch.float16,
+                "BF16": torch.bfloat16,
+                "F32": torch.float32,
+                "I64": torch.int64,
+                "I32": torch.int32,
+            }
+            try:
+                dtype = dtype_map[metadata.dtype]
+            except KeyError as error:
+                raise ValueError(f"unsupported range-read dtype: {metadata.dtype}") from error
+            element_size = torch.empty((), dtype=dtype).element_size()
+            output = torch.empty(metadata.byte_length // element_size, dtype=dtype)
+            tile_bytes = 256 * 1024 * 1024
+            for offset in range(0, metadata.byte_length, tile_bytes):
+                length = min(tile_bytes, metadata.byte_length - offset)
+                payload = bytearray(self.range_source.read_range(name, offset, length))
+                tile = torch.frombuffer(payload, dtype=dtype)
+                start = offset // element_size
+                output[start : start + tile.numel()].copy_(tile)
+            return output.reshape(metadata.shape)
         filename = self.weight_map[name]
         with safe_open(self.root / filename, framework="pt", device="cpu") as handle:
             return cast(Tensor, handle.get_tensor(name))
+
+    def get(self, name: str) -> Tensor:
+        tensor = self._raw(name)
+        scale_name = f"{name.removesuffix('.weight')}.weight_scale_inv"
+        if self.fp8_block and name.endswith(".weight") and scale_name in self.weight_map:
+            return dequantize_fp8(tensor, self._raw(scale_name))
+        return tensor
 
     def shape(self, name: str) -> tuple[int, ...]:
         filename = self.weight_map[name]
@@ -181,7 +224,9 @@ def _make_keys(
     value_condition_max: float | None = None,
 ) -> dict[int, DeepseekLayerKey]:
     keys: dict[int, DeepseekLayerKey] = {}
-    layers = int(config["num_hidden_layers"])
+    layers = int(config["num_hidden_layers"]) + int(
+        config.get("num_nextn_predict_layers") or 0
+    )
     experts = int(config["n_routed_experts"])
     intermediate = int(config["moe_intermediate_size"])
     for layer_index in range(layers):
@@ -379,6 +424,77 @@ def _save_tensor(path: Path, name: str, tensor: Tensor) -> dict[str, Any]:
     return {"bytes": path.stat().st_size, "sha256": _sha256(path)}
 
 
+def _consolidate_output_shards(
+    root: Path,
+    weight_map: dict[str, str],
+    file_records: dict[str, dict[str, Any]],
+    progress_path: Path,
+    progress: dict[str, Any],
+    *,
+    maximum_shard_bytes: int = 2 * 1024**3,
+) -> None:
+    """Merge atomic tensor files into bounded standard model shards.
+
+    New shards and the new progress map are committed before old atomic files are
+    removed.  A crash therefore leaves either the original verified map or the new
+    verified map usable for resume.
+    """
+
+    original_files = sorted(set(weight_map.values()))
+    groups: list[list[str]] = []
+    current: list[str] = []
+    current_bytes = 0
+    for filename in original_files:
+        size = int(file_records[filename]["bytes"])
+        if current and current_bytes + size > maximum_shard_bytes:
+            groups.append(current)
+            current = []
+            current_bytes = 0
+        current.append(filename)
+        current_bytes += size
+        if size > maximum_shard_bytes:
+            groups.append(current)
+            current = []
+            current_bytes = 0
+    if current:
+        groups.append(current)
+    if not groups:
+        raise ValueError("conversion produced no output shards")
+
+    new_weight_map: dict[str, str] = {}
+    new_records: dict[str, dict[str, Any]] = {}
+    total = len(groups)
+    for index, group in enumerate(groups, start=1):
+        filename = f"model-{index:05d}-of-{total:05d}.safetensors"
+        destination = root / filename
+        tensors: dict[str, Tensor] = {}
+        for original in group:
+            with safe_open(root / original, framework="pt", device="cpu") as handle:
+                for name in handle.keys():
+                    if name in tensors:
+                        raise ValueError(f"duplicate tensor while consolidating: {name}")
+                    tensors[name] = cast(Tensor, handle.get_tensor(name))
+                    new_weight_map[name] = filename
+        temporary = destination.with_suffix(destination.suffix + ".partial")
+        save_file(tensors, temporary)
+        os.replace(temporary, destination)
+        new_records[filename] = {
+            "bytes": destination.stat().st_size,
+            "sha256": _sha256(destination),
+        }
+        del tensors
+
+    weight_map.clear()
+    weight_map.update(new_weight_map)
+    file_records.clear()
+    file_records.update(new_records)
+    _atomic_json(progress_path, progress)
+    for filename in original_files:
+        path = root / filename
+        if filename not in new_records and path.is_file():
+            path.unlink()
+
+
 def _copy_metadata(source: Path, output: Path) -> None:
     for name in sorted(_METADATA_NAMES):
         candidate = source / name
@@ -554,7 +670,11 @@ def convert_deepseek_checkpoint(
         raise ValueError("paper-complete conversion requires vocabulary permutation")
     if paper_complete and rms_mode != "paper_kappa":
         raise ValueError("streaming paper-complete v1 currently requires paper_kappa RMS")
-    source_names = sorted(source.weight_map)
+    source_names = sorted(
+        name
+        for name in source.weight_map
+        if not (source.fp8_block and name.endswith(".weight_scale_inv"))
+    )
     name_set = set(source_names)
     names = list(source_names)
     if paper_complete:
@@ -684,7 +804,19 @@ def convert_deepseek_checkpoint(
         if name in weight_map:
             return
         filename = f"tensor-{ordinal[name]:05d}-of-{len(names):05d}.safetensors"
-        record = _save_tensor(output_partial / filename, name, tensor)
+        scale_name = f"{name.removesuffix('.weight')}.weight_scale_inv"
+        if source.fp8_block and name.endswith(".weight") and tensor.ndim == 2:
+            quantized, scale, _ = quantize_fp8(tensor.float())
+            temporary = (output_partial / filename).with_name(filename + ".partial")
+            save_file({name: quantized.cpu(), scale_name: scale.cpu()}, temporary)
+            os.replace(temporary, output_partial / filename)
+            record = {
+                "bytes": (output_partial / filename).stat().st_size,
+                "sha256": _sha256(output_partial / filename),
+            }
+            weight_map[scale_name] = filename
+        else:
+            record = _save_tensor(output_partial / filename, name, tensor)
         weight_map[name] = filename
         file_records[filename] = record
         _atomic_json(progress_path, progress)
@@ -957,6 +1089,56 @@ def convert_deepseek_checkpoint(
                 if paper_complete:
                     assert paper_key is not None
                     tensor = transform_output_projection(tensor, paper_key.p)
+        elif (
+            paper_complete
+            and current_layer_index is not None
+            and current_layer_index >= int(config["num_hidden_layers"])
+            and name.endswith(".eh_proj.weight")
+        ):
+            assert paper_key is not None
+            mtp_prefix = f"model.layers.{current_layer_index}"
+            tensor = transform_mtp_eh_projection(
+                source.get(name),
+                embedding_norm_weight=source.get(f"{mtp_prefix}.enorm.weight"),
+                hidden_norm_weight=source.get(f"{mtp_prefix}.hnorm.weight"),
+                p=paper_key.p,
+                q=paper_key.q,
+            )
+        elif (
+            paper_complete
+            and current_layer_index is not None
+            and current_layer_index >= int(config["num_hidden_layers"])
+            and name.endswith((".enorm.weight", ".hnorm.weight", ".shared_head.norm.weight"))
+        ):
+            assert kappa is not None and paper_key is not None
+            tensor = torch.full(
+                (paper_key.p.shape[1],), kappa, dtype=source.get(name).dtype
+            )
+        elif (
+            paper_complete
+            and current_layer_index is not None
+            and current_layer_index >= int(config["num_hidden_layers"])
+            and name.endswith(".embed_tokens.weight")
+        ):
+            assert paper_key is not None and tau is not None
+            noisy, _ = add_paper_weight_noise(
+                source.get(name), alpha=alpha_e, seed=seed + 11_000_000
+            )
+            tensor = permute_vocab_rows(noisy @ paper_key.p.float(), tau)
+        elif (
+            paper_complete
+            and current_layer_index is not None
+            and current_layer_index >= int(config["num_hidden_layers"])
+            and name.endswith(".shared_head.head.weight")
+        ):
+            assert inverse_family is not None and tau is not None
+            noisy, _ = add_paper_weight_noise(
+                source.get(name), alpha=alpha_h, seed=seed + 12_000_000
+            )
+            final_norm = source.get(f"model.layers.{current_layer_index}.shared_head.norm.weight")
+            tensor = permute_vocab_rows(
+                transform_input_projection(noisy, final_norm, inverse_family.head), tau
+            )
         elif paper_complete and name.endswith(
             ("input_layernorm.weight", "post_attention_layernorm.weight")
         ):
@@ -1003,6 +1185,13 @@ def convert_deepseek_checkpoint(
     if not name_set.issubset(handled):
         raise ValueError(f"conversion coverage mismatch: {sorted(name_set - handled)[:10]}")
 
+    _consolidate_output_shards(
+        output_partial,
+        weight_map,
+        file_records,
+        progress_path,
+        progress,
+    )
     total_size = sum(int(record["bytes"]) for record in file_records.values())
     _atomic_json(
         output_partial / "model.safetensors.index.json",
