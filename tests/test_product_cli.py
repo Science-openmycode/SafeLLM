@@ -8,6 +8,8 @@ from safetensors.torch import save_file
 from typer.testing import CliRunner
 
 from aloepri.cli import app
+from aloepri.conversion import executor
+from aloepri.jobs.store import JobStore
 from aloepri.planning import ConversionPlan
 
 
@@ -80,3 +82,25 @@ def test_convert_requires_exactly_one_input() -> None:
     result = CliRunner().invoke(app, ["convert"])
     assert result.exit_code != 0
     assert "one of --plan or --config is required" in result.output
+
+
+def test_completed_local_conversion_waits_for_explicit_upload(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    plan = ConversionPlan(
+        schema_version=1,
+        job_id="job-execute",
+        source={"type": "local", "path": str(tmp_path / "source")},
+        adapter="qwen2",
+        fingerprint={"weight_format": "float32"},
+        output={"type": "local", "uri": str(tmp_path / "private")},
+    )
+
+    def fake_run(current: ConversionPlan, output: Path) -> dict[str, str]:
+        assert current is plan
+        return {"output": str(output)}
+
+    monkeypatch.setattr(executor, "_run_qwen", fake_run)  # type: ignore[attr-defined]
+    store = JobStore(tmp_path / "state.db")
+    executor.execute_conversion_plan(plan, store)
+    assert store.get(plan.job_id)["state"] == "UPLOADING"

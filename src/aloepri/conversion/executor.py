@@ -174,8 +174,10 @@ def execute_conversion_plan(plan: ConversionPlan, store: JobStore) -> dict[str, 
             "gpu_free_before_gib": monitor.observation.gpu_free_before_gib,
             "pass": monitor.observation.pass_,
         }
-        store.transition(plan.job_id, JobState.VERIFYING, progress=result)
-        store.transition(plan.job_id, JobState.READY_TO_DEPLOY, progress=result)
+        # Local conversion is complete.  The explicit upload command owns the
+        # UPLOADING -> VERIFYING -> READY_TO_DEPLOY transitions so a real object
+        # store can record multipart evidence before deployment becomes legal.
+        store.transition(plan.job_id, JobState.UPLOADING, progress=result)
         return result
     except BaseException as error:
         try:
