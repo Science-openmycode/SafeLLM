@@ -186,6 +186,18 @@ def inspect_server_package(server_package: Path) -> dict[str, object]:
     for path in server_package.rglob("*"):
         if not path.is_file():
             continue
+        lowered_name = path.name.lower()
+        if any(
+            marker in lowered_name
+            for marker in (
+                "online_key",
+                "offline_master_key",
+                "inverse_tau",
+                "original_weight",
+                "plaintext_prompt",
+            )
+        ):
+            findings.append(f"forbidden server-package filename: {path.name}")
         if path.suffix == ".safetensors":
             with safe_open(path, framework="pt", device="cpu") as handle:
                 tensor_names = set(handle.keys())
@@ -203,6 +215,13 @@ def inspect_server_package(server_package: Path) -> dict[str, object]:
                         f"{path.name}:model.rotary_emb.aloepri_pair_order"
                     )
                     rope_derived = True
+                metadata = handle.metadata() or {}
+                leaked_metadata = forbidden_json_keys(metadata)
+                if leaked_metadata:
+                    findings.append(
+                        f"{path.name} contains forbidden Safetensors metadata: "
+                        f"{leaked_metadata}"
+                    )
         if path.suffix == ".json":
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))

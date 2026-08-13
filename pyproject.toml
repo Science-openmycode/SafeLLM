@@ -1,17 +1,19 @@
 [project]
 name = "aloepri"
-version = "0.4.0"
+version = "0.5.0"
 description = "Weight and token-space transformation tooling for private LLM inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "accelerate==1.14.0",
   "blobfile==3.1.0",
+  "cryptography>=45,<47",
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "huggingface-hub==1.19.0",
   "numpy>=2.0,<3",
   "orjson>=3.10,<4",
+  "psutil>=7,<8",
   "pydantic>=2.10,<3",
   "pyyaml>=6.0,<7",
   "safetensors>=0.5,<1",
@@ -46,6 +48,7 @@ dev = [
   "pytest-cov>=6,<7",
   "ruff>=0.11,<1",
   "types-PyYAML>=6.0,<7",
+  "types-psutil>=7,<8",
 ]
 
 [build-system]

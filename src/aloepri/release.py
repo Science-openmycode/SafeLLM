@@ -141,7 +141,7 @@ def build_product_release(
         _copy_unique(reports or [], partial / "reports")
         _copy_unique(evidence or [], partial / "evidence")
         (partial / "README.md").write_text(
-            "# AloePri Qwen2.5-0.5B product release\n\n"
+            "# AloePri private-model product release\n\n"
             "Install the wheel in `client/`, provision the online key only on the client, "
             "then run `aloepri serve --config configs/runtime.yaml` on the server and "
             "`aloepri chat --server <HTTPS URL> --key-dir <client key dir>`.\n",
@@ -156,7 +156,12 @@ def build_product_release(
         records = _records(partial)
         manifest = {
             "schema_version": 1,
-            "package_type": "qwen05b-product-release",
+            "package_type": "aloepri-private-model-release",
+            "release_version": "0.5.0",
+            "release_status": "CODE_COMPLETE_MOCK_CLOUD_PASS",
+            "environment": "mock-cloud",
+            "real_cloud_validated": False,
+            "real_671b_executed": False,
             "model_id": runtime_config["model_id"],
             "key_id": runtime_config["key_id"],
             "server_package_inspection": inspection,
