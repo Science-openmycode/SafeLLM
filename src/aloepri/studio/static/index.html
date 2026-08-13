@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AloePri Studio</title>
+  <link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">A</span><div><strong>AloePri</strong><small>Private Model Studio</small></div></div>
+    <nav id="nav">
+      <button class="active" data-page="models">模型</button>
+      <button data-page="conversion">转换任务</button>
+      <button data-page="deployments">云端部署</button>
+      <button data-page="chat">聊天</button>
+      <button data-page="privacy">隐私流程</button>
+      <button data-page="settings">设置</button>
+    </nav>
+    <div class="cloud-badge"><span></span><div><strong>Mock Cloud</strong><small>不代表真实云验收</small></div></div>
+  </aside>
+  <main>
+    <header><div><h1 id="page-title">模型</h1><p id="page-subtitle">选择或检查待改造的模型架构</p></div><span class="status-pill">CODE PREVIEW</span></header>
+
+    <section class="page active" id="page-models">
+      <div class="hero"><div><span class="eyebrow">MODEL CATALOG</span><h2>从模型开始，而不是从脚本开始</h2><p>Studio只读取配置和Safetensors头部，不执行模型仓库中的远程代码。</p></div></div>
+      <div id="model-grid" class="model-grid"></div>
+      <div class="panel"><h3>检查本地模型</h3><div class="inline"><input id="model-path" placeholder="E:\models\Qwen2.5-0.5B-Instruct"><button id="inspect-model" class="primary">检查架构</button></div><pre id="inspect-result">等待输入模型目录…</pre></div>
+    </section>
+
+    <section class="page" id="page-conversion">
+      <div class="metrics"><div><small>GPU预算</small><strong>4.5 GiB</strong></div><div><small>主存预算</small><strong>11 GiB</strong></div><div><small>最小Tile</small><strong>32 MiB</strong></div><div><small>断点状态</small><strong>SQLite</strong></div></div>
+      <div class="panel"><h3>创建转换计划</h3><div class="form-grid"><label>模型目录<input id="plan-model"></label><label>输出目录<input id="plan-destination" value="artifacts/converted/model"></label><label>计划文件<input id="plan-output" value="artifacts/plans/conversion.yaml"></label></div><button id="create-plan" class="primary">生成计划</button><button id="create-job">创建任务</button><pre id="plan-result">尚未生成计划。</pre></div>
+      <div class="panel"><div class="panel-title"><h3>任务状态</h3><button id="refresh-job">刷新</button></div><div id="job-progress" class="progress"><i></i></div><pre id="job-result">尚未创建任务。</pre></div>
+    </section>
+
+    <section class="page" id="page-deployments">
+      <div class="warning"><strong>接口级模拟云端</strong><span>上传、部署、健康检查和回滚均为Mock，不产生真实性能数据。</span></div>
+      <div class="panel"><h3>当前任务</h3><div class="actions"><button id="upload-job" class="primary">模拟分片上传</button><button id="deploy-job">部署到Mock集群</button><button id="rollback-deployment" class="danger">回滚</button></div><pre id="deployment-result">等待已完成转换的任务。</pre></div>
+      <div class="architecture"><div class="node local"><strong>本地Agent</strong><small>密钥 / tau / 会话</small></div><b>私有 token ID →</b><div class="node store"><strong>Mock S3</strong><small>分片 / ETag / SHA-256</small></div><b>→</b><div class="node cloud"><strong>Mock Cluster</strong><small>SGLang部署规格</small></div></div>
+    </section>
+
+    <section class="page chat-page" id="page-chat">
+      <div id="messages" class="messages"><div class="empty-chat"><span>A</span><h2>私有模型问答</h2><p>部署后在此验证token-ID协议和SSE流式恢复。</p></div></div>
+      <div class="composer"><textarea id="chat-input" rows="1" placeholder="输入消息，Enter发送…"></textarea><button id="send-chat">↑</button><label><input type="checkbox" id="show-trace">显示私有轨迹</label></div>
+    </section>
+
+    <section class="page" id="page-privacy">
+      <div class="privacy-flow">
+        <article><span>01</span><h3>本地分词</h3><p>Chat Template、明文提示词和历史仅在本地Agent处理。</p></article>
+        <article><span>02</span><h3>词表置换</h3><p>本地用tau把原token ID映射到私有token空间。</p></article>
+        <article><span>03</span><h3>云端推理</h3><p>服务器只加载混淆checkpoint并接收私有token ID。</p></article>
+        <article><span>04</span><h3>本地恢复</h3><p>流式私有输出逐token应用inverse_tau后再解码。</p></article>
+      </div>
+      <div class="panel"><h3>交互式协议观察</h3><p class="muted">在聊天页开启“显示私有轨迹”，可观察本地Agent生成的私有输入与Mock服务返回的私有输出。页面永远不会获得完整tau。</p></div>
+    </section>
+
+    <section class="page" id="page-settings">
+      <div class="panel"><h3>本地边界</h3><dl><dt>监听地址</dt><dd>127.0.0.1</dd><dt>任务数据库</dt><dd>操作系统用户数据目录</dd><dt>在线密钥</dt><dd>仅本地Agent进程读取</dd><dt>云端真实性</dt><dd>NOT TESTED</dd></dl></div>
+    </section>
+  </main>
+  <script src="/studio.js"></script>
+</body>
+</html>

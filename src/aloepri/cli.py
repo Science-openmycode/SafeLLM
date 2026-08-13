@@ -12,14 +12,19 @@ import uvicorn
 import yaml
 
 from aloepri.client.sdk import PrivateInferenceClient
+from aloepri.conversion.executor import execute_conversion_plan
 from aloepri.demo.app import DemoGateway, create_demo_app
+from aloepri.jobs.store import JobState, JobStore
 from aloepri.packaging import build_server_package, inspect_server_package, split_key_package
+from aloepri.planning import ConversionPlan
 from aloepri.privacy.rmdp import calculate_rmdp_budget, expected_m1_change_rate
+from aloepri.product_cli import register_plan_job, register_product_commands
 from aloepri.release import build_product_release, inspect_product_release
 from aloepri.serving.app import create_app
 from aloepri.serving.hf_runtime import PrivateHFRuntime
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+register_product_commands(app)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -111,9 +116,35 @@ def summarize_product_verification(
 
 @app.command()
 def convert(
-    config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
+    config: Annotated[
+        Path | None, typer.Option("--config", exists=True, dir_okay=False)
+    ] = None,
+    plan: Annotated[Path | None, typer.Option("--plan", exists=True, dir_okay=False)] = None,
+    execute: Annotated[
+        bool, typer.Option("--execute/--schedule-only")
+    ] = True,
 ) -> None:
-    """Convert Qwen2.5-0.5B and split online/offline keys."""
+    """Convert through a product plan, or use the compatible legacy Qwen config."""
+
+    if plan is not None:
+        if config is not None:
+            raise typer.BadParameter("use either --plan or --config, not both")
+        job = register_plan_job(plan)
+        store = JobStore(
+            Path(os.environ["ALOEPRI_STATE_DB"])
+            if os.environ.get("ALOEPRI_STATE_DB")
+            else None
+        )
+        state = JobState(job["state"])
+        if state == JobState.CREATED:
+            store.transition(job["job_id"], JobState.PREFLIGHT)
+            store.transition(job["job_id"], JobState.CONVERTING)
+        if execute:
+            execute_conversion_plan(ConversionPlan.load(plan), store)
+        typer.echo(json.dumps(store.get(job["job_id"]), ensure_ascii=False, indent=2))
+        return
+    if config is None:
+        raise typer.BadParameter("one of --plan or --config is required")
 
     cfg = load_config(config)
     conversion = cfg["conversion"]
