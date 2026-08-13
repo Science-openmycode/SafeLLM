@@ -42,8 +42,14 @@ def main() -> None:
     parser.add_argument("--inverter", type=Path, required=True)
     parser.add_argument("--private-token-ids", type=Path, required=True)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.batch_size <= 0:
+        raise ValueError("batch size must be positive")
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        raise ValueError("gpu memory fraction must be between 0.1 and 0.9")
     assert_attack_inputs_exclude_target_key(
         [args.original, args.private, args.inverter, args.private_token_ids]
     )
@@ -60,6 +66,8 @@ def main() -> None:
     device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
     if device == "auto":
         device = "cpu"
+    if device == "cuda":
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     original_embedding = load_tensor(args.original, "model.embed_tokens.weight").float()
     private_embedding = load_tensor(args.private, "model.embed_tokens.weight").float()
     config = build_paper_like_inverter_config(
@@ -72,9 +80,13 @@ def main() -> None:
     )
     model.load_state_dict(load_file(args.inverter / "model.safetensors", device="cpu"))
     model.to(device).eval()
+    predicted_batches: list[torch.Tensor] = []
     with torch.inference_mode():
-        prediction = model(private_embedding[private_ids].to(device))
-    predicted_plain = nearest_plain_tokens(prediction, original_embedding)
+        for start in range(0, private_ids.shape[0], args.batch_size):
+            batch_ids = private_ids[start : start + args.batch_size]
+            prediction = model(private_embedding[batch_ids].to(device))
+            predicted_batches.append(nearest_plain_tokens(prediction, original_embedding))
+    predicted_plain = torch.cat(predicted_batches)
     payload = {
         "schema": "aloepri-key-isolated-token-inversion-v1",
         "attack": "IMA-independent-key",
@@ -82,6 +94,10 @@ def main() -> None:
         "private_token_ids": private_ids.flatten().tolist(),
         "predicted_plain_ids": predicted_plain.tolist(),
         "sequence_shape": list(private_ids.shape),
+        "runtime": {
+            "batch_size": args.batch_size,
+            "gpu_memory_fraction": args.gpu_memory_fraction if device == "cuda" else None,
+        },
         "inverter": str(args.inverter.resolve()),
         "provenance": run_provenance(
             script=Path(__file__),

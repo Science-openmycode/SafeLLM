@@ -39,7 +39,9 @@ def test_deepseek_v3_mla_and_moe_transform_preserve_forward() -> None:
     original = DeepseekV3ForCausalLM(tiny_config()).eval()
     transformed = copy.deepcopy(original)
     keys = [
-        transform_deepseek_v3_layer(layer, seed=100 + index)
+        transform_deepseek_v3_layer(
+            layer, seed=100 + index, ffn_scale_min=0.5, ffn_scale_max=2.0
+        )
         for index, layer in enumerate(transformed.model.layers)
     ]
     input_ids = torch.randint(0, 100, (2, 7))
@@ -49,3 +51,23 @@ def test_deepseek_v3_mla_and_moe_transform_preserve_forward() -> None:
     torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
     assert keys[1].expert_order is not None
     assert not torch.equal(keys[1].expert_order, torch.arange(4))
+
+
+def test_deepseek_v3_group_limited_router_uses_group_preserving_permutation() -> None:
+    torch.manual_seed(11)
+    config = tiny_config()
+    config.n_group = 2
+    config.topk_group = 1
+    original = DeepseekV3ForCausalLM(config).eval()
+    transformed = copy.deepcopy(original)
+    key = transform_deepseek_v3_layer(transformed.model.layers[1], seed=151)
+    assert key.expert_order is not None
+    old_groups = key.expert_order // 2
+    assert old_groups[:2].unique().numel() == 1
+    assert old_groups[2:].unique().numel() == 1
+    assert old_groups[0] != old_groups[2]
+    input_ids = torch.randint(0, 100, (2, 7))
+    with torch.inference_mode():
+        expected = original(input_ids).logits
+        actual = transformed(input_ids).logits
+    torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)

@@ -313,6 +313,12 @@ def main() -> None:
     parser.add_argument("--query-batch-size", type=int, default=64)
     parser.add_argument("--candidate-batch-size", type=int, default=256)
     parser.add_argument(
+        "--gpu-memory-fraction",
+        type=float,
+        default=0.70,
+        help="Hard CUDA allocator fraction for the VMA process.",
+    )
+    parser.add_argument(
         "--stream-known-from-cpu",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -323,6 +329,8 @@ def main() -> None:
         help="Bind legacy .pt caches to the current full input fingerprint after review.",
     )
     args = parser.parse_args()
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        parser.error("--gpu-memory-fraction must be between 0.1 and 0.9")
 
     tokenizer, texts, units, query_ids = pupa_tokens(args.original)
     candidate_artifact: dict[str, object] | None = None
@@ -379,6 +387,7 @@ def main() -> None:
         "candidate_sizes": args.candidate_sizes,
         "layers": args.layers,
         "combinations": args.combinations,
+        "gpu_memory_fraction": args.gpu_memory_fraction,
         "text_count": len(texts),
         "pii_unit_count": len(units),
         "dataset_content_sha256": hashlib.sha256(
@@ -399,6 +408,7 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cuda":
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
         torch.cuda.reset_peak_memory_stats()
     # Keep full-vocabulary matrices on CPU. Only evaluated query/candidate rows are
     # transferred to the GPU so a 6 GiB device retains a material safety margin.
@@ -651,6 +661,7 @@ def main() -> None:
         "query_batch_size": args.query_batch_size,
         "candidate_batch_size": args.candidate_batch_size,
         "stream_known_from_cpu": args.stream_known_from_cpu,
+        "gpu_memory_fraction": args.gpu_memory_fraction,
         "peak_gpu_allocated_bytes": (
             torch.cuda.max_memory_allocated() if device == "cuda" else None
         ),

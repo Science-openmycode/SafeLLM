@@ -1,19 +1,117 @@
 # AloePri 在 Qwen2.5-0.5B 上的复现与工程实现
 
-当前唯一正式目标是 `qwen05b-candidate-v47-best-single`。模型配置为 `h=128`、
-`lambda=0.3`、`beta=8`、`alpha_e=0.65`、`alpha_h=0.6`、FP32 权重和 FP64 Attention
-计算。现有 checkpoint 的 24 层公式重建、Algorithm 1、Algorithm 2、词表往返、
-prefill/decode 输入坐标和 KV Cache 长度检查已经通过。
+## 本地可视化演示
 
-版本 0.2.0 将攻击实验拆为“可信观测生成 → 不读取目标密钥的攻击 → 独立真值评分”，
-覆盖 Gate-IA、修正维度后的 Attention-IA、IMA、Attention/Hidden ISA、TFMA 和 SDA。
-正式验收配置为 `configs/acceptance/qwen05b_v47.yaml`，当前报告由原始工件重新计算，
-缺失的全量攻击、五项完整精度、产品 100 问、抓包和性能工件直接记为 `NOT_TESTED`，
-不会再引用 v15/v29/v31 的结果替代 v47。
+当前仓库可以在本地实际运行 Qwen2.5-0.5B 混淆 checkpoint，并同时展示真实提示词、发送给模型服务的混淆 token、模型逐 token 返回的混淆回答以及客户端实时逆置换、逐字显示的正常回答。这里使用真实 SSE 推理流，不是模型完成后再播放的假打字动画。
+
+先启动模型服务：
+
+```powershell
+uv run aloepri serve --config configs/product/qwen05b_v31_blockperm8.yaml
+```
+
+再启动可信本地展示客户端：
+
+```powershell
+uv run aloepri demo `
+  --server http://127.0.0.1:8000 `
+  --key-dir data/keys/qwen05b-product-v31-blockperm8-online `
+  --tokenizer data/models/qwen2.5-0.5b `
+  --port 7860
+```
+
+浏览器打开 `http://127.0.0.1:7860`。页面默认采用简洁多轮对话视图；每次回答完成后，明文问答会自动保存在当前浏览器的本地存储中，左侧历史列表可恢复、继续或删除会话。该记录不包含在线密钥、置换表、混淆 token 或模型服务请求载荷。每轮由本地 gateway 对最近 32 条历史消息和新问题统一应用 Chat Template，再整体置换为私有 token；达到 1,800 token 的展示预算时，从最早的一整轮开始裁剪。右上角“显示隐私过程”可以显示或隐藏混淆输入、混淆回答、token映射和性能指标，选择会保存在本机浏览器。独立说明页 `http://127.0.0.1:7860/privacy` 除了离线转换、在线数据流、分段公式与各方可见信息，还提供真实交互实验台：输入任意问题后会显示明文/私有 token、实际服务端请求载荷、逐 token 私有输出和本地恢复回答。模型服务仍只接收私有 token IDs；展示页面和 gateway 属于本地可信客户端，不应把 7860 端口公开到远程网络。完整的论文/PPT/代码复核结论、实测数据和人工检查步骤见 `docs/QWEN05B_PAPER_PPT_REAUDIT_2026-08-13.md`。
+
+公网临时演示使用受访问码保护的独立 gateway 端口 `7861`，再由 Cloudflare Quick Tunnel 建立 HTTPS 地址；模型服务 `8000` 始终只监听 `127.0.0.1`。公网访客的明文经 HTTPS 到达演示提供者电脑上的可信 gateway，再由 gateway 完成分词、置换、逆置换和解码；因此“模型服务不接收明文”仍成立，但公网模式不等同于“明文不离开访客设备”。访问码和会话签名密钥放在被 Git 忽略的 `.env.public-demo` 中。由于 Quick Tunnel 不传输 SSE，公网域名会自动使用后台任务短轮询，本地地址仍使用真实 SSE；两种传输消费相同的逐 token 事件。公网队列单 worker 执行，最多保留 8 个未完成请求；登录地址在十分钟内连续失败 5 次后临时限流。临时域名随 tunnel 进程结束而失效，不作为正式生产地址。
+
+Qwen2.5-0.5B Linux 正式部署入口：
+
+- `docs/QWEN05B_LINUX_SERVER_DEPLOYMENT_RUNBOOK.md`
+- `docs/QWEN05B_V47_INCREMENTAL_COST_REPORT.md`
+- `docs/QWEN05B_CLOUD_COST_REPORT.md`
+
+当前唯一正式目标是 `qwen05b-candidate-v47-stable-factor`。模型配置为 `h=128`、
+`lambda=0.3`、`beta=8`、`alpha_e=0.65`、`alpha_h=0.6`、FP32 权重和 FP64 Attention
+计算，并用 FP64 稳定因子计算 exact-metric RMS。现有 checkpoint 的 24 层公式重建、
+Algorithm 1、Algorithm 2、317 个张量公式覆盖、词表往返、prefill/decode 输入坐标、
+KV Cache 长度和原第 609 步失败的长序列生成检查已经通过。数值修复的公式、反例、
+工件和命令见 `docs/QWEN05B_EXACT_RMS_STABLE_FACTOR.md`。
+
+版本 0.2.0 将攻击实验拆为“可信观测生成 → 不读取目标密钥的攻击 → 独立真值评分”。
+正式验收配置为 `configs/acceptance/qwen05b_v47.yaml`；验收器只读取 v47 工件，不引用
+v15/v29/v31 的结果替代当前目标。
 
 直接执行位置和每条命令见 `docs/QWEN05B_V47_EXECUTION.md`；0.2.0 的代码变更和兼容性
 说明见 `docs/VERSION_0.2.0.md`。README 后文的 v15/v16/v17/v29/v30/v31 数值仅作为历史
 实验记录，不进入 v47 的验收结论。
+
+## DeepSeek-V2-Lite云端架构验证
+
+`0.3.0`增加`DeepSeek-V2-Lite-Chat`的完整MLA/MoE转换路径，固定模型revision为
+`85864749cd611b4353ce1decdb286193298f64c7`。本地已用Transformers真实DeepSeek-V2/V3
+极小配置验证q/kv低秩坐标、低秩RMSNorm、Dense FFN、Shared Experts、Routed Experts、
+group-limited routing、Prefill、KV Cache Decode、断点转换和重分片。
+
+生成无模型、无密钥、无实验工件的云端上传包：
+
+```powershell
+uv run python scripts/build_deepseek_cloud_bundle.py
+```
+
+云端一键入口：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2 bash scripts/cloud/run_deepseek_v2_lite_all.sh
+```
+
+完整执行路径见`docs/DEEPSEEK_V2_LITE_CLOUD_RUNBOOK.md`，版本变更见
+`docs/VERSION_0.3.0.md`。DeepSeek阶段的最终文件分别给出架构判定和隐私发布判定；
+它不替代Qwen2.5-0.5B v47的P/Q、噪声、攻击和产品验收。
+
+## OpenSeek-Small-v1-SFT 本地闭环
+
+仓库已固定并下载 `BAAI/OpenSeek-Small-v1-SFT` revision
+`1515c184e6fe4a91e6061be513a79d607e8787cb`。该模型具有真实 MLA、64 routed experts、
+2 shared experts 和 Top-6 路由；上游配置声明一层 MTP，但发布权重中实际没有 MTP 张量。
+
+当前 `paper-complete` checkpoint 已覆盖该模型实际存在的全部适用隐私机制：词表置换、
+Embedding/LM Head 独立噪声、Algorithm 1 P/Q 扩维、RMSNorm/Residual、MLA 低秩坐标、
+Q/K 互逆缩放、同步 RoPE BlockPerm、条件数受限的 Gaussian Uvo、Dense/Shared/Routed
+FFN、Router 和专家置换。源模型 83 个张量全部发生转换，严格审计 16 项全部通过；
+产品边界复测也确认明文、明文 token 序列和在线密钥均未进入模型服务器或日志。
+
+功能完整性报告见
+[`docs/OPENSEEK_PRIVACY_COMPLETENESS_AUDIT.md`](docs/OPENSEEK_PRIVACY_COMPLETENESS_AUDIT.md)，
+从零构建和运行命令见
+[`docs/OPENSEEK_SMALL_V1_SFT_LOCAL_RUNBOOK.md`](docs/OPENSEEK_SMALL_V1_SFT_LOCAL_RUNBOOK.md)。
+64 候选攻击结果只用于确认攻击代码可执行；完整多密钥、全词表攻击和精度/性能验收仍需
+单独运行，不能由冒烟结果替代。
+
+## v47 当前正式状态
+
+当前验收报告为 `artifacts/acceptance/qwen05b-v47-reaudit-20260813.json`，只绑定
+stable-factor checkpoint。正式结论为 `NO-GO`：21 项中 6 PASS、9 FAIL、6 NOT_TESTED。
+
+| 检查 | 当前结果 |
+|---|---|
+| Algorithm 1 | PASS |
+| Algorithm 2 | PASS |
+| checkpoint 公式覆盖 | 317/317，PASS |
+| 缺失公式张量 | 0 |
+| token 置换与 decode 输入坐标 | PASS |
+| KV Cache 长度推进 | PASS |
+| 原第 609 步 NaN 长样本 | 完整生成，PASS |
+| MMLU、C-Eval、PIQA | FAIL；下降超门限且明文/私有 dtype 绑定不一致 |
+| VMA / Gate-IA / known-plaintext | FAIL；分别有正式指标超过门限 |
+| Direct match / Attention-IA / IMA / ISA-Attention | PASS |
+| TFMA、SDA | 指标数值过门限，但正式三语料协议缺失，FAIL |
+| IFEval、HumanEval、产品 100 问、传输隐私、性能 | NOT_TESTED |
+| HF/vLLM | FAIL；greedy 序列不一致 |
+| vLLM/SGLang | NOT_TESTED |
+
+完整选择题基准继续使用逐题配对和 10,000 次 bootstrap。PPT 门槛为每项点估计下降不
+超过 3.5 个百分点，且配对 95% CI 下界不低于 `-0.035`。所有结论只从新 manifest 绑定
+的 v47 工件重新计算。
 
 ## 1. 论文要求实现的完整流程
 

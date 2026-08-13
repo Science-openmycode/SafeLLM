@@ -30,12 +30,21 @@ class AloePriSglangMetricRMSNorm(nn.Module):
 
     def _normalize(self, hidden_states: torch.Tensor) -> torch.Tensor:
         input_dtype = hidden_states.dtype
-        working = hidden_states.float()
+        # Keep the exact Gram-metric RMS quadratic form numerically stable in
+        # its nullspace, consistent with the HF and vLLM adapters.
+        working = hidden_states.to(torch.float64)
         owner = self._metric_owner()
         if owner is None:
             raise RuntimeError("AloePri RMS metric owner is no longer available")
-        metric = owner.aloepri_rms_metric.to(working.device, torch.float32)
-        variance = torch.einsum("...i,ij,...j->...", working, metric, working)
+        representation = getattr(
+            getattr(owner, "config", None), "aloepri_rms_representation", "gram"
+        )
+        if representation == "stable_factor":
+            factor = owner.aloepri_rms_factor.to(working.device, torch.float64)
+            variance = torch.matmul(working, factor).square().sum(dim=-1)
+        else:
+            metric = owner.aloepri_rms_metric.to(working.device, torch.float64)
+            variance = torch.einsum("...i,ij,...j->...", working, metric, working)
         normalized = working * torch.rsqrt(
             variance.unsqueeze(-1) / self.plain_hidden_size + self.variance_epsilon
         )
@@ -99,6 +108,14 @@ class AloePriQwen2ForCausalLM(Qwen2ForCausalLM):
                 torch.empty((config.hidden_size, config.hidden_size), dtype=torch.float32),
                 requires_grad=False,
             )
+            if getattr(config, "aloepri_rms_representation", "gram") == "stable_factor":
+                self.aloepri_rms_factor = nn.Parameter(
+                    torch.empty(
+                        (config.hidden_size, config.plain_hidden_size),
+                        dtype=torch.float64,
+                    ),
+                    requires_grad=False,
+                )
             for layer in self.model.layers:
                 if isinstance(layer, PPMissingLayer):
                     continue

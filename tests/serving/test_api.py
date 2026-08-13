@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -68,3 +69,12 @@ def test_bearer_auth_and_request_size_limit() -> None:
     assert client.post("/v1/private/generate", json=body, headers=headers).status_code == 200
     oversized = {**body, "input_ids": [1] * 200}
     assert client.post("/v1/private/generate", json=oversized, headers=headers).status_code == 413
+    false_length_headers = {**headers, "Content-Length": "1"}
+    assert (
+        client.post(
+            "/v1/private/generate",
+            content=json.dumps(oversized),
+            headers=false_length_headers,
+        ).status_code
+        == 413
+    )

@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--prompts", type=Path)
     parser.add_argument("--samples-per-length", type=int, default=200)
     parser.add_argument("--lengths", type=int, nargs="+", default=[1, 2, 4, 8, 16])
+    parser.add_argument("--exhaustive-singletons", action="store_true")
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
@@ -28,13 +29,50 @@ def main() -> None:
         parser.error("sample count and sequence lengths must be positive")
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
-    key = load_file(args.key_dir / "paper_key.safetensors", device="cpu")
+    key_candidates = [
+        args.key_dir / "online_key.safetensors",
+        args.key_dir / "paper_key.safetensors",
+    ]
+    key_path = next((path for path in key_candidates if path.is_file()), None)
+    if key_path is None:
+        raise FileNotFoundError(
+            f"key directory contains neither online_key.safetensors nor "
+            f"paper_key.safetensors: {args.key_dir}"
+        )
+    key = load_file(key_path, device="cpu")
     tau = key["tau"]
     excluded = set(int(value) for value in tokenizer.all_special_ids)
     candidates = torch.tensor(
         [index for index in range(tau.numel()) if index not in excluded], dtype=torch.int64
     )
     generator = torch.Generator().manual_seed(args.seed)
+
+    singleton_failures = 0
+    singleton_counterexamples: list[dict[str, Any]] = []
+    if args.exhaustive_singletons:
+        for start in range(0, tau.numel(), 4096):
+            id_batches = [
+                [index] for index in range(start, min(start + 4096, tau.numel()))
+            ]
+            texts = tokenizer.batch_decode(
+                id_batches,
+                skip_special_tokens=False,
+                clean_up_tokenization_spaces=False,
+            )
+            reencoded_batches = tokenizer(texts, add_special_tokens=False)["input_ids"]
+            for source_ids, text, reencoded_ids in zip(
+                id_batches, texts, reencoded_batches, strict=True
+            ):
+                if reencoded_ids != source_ids:
+                    singleton_failures += 1
+                    if len(singleton_counterexamples) < 20:
+                        singleton_counterexamples.append(
+                            {
+                                "ids": source_ids,
+                                "decoded_text": text,
+                                "reencoded_ids": reencoded_ids,
+                            }
+                        )
 
     random_results = []
     counterexamples: list[dict[str, Any]] = []
@@ -102,13 +140,27 @@ def main() -> None:
         "paper_assumption": "Encode(Decode(tau(input_ids))) == tau(input_ids)",
         "tokenizer": str(args.tokenizer.resolve()),
         "key_dir": str(args.key_dir.resolve()),
+        "key_file": str(key_path.resolve()),
         "special_ids_excluded_from_random_sampling": sorted(excluded),
         "random_results": random_results,
+        "exhaustive_singletons": {
+            "enabled": args.exhaustive_singletons,
+            "vocab_size": int(tau.numel()),
+            "failures": singleton_failures,
+            "failure_rate": singleton_failures / tau.numel()
+            if args.exhaustive_singletons
+            else None,
+            "counterexamples": singleton_counterexamples,
+        },
         "prompt_results": prompt_results,
         "counterexamples": counterexamples,
         "random_failure_count": random_failures,
         "prompt_failure_count": prompt_failures,
-        "paper_text_transport_safe": random_failures == 0 and prompt_failures == 0,
+        "paper_text_transport_safe": (
+            random_failures == 0
+            and prompt_failures == 0
+            and (not args.exhaustive_singletons or singleton_failures == 0)
+        ),
         "recommended_transport": "token_ids",
         "provenance": run_provenance(
             script=Path(__file__),
@@ -125,6 +177,7 @@ def main() -> None:
                 "paper_text_transport_safe": payload["paper_text_transport_safe"],
                 "random_failure_count": random_failures,
                 "prompt_failure_count": prompt_failures,
+                "singleton_failure_count": singleton_failures,
                 "out": str(args.out),
             },
             ensure_ascii=False,

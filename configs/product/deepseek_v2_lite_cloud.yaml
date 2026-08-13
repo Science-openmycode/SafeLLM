@@ -1,0 +1,27 @@
+schema_version: 1
+model_id: deepseek-v2-lite-chat-mla-moe
+key_id: deepseek-v2-lite-chat-mla-moe-online
+source_model: data/models/deepseek-v2-lite-chat
+output_model: data/packages/deepseek-v2-lite-chat-mla-moe
+full_key_dir: data/keys/deepseek-v2-lite-chat-mla-moe-offline
+online_key_dir: data/keys/deepseek-v2-lite-chat-mla-moe-online
+offline_key_dir: data/keys/deepseek-v2-lite-chat-mla-moe-offline
+evidence_dir: artifacts/deepseek-v2-lite-chat
+conversion:
+  transform_version: deepseek-v2-latent-mla-moe-v3
+  seed: 20260803
+  vocab_permutation: true
+  ffn_scale_min: 0.5
+  ffn_scale_max: 2.0
+  transform_scope: vocab_mla_latent_moe
+server:
+  model_path: data/packages/deepseek-v2-lite-chat-mla-moe
+  host: 127.0.0.1
+  port: 8000
+  device: cuda-auto
+  dtype: bfloat16
+  gpu_memory_fraction: 0.90
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_BEARER_TOKEN

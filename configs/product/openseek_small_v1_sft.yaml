@@ -1,0 +1,27 @@
+schema_version: 1
+model_id: openseek-small-v1-sft-private
+key_id: openseek-small-v1-sft-private-online
+source_model: data/models/openseek-small-v1-sft-transformers
+output_model: data/packages/openseek-small-v1-sft-private
+full_key_dir: data/keys/openseek-small-v1-sft-private-offline
+online_key_dir: data/keys/openseek-small-v1-sft-private-online
+offline_key_dir: data/keys/openseek-small-v1-sft-private-offline
+evidence_dir: artifacts/openseek-small-v1-sft
+conversion:
+  transform_version: deepseek-v2-latent-mla-moe-v3
+  seed: 20260813
+  vocab_permutation: true
+  ffn_scale_min: 1.0
+  ffn_scale_max: 1.0
+  transform_scope: vocab_mla_latent_moe
+server:
+  model_path: data/packages/openseek-small-v1-sft-private
+  host: 127.0.0.1
+  port: 8010
+  device: cpu
+  dtype: bfloat16
+  gpu_memory_fraction: 0.82
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_OPENSEEK_BEARER_TOKEN

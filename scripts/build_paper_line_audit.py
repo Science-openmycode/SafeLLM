@@ -71,6 +71,19 @@ def _line_symbol(line_number: int, spans: list[SymbolSpan]) -> str | None:
     return min(candidates, key=lambda span: span.width).name
 
 
+def _symbol_override(symbol: str | None, overrides: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the closest configured symbol or one of its enclosing symbols."""
+
+    if symbol is None:
+        return {}
+    parts = symbol.split(".")
+    for length in range(len(parts), 0, -1):
+        candidate = ".".join(parts[:length])
+        if candidate in overrides:
+            return overrides[candidate]
+    return {}
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -96,7 +109,7 @@ def build(config_path: Path, workspace: Path) -> dict[str, Any]:
         for number, text in enumerate(source_lines, start=1):
             auditable = bool(text.strip()) and number not in comment_only
             symbol = _line_symbol(number, spans)
-            override = symbol_overrides.get(symbol or "", {})
+            override = _symbol_override(symbol, symbol_overrides)
             status = override.get("status", item["default_status"])
             note = override.get("note", "")
             if auditable:
@@ -150,6 +163,8 @@ def render_html(ledger: dict[str, Any]) -> str:
         "PAPER_EXACT": "#0c7a5a",
         "PAPER_CORRECTED": "#2563eb",
         "ENGINEERING_SUBSTITUTE": "#8b5cf6",
+        "NUMERICAL_STABILIZATION": "#0891b2",
+        "PROFILE_DEPENDENT": "#be185d",
         "PAPER_UNDERSPECIFIED": "#d97706",
         "PROXY_NOT_PAPER_EXACT": "#dc2626",
         "VERIFICATION": "#475569",

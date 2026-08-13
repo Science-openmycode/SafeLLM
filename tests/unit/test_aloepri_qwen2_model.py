@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from torch import nn
 from transformers import AutoModelForCausalLM, Qwen2Config
 
 from aloepri.models.configuration_aloepri_qwen2 import AloePriQwen2Config
@@ -9,6 +10,7 @@ from aloepri.models.modeling_aloepri_qwen2 import (
     AloePriFP64Linear,
     AloePriFP64ScoreAttention,
     AloePriMetricRMSNorm,
+    AloePriQwen2ForCausalLM,
     AloePriSynchronizedBlockPermAttention,
     register_aloepri_qwen2,
 )
@@ -78,6 +80,64 @@ def test_exact_metric_rms_model_save_and_reload(tmp_path) -> None:
     loaded = AutoModelForCausalLM.from_pretrained(tmp_path, local_files_only=True).eval()
     assert isinstance(loaded.model.layers[0].input_layernorm, AloePriMetricRMSNorm)
     torch.testing.assert_close(loaded.aloepri_rms_metric, model.aloepri_rms_metric)
+
+
+def test_exact_metric_rms_uses_stable_fp64_quadratic_form() -> None:
+    torch.manual_seed(5)
+    q = torch.randn(8, 6, dtype=torch.float64)
+    metric = (q @ q.mT).to(torch.float32)
+    _, eigenvectors = torch.linalg.eigh(metric.to(torch.float64))
+    hidden_states = (eigenvectors[:, 0].to(torch.float32) * 1.0e10).reshape(1, 1, 8)
+
+    fp32_variance = torch.einsum(
+        "...i,ij,...j->...", hidden_states, metric, hidden_states
+    )
+    assert fp32_variance.item() < 0.0
+
+    owner = nn.Module()
+    owner.register_buffer("aloepri_rms_metric", metric)
+    norm = AloePriMetricRMSNorm(8, 6, 1.0e-6, owner)
+    actual = norm(hidden_states)
+
+    working = hidden_states.to(torch.float64)
+    reference_variance = torch.einsum(
+        "...i,ij,...j->...", working, metric.to(torch.float64), working
+    ).unsqueeze(-1) / 6
+    reference = (
+        working * torch.rsqrt(reference_variance + 1.0e-6)
+    ).to(torch.float32)
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual, reference)
+
+
+def test_exact_metric_stable_factor_avoids_nullspace_cancellation() -> None:
+    torch.manual_seed(5)
+    q = torch.randn(24, 16, dtype=torch.float64)
+    gram = q @ q.mT
+    eigenvalues, eigenvectors = torch.linalg.eigh(gram)
+    factor = eigenvectors[:, -16:] * eigenvalues[-16:].clamp_min(0).sqrt().unsqueeze(0)
+    _, gram_eigenvectors = torch.linalg.eigh(gram.to(torch.float32).to(torch.float64))
+    hidden_states = (
+        gram_eigenvectors[:, 0].to(torch.float32) * 1.0e10
+    ).reshape(1, 1, 24)
+
+    config = tiny_config()
+    config.aloepri_rms_mode = "exact_metric"
+    config.aloepri_rms_representation = "stable_factor"
+    model = AloePriQwen2ForCausalLM(config).eval()
+    model.aloepri_rms_metric.copy_(gram.to(torch.float32))
+    model.aloepri_rms_factor.copy_(factor)
+    norm = model.model.layers[0].input_layernorm
+    actual = norm(hidden_states)
+
+    projected = hidden_states.to(torch.float64) @ factor
+    reference_variance = projected.square().sum(dim=-1, keepdim=True) / 16
+    reference = (
+        hidden_states.to(torch.float64)
+        * torch.rsqrt(reference_variance + norm.variance_epsilon)
+    ).to(torch.float32)
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual, reference)
 
 
 def test_fp64_attention_compute_returns_residual_dtype_and_cache() -> None:

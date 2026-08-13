@@ -1,0 +1,39 @@
+schema_version: 1
+model_id: openseek-small-v1-sft-paper-complete
+key_id: openseek-small-v1-sft-paper-complete-online
+source_model: data/models/openseek-small-v1-sft-transformers
+output_model: data/packages/openseek-small-v1-sft-paper-complete
+full_key_dir: data/keys/openseek-small-v1-sft-paper-complete-offline
+online_key_dir: data/keys/openseek-small-v1-sft-paper-complete-online
+offline_key_dir: data/keys/openseek-small-v1-sft-paper-complete-offline
+evidence_dir: artifacts/openseek-small-v1-sft-paper-complete
+conversion:
+  transform_version: deepseek-v3-paper-complete-v1
+  seed: 20260813
+  vocab_permutation: true
+  expansion_h: 128
+  lambda: 0.3
+  alpha_e: 1.0
+  alpha_h: 0.2
+  block_beta: 8
+  sampling_gamma: 1000.0
+  qk_scale_min: 0.5
+  qk_scale_max: 2.0
+  uvo_condition_max: 100.0
+  blockperm_mode: paper-distribution-boundary-corrected
+  ffn_scale_min: 0.5
+  ffn_scale_max: 2.0
+  rms_mode: paper_kappa
+  router_normalize: true
+  transform_scope: vocab_noise_pq_rms_residual_mla_blockperm_moe_router
+server:
+  model_path: data/packages/openseek-small-v1-sft-paper-complete
+  host: 127.0.0.1
+  port: 8011
+  device: cpu
+  dtype: bfloat16
+  gpu_memory_fraction: 0.82
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_OPENSEEK_BEARER_TOKEN

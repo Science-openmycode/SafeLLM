@@ -14,6 +14,7 @@ from aloepri.attacks.protocol import (
     load_private_token_sequences,
 )
 from aloepri.evidence import run_provenance
+from aloepri.models.modeling_aloepri_deepseek_v3 import register_aloepri_deepseek_v3
 from aloepri.models.modeling_aloepri_qwen2 import register_aloepri_qwen2
 
 
@@ -27,11 +28,17 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--max-sequences", type=int, default=20)
     parser.add_argument("--max-length", type=int, default=16)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        raise ValueError("gpu memory fraction must be between 0.1 and 0.9")
     assert_attack_inputs_exclude_target_key([args.original, args.private, args.private_token_ids])
     register_aloepri_qwen2()
+    register_aloepri_deepseek_v3()
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     sequences = load_private_token_sequences(args.private_token_ids)
     private_sequences = [
@@ -96,6 +103,7 @@ def main() -> None:
         "layer": args.layer,
         "steps": args.steps,
         "learning_rate": args.learning_rate,
+        "gpu_memory_fraction": args.gpu_memory_fraction if device == "cuda" else None,
         "per_sequence": loss_records,
         "provenance": run_provenance(
             script=Path(__file__),

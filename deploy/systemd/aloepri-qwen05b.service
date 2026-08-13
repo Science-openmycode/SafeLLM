@@ -1,0 +1,24 @@
+[Unit]
+Description=AloePri Qwen2.5-0.5B private inference API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aloepri
+Group=aloepri
+WorkingDirectory=/data/AloePri
+EnvironmentFile=/etc/aloepri/qwen05b.env
+ExecStart=/data/AloePri/.venv-qwen05b-cu121/bin/aloepri serve --config configs/product/qwen05b_v47_best_single_candidate.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/data/AloePri
+
+[Install]
+WantedBy=multi-user.target

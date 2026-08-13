@@ -103,6 +103,14 @@ def convert_qwen2_modules(
             raise TypeError("exact_metric target does not expose aloepri_rms_metric")
         with torch.no_grad():
             target.aloepri_rms_metric.copy_(metric.to(target.aloepri_rms_metric.dtype))
+            if getattr(target.config, "aloepri_rms_representation", "gram") == "stable_factor":
+                if not hasattr(target, "aloepri_rms_factor"):
+                    raise TypeError("stable-factor target does not expose aloepri_rms_factor")
+                eigenvalues, eigenvectors = torch.linalg.eigh(metric)
+                rank = int(target.config.plain_hidden_size)
+                positive_values = eigenvalues[-rank:].clamp_min(0.0)
+                factor = eigenvectors[:, -rank:] * positive_values.sqrt().unsqueeze(0)
+                target.aloepri_rms_factor.copy_(factor)
     with torch.no_grad():
         target.get_input_embeddings().weight.copy_(
             transform_embedding(noisy_embedding, p, tau).to(target_dtype)

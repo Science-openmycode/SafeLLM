@@ -674,13 +674,38 @@ def main() -> None:
     )
     if rms_mode == "exact_metric":
         metric_name = "aloepri_rms_metric"
+        expected_metric = key["q"].double() @ key["q"].double().mT
         add_comparison(
             records,
             name=metric_name,
             formula="Corrected exact RMS: G = Q Q^T for the stored base right inverse",
-            expected=key["q"].double() @ key["q"].double().mT,
+            expected=expected_metric,
             actual=load_tensor(private_map, metric_name),
         )
+        factor_name = "aloepri_rms_factor"
+        if factor_name in private_map:
+            factor = load_tensor(private_map, factor_name).double()
+            reconstructed = factor @ factor.mT
+            delta = expected_metric - reconstructed
+            maximum_error = float(delta.abs().max())
+            # A PSD factor is non-unique: signs and bases within repeated
+            # eigenspaces may differ.  Verify the invariant quadratic form
+            # instead of requiring a particular eigensolver's byte pattern.
+            records.append(
+                {
+                    "name": factor_name,
+                    "formula": (
+                        "Numerically stable corrected exact RMS: F F^T = Q Q^T"
+                    ),
+                    "pass": maximum_error <= 1.0e-10,
+                    "dtype": str(factor.dtype),
+                    "shape": list(factor.shape),
+                    "reconstructed_metric_shape": list(reconstructed.shape),
+                    "max_abs_error": maximum_error,
+                    "mean_abs_error": float(delta.abs().mean()),
+                    "tolerance": 1.0e-10,
+                }
+            )
     source_head_name = (
         "lm_head.weight" if "lm_head.weight" in source_map else "model.embed_tokens.weight"
     )

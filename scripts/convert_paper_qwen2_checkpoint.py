@@ -60,10 +60,15 @@ def paper_alignment_profile(args: argparse.Namespace) -> dict[str, object]:
     which paper construction is literal, corrected, disabled, or numerically
     stabilized without access to the offline key.
     """
+    rms_representation = getattr(args, "rms_representation", "gram")
     return {
         "algorithm1": "shape-corrected-nullspaces",
         "rmsnorm": (
-            "corrected-exact-derived-metric"
+            (
+                "corrected-exact-derived-metric"
+                if rms_representation == "gram"
+                else "corrected-exact-stable-factor"
+            )
             if args.rms_mode == "exact-metric"
             else "paper-scalar-kappa-approximation"
         ),
@@ -147,6 +152,15 @@ def main() -> None:
         default="paper-kappa",
         help="Paper approximation or exact corrected plaintext-metric RMSNorm.",
     )
+    parser.add_argument(
+        "--rms-representation",
+        choices=["gram", "stable-factor"],
+        default="gram",
+        help=(
+            "Store the exact Gram form or its PSD factor. The stable factor "
+            "evaluates the same quadratic form without nullspace cancellation."
+        ),
+    )
     parser.add_argument("--algorithm2", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--ffn-scale-min", type=float, default=0.5)
     parser.add_argument("--ffn-scale-max", type=float, default=2.0)
@@ -194,6 +208,7 @@ def main() -> None:
         source.config,
         expansion_h=args.h,
         rms_mode=args.rms_mode.replace("-", "_"),
+        rms_representation=args.rms_representation.replace("-", "_"),
         attention_compute_dtype=args.attention_compute_dtype,
     )
     old_dtype = torch.get_default_dtype()
@@ -287,6 +302,7 @@ def main() -> None:
         "seed": args.seed,
         "kappa": stats.kappa,
         "rms_mode": stats.rms_mode,
+        "rms_representation": args.rms_representation,
         "kappa_mode": args.kappa_mode,
         "kappa_override": args.kappa_override,
         "rms_calibration": str(args.rms_calibration) if args.rms_calibration else None,

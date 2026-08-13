@@ -10,6 +10,7 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 from aloepri.conversion.metadata import strip_secret_metadata
+from aloepri.conversion.verify import verify_manifest as verify_model_manifest
 
 
 def sha256_file(path: Path) -> str:
@@ -136,6 +137,8 @@ def inspect_server_package(server_package: Path) -> dict[str, object]:
     findings: list[str] = []
     warnings: list[str] = []
     derived_server_tensors: list[str] = []
+    rms_derived = False
+    rope_derived = False
 
     def forbidden_json_keys(
         value: object,
@@ -177,6 +180,9 @@ def inspect_server_package(server_package: Path) -> dict[str, object]:
     manifest_path = server_package / "aloepri_manifest.json"
     if not manifest_path.is_file():
         findings.append("aloepri_manifest.json is missing")
+    else:
+        manifest_result = verify_model_manifest(server_package)
+        findings.extend(f"manifest:{failure}" for failure in manifest_result.failures)
     for path in server_package.rglob("*"):
         if not path.is_file():
             continue
@@ -188,6 +194,15 @@ def inspect_server_package(server_package: Path) -> dict[str, object]:
                     findings.append(f"{path.name} contains forbidden tensors: {sorted(leaked)}")
                 if "aloepri_rms_metric" in tensor_names:
                     derived_server_tensors.append(f"{path.name}:aloepri_rms_metric")
+                    rms_derived = True
+                if "aloepri_rms_factor" in tensor_names:
+                    derived_server_tensors.append(f"{path.name}:aloepri_rms_factor")
+                    rms_derived = True
+                if "model.rotary_emb.aloepri_pair_order" in tensor_names:
+                    derived_server_tensors.append(
+                        f"{path.name}:model.rotary_emb.aloepri_pair_order"
+                    )
+                    rope_derived = True
         if path.suffix == ".json":
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -202,11 +217,18 @@ def inspect_server_package(server_package: Path) -> dict[str, object]:
             leaked_keys = forbidden_json_keys(payload, opaque_mapping_paths=opaque_paths)
             if leaked_keys:
                 findings.append(f"{path.name} contains forbidden metadata keys: {leaked_keys}")
-    if derived_server_tensors:
+    if rms_derived:
         warnings.append(
-            "exact-metric RMSNorm stores the derived inverse-coordinate Gram matrix "
-            "Q Q^T in server weights; it is not P/Q itself, but this profile is a "
-            "documented correction rather than the paper's scalar-kappa construction"
+            "exact-metric RMSNorm stores a derived representation of the "
+            "inverse-coordinate Gram matrix Q Q^T in server weights; the Gram "
+            "matrix and its stable factor are not the offline P/Q pair, but this "
+            "profile is a documented correction to the paper's scalar-kappa path"
+        )
+    if rope_derived:
+        warnings.append(
+            "synchronized DeepSeek RoPE BlockPerm stores the pair order in the "
+            "server model because the runtime must reorder rotary frequencies; "
+            "it is not tau, P/Q, a conversion seed, or an online inverse key"
         )
     return {
         "schema_version": 1,

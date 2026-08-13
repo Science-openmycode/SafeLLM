@@ -10,6 +10,7 @@ from safetensors.torch import load_file
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from aloepri.evidence import run_provenance
+from aloepri.models.modeling_aloepri_deepseek_v3 import register_aloepri_deepseek_v3
 from aloepri.models.modeling_aloepri_qwen2 import register_aloepri_qwen2
 
 
@@ -49,6 +50,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     register_aloepri_qwen2()
+    register_aloepri_deepseek_v3()
     torch.manual_seed(20260803)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(args.original, local_files_only=True)

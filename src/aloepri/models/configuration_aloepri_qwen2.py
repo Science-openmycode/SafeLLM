@@ -16,6 +16,7 @@ class AloePriQwen2Config(Qwen2Config):
         head_dim: int = 64,
         aloepri_transform_version: int = 2,
         aloepri_rms_mode: str = "paper_kappa",
+        aloepri_rms_representation: str = "gram",
         aloepri_attention_compute_dtype: str = "float32",
         aloepri_rope_block_orders: list[list[list[int]]] | None = None,
         **kwargs: Any,
@@ -37,6 +38,12 @@ class AloePriQwen2Config(Qwen2Config):
         if aloepri_rms_mode not in {"paper_kappa", "exact_metric"}:
             raise ValueError(f"unsupported AloePri RMS mode: {aloepri_rms_mode}")
         self.aloepri_rms_mode = aloepri_rms_mode
+        if aloepri_rms_representation not in {"gram", "stable_factor"}:
+            raise ValueError(
+                "unsupported AloePri RMS representation: "
+                f"{aloepri_rms_representation}"
+            )
+        self.aloepri_rms_representation = aloepri_rms_representation
         if aloepri_attention_compute_dtype not in {
             "float32",
             "float64",
@@ -57,6 +64,7 @@ class AloePriQwen2Config(Qwen2Config):
         expansion_h: int,
         transform_version: int = 2,
         rms_mode: str = "paper_kappa",
+        rms_representation: str = "gram",
         attention_compute_dtype: str = "float32",
     ) -> AloePriQwen2Config:
         values = base.to_dict()
@@ -72,6 +80,7 @@ class AloePriQwen2Config(Qwen2Config):
             head_dim=head_dim,
             aloepri_transform_version=transform_version,
             aloepri_rms_mode=rms_mode,
+            aloepri_rms_representation=rms_representation,
             aloepri_attention_compute_dtype=attention_compute_dtype,
             **values,
         )

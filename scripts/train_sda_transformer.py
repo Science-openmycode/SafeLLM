@@ -26,6 +26,8 @@ def main() -> None:
     parser.add_argument("--max-length", type=int, default=128)
     parser.add_argument("--steps", type=int, default=3000)
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--micro-batch-size", type=int, default=4)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -37,8 +39,18 @@ def main() -> None:
             *([args.corpus_manifest] if args.corpus_manifest else []),
         ]
     )
-    if min(args.max_sequences, args.max_length, args.steps, args.batch_size) < 1:
+    if min(
+        args.max_sequences,
+        args.max_length,
+        args.steps,
+        args.batch_size,
+        args.micro_batch_size,
+    ) < 1:
         parser.error("sequence, length, step, and batch limits must be positive")
+    if args.batch_size % args.micro_batch_size:
+        parser.error("--batch-size must be divisible by --micro-batch-size")
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        parser.error("--gpu-memory-fraction must be between 0.1 and 0.9")
 
     torch.manual_seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
@@ -73,22 +85,29 @@ def main() -> None:
         max_length=actual_length,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     model = RecurrenceDecoder(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     generator = torch.Generator().manual_seed(args.seed + 1)
     final_loss = float("nan")
     for _ in range(args.steps):
         indices = torch.randint(0, len(ranks), (args.batch_size,), generator=generator)
-        rank_batch = ranks[indices].to(device)
-        target_batch = targets[indices].to(device)
-        logits = model(rank_batch)
-        loss = nn.functional.cross_entropy(
-            logits.flatten(0, 1), target_batch.flatten(), ignore_index=-100
-        )
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        loss_sum = 0.0
+        for start in range(0, args.batch_size, args.micro_batch_size):
+            micro_indices = indices[start : start + args.micro_batch_size]
+            rank_batch = ranks[micro_indices].to(device)
+            target_batch = targets[micro_indices].to(device)
+            logits = model(rank_batch)
+            loss = nn.functional.cross_entropy(
+                logits.flatten(0, 1), target_batch.flatten(), ignore_index=-100
+            )
+            scaled_loss = loss * (args.micro_batch_size / args.batch_size)
+            scaled_loss.backward()
+            loss_sum += float(scaled_loss.detach().cpu())
         optimizer.step()
-        final_loss = float(loss.detach().cpu())
+        final_loss = loss_sum
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     weights_path = args.out_dir / "model.safetensors"
@@ -104,6 +123,10 @@ def main() -> None:
             "sequences": len(sequences),
             "steps": args.steps,
             "batch_size": args.batch_size,
+            "micro_batch_size": args.micro_batch_size,
+            "gpu_memory_fraction": (
+                args.gpu_memory_fraction if device.type == "cuda" else None
+            ),
             "learning_rate": args.learning_rate,
             "seed": args.seed,
             "final_loss": final_loss,

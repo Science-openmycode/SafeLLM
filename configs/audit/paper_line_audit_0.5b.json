@@ -35,7 +35,7 @@
       "paper_refs": ["Algorithm 2", "Sec. 5.2.3", "Sec. 5.2.4", "E03-E06", "E10", "E13"],
       "tests": ["tests/unit/test_qwen_structural.py"],
       "symbols": {
-        "make_rope_commuting_map": {"status": "PAPER_EXACT"},
+        "make_rope_commuting_map": {"status": "PAPER_CORRECTED", "note": "Implements the paper's 2D rotations in Qwen's split-half RoPE storage layout."},
         "make_attention_key": {"status": "PAPER_CORRECTED", "note": "Q/K use the same block permutation so dot products cancel; scales are nonzero log-uniform."},
         "make_dynamic_rope_block_order": {"status": "PAPER_CORRECTED", "note": "Repairs missing t update, boundary error, unused gamma and Qwen RoPE exponent."},
         "transform_mlp_scaled": {"status": "PAPER_UNDERSPECIFIED", "note": "Algebra matches Sec. 5.2.4; the paper does not give the scaling distribution."}
@@ -50,7 +50,11 @@
       "symbols": {
         "analytic_rms_kappa": {"status": "PAPER_CORRECTED", "note": "RMS-dimension-correct coefficient from E07."},
         "frobenius_norm_ratio_proxy": {"status": "PAPER_UNDERSPECIFIED", "note": "Second-moment proxy, not the exact expectation for a general P."},
-        "convert_qwen2_modules.exact_metric": {"status": "PAPER_CORRECTED", "note": "Stores G=Q Q^T and evaluates plaintext RMS exactly; this is not the paper's scalar-kappa approximation."}
+        "transform_input_projection": {"status": "PAPER_EXACT"},
+        "transform_output_projection": {"status": "PAPER_EXACT"},
+        "transform_embedding": {"status": "PAPER_EXACT"},
+        "transform_head": {"status": "PAPER_EXACT"},
+        "convert_qwen2_modules": {"status": "PAPER_CORRECTED", "note": "Applies the paper tensor formulas and stores exact-metric RMS state; exact-metric RMS is a documented correction to scalar kappa."}
       }
     },
     {
@@ -68,8 +72,19 @@
       "tests": ["tests/unit/test_aloepri_qwen2_model.py"],
       "symbols": {
         "AloePriMetricRMSNorm": {"status": "PAPER_CORRECTED", "note": "Exact corrected RMSNorm using the server-resident derived metric G=Q Q^T."},
-        "AloePriFP64Attention": {"status": "NUMERICAL_STABILIZATION", "note": "Preserves the paper algebra but differs from the paper experiment's bf16 arithmetic."}
+        "AloePriFP64Attention": {"status": "NUMERICAL_STABILIZATION", "note": "Preserves the paper algebra but differs from the paper experiment's bf16 arithmetic."},
+        "AloePriFP64Linear": {"status": "NUMERICAL_STABILIZATION", "note": "Evaluates transformed projections in FP64 for the 0.5B numerical profile."},
+        "AloePriFP64ScoreAttention": {"status": "NUMERICAL_STABILIZATION", "note": "Optional score-only FP64 execution profile."},
+        "apply_synchronized_block_permuted_rope": {"status": "PAPER_CORRECTED", "note": "Conjugates RoPE after cross-frequency BlockPerm; the printed paper algorithm omits this required synchronization."},
+        "AloePriSynchronizedBlockPermAttention": {"status": "PAPER_CORRECTED", "note": "Runs the corrected synchronized RoPE in prefill and decode."}
       }
+    },
+    {
+      "path": "scripts/upgrade_exact_rms_stable_factor.py",
+      "component": "stable exact-metric RMS factorization",
+      "default_status": "NUMERICAL_STABILIZATION",
+      "paper_refs": ["Sec. 5.2.5", "E15"],
+      "tests": ["tests/unit/test_aloepri_qwen2_model.py"]
     },
     {
       "path": "scripts/convert_paper_qwen2_checkpoint.py",
@@ -110,6 +125,13 @@
       "default_status": "ENGINEERING_SUBSTITUTE",
       "paper_refs": ["Fig. 1", "Sec. 5.3"],
       "tests": ["tests/serving/test_api.py"]
+    },
+    {
+      "path": "src/aloepri/demo/app.py",
+      "component": "trusted local demonstration gateway",
+      "default_status": "ENGINEERING_SUBSTITUTE",
+      "paper_refs": ["Fig. 1", "Sec. 5.3", "PPT slides 3 and 5"],
+      "tests": ["tests/unit/test_demo_app.py"]
     },
     {
       "path": "src/aloepri/privacy/rmdp.py",
@@ -164,15 +186,29 @@
       "tests": ["tests/unit/test_attn_ia.py"]
     },
     {
-      "path": "scripts/run_isa_hidden_state.py",
-      "component": "ISA experiment",
+      "path": "src/aloepri/attacks/isa.py",
+      "component": "ISA optimization primitives",
       "default_status": "PROXY_NOT_PAPER_EXACT",
       "paper_refs": ["Appendix D.1 ISA"],
       "tests": ["tests/unit/test_isa_hidden_state.py"]
     },
     {
-      "path": "scripts/train_ima_smoke.py",
-      "component": "IMA experiment",
+      "path": "scripts/run_isa_attention_score.py",
+      "component": "v47 attention-score ISA experiment",
+      "default_status": "PROXY_NOT_PAPER_EXACT",
+      "paper_refs": ["Table 4", "Appendix D.1 ISA"],
+      "tests": ["tests/unit/test_isa_hidden_state.py"]
+    },
+    {
+      "path": "src/aloepri/attacks/ima.py",
+      "component": "paper-like two-layer Qwen IMA inverter",
+      "default_status": "PAPER_UNDERSPECIFIED",
+      "paper_refs": ["Appendix D.1 IMA"],
+      "tests": ["tests/attacks/test_paper_like_ima.py"]
+    },
+    {
+      "path": "scripts/run_ima_target_attack.py",
+      "component": "v47 isolated-target IMA experiment",
       "default_status": "PROXY_NOT_PAPER_EXACT",
       "paper_refs": ["Appendix D.1 IMA"],
       "tests": []
@@ -185,8 +221,22 @@
       "tests": ["tests/unit/test_known_plaintext_curve.py"]
     },
     {
-      "path": "scripts/train_sda_smoke.py",
-      "component": "SDA experiment",
+      "path": "src/aloepri/attacks/sda.py",
+      "component": "SDA recurrence decoder",
+      "default_status": "PAPER_UNDERSPECIFIED",
+      "paper_refs": ["Table 5", "Appendix D.1 SDA"],
+      "tests": ["tests/unit/test_recurrence.py"]
+    },
+    {
+      "path": "scripts/train_sda_transformer.py",
+      "component": "v47 SDA training",
+      "default_status": "PROXY_NOT_PAPER_EXACT",
+      "paper_refs": ["Table 5", "Appendix D.1 SDA"],
+      "tests": ["tests/unit/test_recurrence.py"]
+    },
+    {
+      "path": "scripts/run_sda_target_attack.py",
+      "component": "v47 isolated-target SDA inference",
       "default_status": "PROXY_NOT_PAPER_EXACT",
       "paper_refs": ["Table 5", "Appendix D.1 SDA"],
       "tests": ["tests/unit/test_recurrence.py"]

@@ -1,0 +1,79 @@
+schema_version: 1
+currency: CNY
+quote_snapshot: 2026-08-11
+scope: qwen2.5-0.5b-v47-incremental-only
+scenarios:
+  rtx4090_incremental_formal:
+    description: RTX 4090 24 GB driver 580; only incomplete or formally invalid v47 evidence
+    hourly_rate: "1.80"
+    gpu_count: 1
+    billing_increment_hours: "1.0"
+    contingency_percent: "20"
+    stages:
+      instance_create_and_disk_mount: "0.25"
+      upload_extract_and_sha256: "0.50"
+      core_cuda121_environment: "1.00"
+      preflight_and_static_tests: "0.25"
+      sanitized_server_package: "0.25"
+      formal_corpus_download_and_normalize: "0.50"
+      private_observation_refresh: "0.10"
+      tfma_formal_run_and_score: "0.15"
+      sda_formal_training: "0.40"
+      sda_formal_attack_and_score: "0.10"
+      mmlu_fp32_pair: "4.30"
+      ceval_fp32_pair: "0.50"
+      piqa_fp32_pair: "0.40"
+      ifeval_fp32_baseline_541: "3.50"
+      ifeval_fp32_candidate_541: "4.50"
+      humaneval_fp32_baseline_164: "0.25"
+      humaneval_fp32_candidate_164: "0.35"
+      humaneval_sandbox_score_and_compare: "0.10"
+      transport_privacy_gate: "0.10"
+      product_question_gate_100: "0.50"
+      balanced_hf_performance_80: "0.50"
+      cuda13_engine_environments: "2.50"
+      vllm_compatibility: "0.75"
+      sglang_compatibility: "1.00"
+      final_acceptance_pack_and_download: "0.50"
+  rtx3090_incremental_core:
+    description: RTX 3090 24 GB driver 530; incremental HF, attacks, product and performance only
+    hourly_rate: "0.88"
+    gpu_count: 1
+    billing_increment_hours: "1.0"
+    contingency_percent: "20"
+    stages:
+      instance_create_and_disk_mount: "0.25"
+      upload_extract_and_sha256: "0.50"
+      core_cuda121_environment: "1.00"
+      preflight_and_static_tests: "0.25"
+      sanitized_server_package: "0.25"
+      formal_corpus_download_and_normalize: "0.50"
+      private_observation_refresh: "0.10"
+      tfma_formal_run_and_score: "0.20"
+      sda_formal_training: "0.60"
+      sda_formal_attack_and_score: "0.15"
+      mmlu_fp32_pair: "4.30"
+      ceval_fp32_pair: "0.50"
+      piqa_fp32_pair: "0.40"
+      ifeval_fp32_baseline_541: "4.50"
+      ifeval_fp32_candidate_541: "5.50"
+      humaneval_fp32_baseline_164: "0.30"
+      humaneval_fp32_candidate_164: "0.50"
+      humaneval_sandbox_score_and_compare: "0.10"
+      transport_privacy_gate: "0.15"
+      product_question_gate_100: "0.60"
+      balanced_hf_performance_80: "0.60"
+      final_acceptance_pack_and_download: "0.50"
+  rtx4090_incremental_engines:
+    description: RTX 4090 24 GB driver 580; only vLLM and SGLang evidence after RTX 3090 core run
+    hourly_rate: "1.80"
+    gpu_count: 1
+    billing_increment_hours: "1.0"
+    contingency_percent: "20"
+    stages:
+      instance_create_and_disk_mount: "0.25"
+      upload_extract_and_handoff_verify: "0.25"
+      cuda13_engine_environments: "2.50"
+      vllm_compatibility: "0.75"
+      sglang_compatibility: "1.00"
+      evidence_pack_and_download: "0.25"

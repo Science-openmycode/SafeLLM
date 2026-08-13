@@ -4,8 +4,10 @@ import argparse
 import gc
 import hashlib
 import json
+import random
 from pathlib import Path
 
+import numpy as np
 import torch
 from datasets import load_dataset
 from filelock import FileLock
@@ -28,10 +30,58 @@ def save_atomic(path: Path, payload: dict[str, object]) -> None:
     partial.replace(path)
 
 
+def clear_cuda_cache_and_measure_free_bytes() -> int:
+    """Return post-cleanup free memory after caller drops batch tensor references."""
+    gc.collect()
+    torch.cuda.empty_cache()
+    return int(torch.cuda.mem_get_info()[0])
+
+
+def trim_plain_output(ids: torch.Tensor, special_ids: set[int]) -> list[int]:
+    values = [int(value) for value in ids.tolist()]
+    for index, value in enumerate(values):
+        if value in special_ids:
+            return values[: index + 1]
+    return values
+
+
+def load_ifeval_rows(
+    dataset_json: Path | None,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    if dataset_json is None:
+        dataset = load_dataset("google/IFEval", split="train")
+        rows = [dict(row) for row in dataset]
+        source: dict[str, object] = {"name": "google/IFEval", "split": "train"}
+    else:
+        payload = json.loads(dataset_json.read_text(encoding="utf-8"))
+        rows = list(payload["rows"])
+        if payload.get("dataset") != "google/IFEval" or payload.get("split") != "train":
+            raise ValueError("IFEval manifest dataset or split is invalid")
+        if payload.get("row_count") != len(rows):
+            raise ValueError("IFEval manifest row_count is inconsistent")
+        source = file_identity(dataset_json)
+    canonical = json.dumps(
+        rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    content_sha256 = hashlib.sha256(canonical).hexdigest()
+    if dataset_json is not None and payload.get("content_sha256") != content_sha256:
+        raise ValueError("IFEval manifest content hash is invalid")
+    source.update({"row_count": len(rows), "content_sha256": content_sha256})
+    return rows, source
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resumable IFEval generation with HF")
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--tokenizer", type=Path, required=True)
+    parser.add_argument(
+        "--dataset-json",
+        type=Path,
+        help="Locked 541-row IFEval manifest; avoids any runtime network dependency.",
+    )
     parser.add_argument("--key", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--max-new-tokens", type=int, default=1280)
@@ -41,6 +91,8 @@ def main() -> None:
         type=int,
         help="Process at most this many pending samples, then exit cleanly for inspection.",
     )
+    parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument(
         "--minimum-free-gpu-gib",
         type=float,
@@ -53,29 +105,34 @@ def main() -> None:
     parser.add_argument(
         "--dtype", choices=["bfloat16", "float16", "float32"], default="bfloat16"
     )
+    parser.add_argument(
+        "--gpu-memory-fraction",
+        type=float,
+        default=0.70,
+        help="Hard per-process CUDA allocator fraction (0.1-0.9).",
+    )
+    parser.add_argument("--deterministic", action="store_true")
     args = parser.parse_args()
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        raise ValueError("--gpu-memory-fraction must be between 0.1 and 0.9")
+    if args.num_shards < 1:
+        raise ValueError("--num-shards must be positive")
+    if not 0 <= args.shard_index < args.num_shards:
+        raise ValueError("--shard-index must be in [0, num_shards)")
+    if args.deterministic:
+        random.seed(20260803)
+        np.random.seed(20260803)
+        torch.manual_seed(20260803)
+        torch.cuda.manual_seed_all(20260803)
+        torch.use_deterministic_algorithms(True)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
     output_lock = FileLock(str(args.out) + ".lock")
     output_lock.acquire(timeout=0)
 
     register_aloepri_qwen2()
-    dataset = load_dataset("google/IFEval", split="train")
-    dataset_rows = [dict(row) for row in dataset]
-    dataset_digest = hashlib.sha256(
-        json.dumps(
-            [
-                {
-                    "key": int(row["key"]),
-                    "prompt": row["prompt"],
-                    "instruction_id_list": row["instruction_id_list"],
-                    "kwargs": row["kwargs"],
-                }
-                for row in dataset_rows
-            ],
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    dataset_rows, dataset_provenance = load_ifeval_rows(args.dataset_json)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
@@ -85,6 +142,8 @@ def main() -> None:
         "float16": torch.float16,
         "float32": torch.float32,
     }[args.dtype]
+    if torch.cuda.is_available():
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         local_files_only=True,
@@ -99,17 +158,24 @@ def main() -> None:
         key = load_file(args.key, device="cpu")
         tau = key["tau"]
         inverse_tau = key["inverse_tau"]
+    special_ids = {tokenizer.eos_token_id, tokenizer.pad_token_id}
+    special_ids.discard(None)
 
     existing: list[dict[str, object]] = []
     if args.out.is_file():
         existing_payload = json.loads(args.out.read_text(encoding="utf-8"))
         existing = existing_payload.get("samples", [])
+    shard_rows = [
+        row
+        for position, row in enumerate(dataset_rows)
+        if position % args.num_shards == args.shard_index
+    ]
     completed = {int(sample["key"]) for sample in existing}
-    pending = [row for row in dataset_rows if int(row["key"]) not in completed]
+    pending = [row for row in shard_rows if int(row["key"]) not in completed]
     if args.max_samples_per_run is not None:
         pending = pending[: args.max_samples_per_run]
     if not pending:
-        print(f"all {len(existing)} IFEval samples already complete")
+        print(f"all {len(existing)} IFEval shard samples already complete")
         return
 
     provenance = {
@@ -118,16 +184,14 @@ def main() -> None:
         "model": model_identity(args.model),
         "tokenizer": tokenizer_identity(args.tokenizer),
         "key": file_identity(args.key) if args.key else None,
-        "dataset": {
-            "name": "google/IFEval",
-            "split": "train",
-            "row_count": len(dataset_rows),
-            "content_sha256": dataset_digest,
-        },
+        "dataset": dataset_provenance,
+        "shard": {"index": args.shard_index, "count": args.num_shards},
         "dtype": args.dtype,
         "batch_size": args.batch_size,
+        "gpu_memory_fraction": args.gpu_memory_fraction,
         "max_new_tokens": args.max_new_tokens,
         "attn_implementation": args.attn_implementation,
+        "deterministic": args.deterministic,
         "script": file_identity(Path(__file__)),
         "runtime": runtime_identity(),
     }
@@ -156,18 +220,20 @@ def main() -> None:
         if inverse_tau is not None:
             generated = inverse_tau[generated]
         for row, output_ids in zip(rows, generated, strict=True):
+            trimmed = trim_plain_output(output_ids, special_ids)
             existing.append(
                 {
                     "key": int(row["key"]),
                     "instruction_id_list": row["instruction_id_list"],
                     "prompt": row["prompt"],
                     "kwargs": row["kwargs"],
-                    "response": tokenizer.decode(output_ids, skip_special_tokens=True),
-                    "output_tokens": int(output_ids.numel()),
+                    "response": tokenizer.decode(trimmed, skip_special_tokens=True),
+                    "output_tokens": len(trimmed),
                 }
             )
         existing.sort(key=lambda sample: int(sample["key"]))
-        free_gpu_bytes = torch.cuda.mem_get_info()[0]
+        del encoded, input_ids, attention_mask, generated
+        free_gpu_bytes = clear_cuda_cache_and_measure_free_bytes()
         minimum_free_gpu_bytes = min(minimum_free_gpu_bytes, free_gpu_bytes)
         save_atomic(
             args.out,
@@ -185,14 +251,11 @@ def main() -> None:
                 "samples": existing,
             },
         )
-        print(f"saved {len(existing)}/{len(dataset)}", flush=True)
+        print(f"saved {len(existing)}/{len(shard_rows)}", flush=True)
         if free_gpu_bytes < int(args.minimum_free_gpu_gib * 1024**3):
             raise RuntimeError(
                 f"GPU reserve fell below {args.minimum_free_gpu_gib:.2f} GiB after save"
             )
-        del encoded, input_ids, attention_mask, generated
-        gc.collect()
-        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

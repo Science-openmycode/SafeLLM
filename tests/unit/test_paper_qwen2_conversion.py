@@ -203,7 +203,10 @@ def test_tiny_algorithm1_expansion_is_exact_with_metric_rmsnorm() -> None:
     )
     source = Qwen2ForCausalLM(base_config).eval()
     private_config = AloePriQwen2Config.from_qwen2_config(
-        base_config, expansion_h=4, rms_mode="exact_metric"
+        base_config,
+        expansion_h=4,
+        rms_mode="exact_metric",
+        rms_representation="stable_factor",
     )
     target = AloePriQwen2ForCausalLM(private_config).eval()
     key = make_paper_key_pair(16, 4, coefficient_lambda=0.3, seed=81)
@@ -219,6 +222,13 @@ def test_tiny_algorithm1_expansion_is_exact_with_metric_rmsnorm() -> None:
         alpha_h=0.0,
         embedding_noise_seed=84,
         head_noise_seed=85,
+    )
+    reconstructed_metric = target.aloepri_rms_factor @ target.aloepri_rms_factor.mT
+    torch.testing.assert_close(
+        reconstructed_metric,
+        key.q @ key.q.mT,
+        atol=1e-10,
+        rtol=1e-10,
     )
     transform_qwen_layers(
         target,

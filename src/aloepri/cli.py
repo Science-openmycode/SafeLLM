@@ -12,6 +12,7 @@ import uvicorn
 import yaml
 
 from aloepri.client.sdk import PrivateInferenceClient
+from aloepri.demo.app import DemoGateway, create_demo_app
 from aloepri.packaging import build_server_package, inspect_server_package, split_key_package
 from aloepri.privacy.rmdp import calculate_rmdp_budget, expected_m1_change_rate
 from aloepri.release import build_product_release, inspect_product_release
@@ -141,6 +142,8 @@ def convert(
         str(conversion.get("attention_compute_dtype", "float32")),
         "--rms-mode",
         str(conversion["rms_mode"]),
+        "--rms-representation",
+        str(conversion.get("rms_representation", "gram")),
         "--block-beta",
         str(conversion["block_beta"]),
         "--sampling-gamma",
@@ -268,11 +271,12 @@ def serve(
                 "remote binding requires a TLS certificate/key or tls_terminated_by_proxy=true"
             )
     runtime = PrivateHFRuntime(
-        Path(cfg["output_model"]),
+        Path(server.get("model_path", cfg["output_model"])),
         device=str(server.get("device", "auto")),
         dtype=str(server.get("dtype", cfg["conversion"]["dtype"])),
         max_input_tokens=int(server.get("max_input_tokens", 2048)),
         max_output_tokens=int(server.get("max_output_tokens", 512)),
+        gpu_memory_fraction=float(server.get("gpu_memory_fraction", 0.70)),
     )
     api = create_app(
         runtime,
@@ -373,6 +377,42 @@ def chat(
                 last_stats["privacy"] = privacy_ledger
     finally:
         client.close()
+
+
+@app.command()
+def demo(
+    server: Annotated[str, typer.Option("--server")] = "http://127.0.0.1:8000",
+    key_dir: Annotated[Path, typer.Option("--key-dir", exists=True, file_okay=False)] = Path(
+        "data/keys/qwen05b-product-v31-blockperm8-online"
+    ),
+    tokenizer: Annotated[Path, typer.Option("--tokenizer", exists=True, file_okay=False)] = Path(
+        "data/models/qwen2.5-0.5b"
+    ),
+    port: Annotated[int, typer.Option("--port", min=1024, max=65535)] = 7860,
+    bearer_token_env: Annotated[str, typer.Option("--bearer-token-env")] = "ALOEPRI_BEARER_TOKEN",
+    access_code_env: Annotated[str, typer.Option("--access-code-env")] = "ALOEPRI_DEMO_ACCESS_CODE",
+    session_secret_env: Annotated[
+        str, typer.Option("--session-secret-env")
+    ] = "ALOEPRI_DEMO_SESSION_SECRET",
+) -> None:
+    """Start the trusted localhost visualization client."""
+
+    gateway = DemoGateway(
+        model_server=server,
+        tokenizer_dir=tokenizer,
+        key_dir=key_dir,
+        bearer_token=os.environ.get(bearer_token_env),
+    )
+    uvicorn.run(
+        create_demo_app(
+            gateway,
+            access_code=os.environ.get(access_code_env),
+            session_secret=os.environ.get(session_secret_env),
+        ),
+        host="127.0.0.1",
+        port=port,
+        access_log=False,
+    )
 
 
 @app.command("inspect-package")

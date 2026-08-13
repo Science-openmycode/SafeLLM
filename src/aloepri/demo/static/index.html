@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="AloePri Qwen2.5-0.5B 私有推理演示" />
+    <title>AloePri · 私有对话</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260813-public1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">A</span>
+          <strong>AloePri</strong>
+        </div>
+        <button id="new-chat" class="new-chat" type="button">
+          <span aria-hidden="true">＋</span>
+          新问题
+        </button>
+        <a class="privacy-link" href="/privacy"><span aria-hidden="true">◇</span>隐私原理</a>
+        <section class="saved-chats" aria-label="历史对话">
+          <div class="saved-chats-heading">
+            <span>历史对话</span>
+            <small id="saved-chat-count">0</small>
+          </div>
+          <div id="saved-chat-list" class="saved-chat-list">
+            <p class="saved-chat-empty">回答完成后自动保存在此浏览器</p>
+          </div>
+        </section>
+        <div class="sidebar-spacer"></div>
+        <div class="security-note">
+          <span class="live-dot"></span>
+          <div><strong id="boundary-title">本地可信客户端</strong><small id="boundary-detail">明文不会进入模型服务请求</small></div>
+        </div>
+        <div class="model-note">
+          <span>模型</span>
+          <strong>Qwen2.5 · 0.5B</strong>
+        </div>
+      </aside>
+
+      <main class="chat-shell">
+        <header class="topbar">
+          <div>
+            <strong>AloePri 0.5B</strong>
+            <span id="context-status">0 条历史消息</span>
+          </div>
+          <label class="trace-switch" for="trace-toggle">
+            <input id="trace-toggle" type="checkbox" />
+            <span class="switch-track"><i></i></span>
+            <span>显示隐私过程</span>
+          </label>
+        </header>
+
+        <div class="chat-scroll">
+          <section class="welcome">
+            <div class="welcome-mark">A</div>
+            <h1>有什么可以帮你？</h1>
+            <p id="welcome-boundary">问题在本地完成分词和置换，模型服务只会看到混淆 token。</p>
+            <div class="suggestions">
+              <button type="button" data-prompt="请用两句话解释什么是矩阵乘法。">解释矩阵乘法</button>
+              <button type="button" data-prompt="请用简单的例子解释什么是注意力机制。">解释注意力机制</button>
+              <button type="button" data-prompt="写一个 Python 函数判断一个数是否为素数。">编写 Python 函数</button>
+            </div>
+          </section>
+
+          <section class="conversation" aria-live="polite">
+            <div id="history-list"></div>
+            <article class="message user-message">
+              <div class="avatar user-avatar">你</div>
+              <div class="message-content">
+                <div class="message-label">你</div>
+                <pre id="plain-prompt" class="message-text placeholder">尚未运行</pre>
+                <small id="plain-count">—</small>
+              </div>
+            </article>
+
+            <article class="message assistant-message">
+              <div class="avatar assistant-avatar">A</div>
+              <div class="message-content">
+                <div class="message-label">AloePri</div>
+                <pre id="answer" class="message-text answer placeholder">尚未运行</pre>
+                <div class="answer-meta"><span id="request-id">—</span><span>客户端本地恢复</span></div>
+              </div>
+            </article>
+          </section>
+
+          <section id="private-trace" class="privacy-panel" hidden>
+            <div class="privacy-heading">
+              <div>
+                <span class="lock-mark">τ</span>
+                <div><h2>隐私推理过程</h2><p>这里展示模型服务器实际接收和返回的数据。</p></div>
+              </div>
+              <span id="identity" class="identity">等待模型身份</span>
+            </div>
+
+            <div class="trace-grid">
+              <article class="trace-card">
+                <div class="trace-title"><span>发送给服务器</span><em>τ(input)</em></div>
+                <h3>混淆后的提示词</h3>
+                <pre id="private-input-text" class="cipher-text placeholder">尚未运行</pre>
+                <div id="private-input-ids" class="token-ribbon" aria-label="混淆输入 token IDs"></div>
+                <footer><span id="input-count">—</span><small>模型服务器实际接收</small></footer>
+              </article>
+
+              <article class="trace-card">
+                <div class="trace-title"><span>服务器返回</span><em>τ(output)</em></div>
+                <h3>混淆后的回答</h3>
+                <pre id="private-output-text" class="cipher-text placeholder">尚未运行</pre>
+                <div id="private-output-ids" class="token-ribbon" aria-label="混淆输出 token IDs"></div>
+                <footer><span id="output-count">—</span><small>客户端逐 token 执行 τ⁻¹</small></footer>
+              </article>
+            </div>
+
+            <div class="metric-grid">
+              <div><span>首 token</span><strong id="ttft">—</strong><small>TTFT · ms</small></div>
+              <div><span>生成间隔</span><strong id="tpot">—</strong><small>TPOT · ms/token</small></div>
+              <div><span>完整往返</span><strong id="roundtrip">—</strong><small>Roundtrip · ms</small></div>
+              <div><span>输出速度</span><strong id="throughput">—</strong><small>token/s</small></div>
+            </div>
+
+            <details class="mapping">
+              <summary><span>查看本次输入的 τ 映射样本</span><small>不展示完整在线密钥</small></summary>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>位置</th><th>明文 token</th><th>明文 ID</th><th>τ(ID)</th><th>混淆 token</th></tr></thead>
+                  <tbody id="mapping-body"><tr><td colspan="5">尚未运行</td></tr></tbody>
+                </table>
+              </div>
+            </details>
+          </section>
+        </div>
+
+        <div class="composer-dock">
+          <section id="run-state" class="run-state idle" aria-live="polite">
+            <span class="pulse"></span>
+            <p id="run-message">准备就绪</p>
+          </section>
+          <form id="prompt-form" class="composer">
+            <textarea id="prompt" maxlength="20000" rows="1" placeholder="给 AloePri 发送消息"></textarea>
+            <div class="composer-actions">
+              <label class="token-select">
+                <span>最长回答</span>
+                <select id="max-tokens">
+                  <option value="64">64</option>
+                  <option value="128" selected>128</option>
+                  <option value="256">256</option>
+                </select>
+              </label>
+              <button id="submit" class="send-button" type="submit" aria-label="发送">
+                <span aria-hidden="true">↑</span>
+              </button>
+            </div>
+          </form>
+          <p class="composer-caption">Enter 发送 · Shift + Enter 换行 · 回答由客户端执行 τ⁻¹ 后显示</p>
+        </div>
+      </main>
+    </div>
+    <script src="/assets/app.js?v=20260813-public1" defer></script>
+  </body>
+</html>

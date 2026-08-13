@@ -1,0 +1,46 @@
+schema_version: 1
+model_id: deepseek-v2-lite-chat
+huggingface:
+  repo_id: deepseek-ai/DeepSeek-V2-Lite-Chat
+  revision: 85864749cd611b4353ce1decdb286193298f64c7
+paths:
+  source: data/models/deepseek-v2-lite-chat
+  output: data/packages/deepseek-v2-lite-chat-mla-moe
+  offline_key: data/keys/deepseek-v2-lite-chat-mla-moe-offline
+  online_key: data/keys/deepseek-v2-lite-chat-mla-moe-online
+  evidence: artifacts/deepseek-v2-lite-chat
+conversion:
+  transform_version: deepseek-v2-latent-mla-moe-v3
+  seed: 20260803
+  ffn_scale_min: 0.5
+  ffn_scale_max: 2.0
+  vocab_permutation: true
+  resume: true
+runtime:
+  device: cuda-auto
+  dtype: bfloat16
+  attention: eager
+  max_model_len: 2048
+  gpu_memory_fraction: 0.90
+  max_memory_per_gpu_gib: 22
+hardware_gate:
+  minimum_gpu_count: 2
+  recommended_gpu_count: 3
+  minimum_vram_per_gpu_gib: 24
+  minimum_total_vram_gib: 48
+  minimum_ram_gib: 64
+  minimum_free_data_disk_gib: 120
+scope:
+  included:
+    - trained DeepSeek-V2-Lite-Chat checkpoint
+    - client-side vocabulary permutation and inverse permutation
+    - MLA q/kv latent-coordinate permutation with RMSNorm synchronization
+    - MLA head/nope/rope/value transforms
+    - MoE router and expert permutation
+    - per-expert FFN permutation and positive scaling
+    - dense and shared-expert FFN permutation and positive scaling
+    - BF16 forward and KV-cache equivalence
+  excluded:
+    - MTP
+    - DeepSeek-V3 671B
+    - vocabulary/PQ/noise product transform

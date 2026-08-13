@@ -2,7 +2,8 @@ schema: aloepri-qwen05b-acceptance-v2
 release_version: 0.2.0
 product_config: configs/product/qwen05b_v47_best_single_candidate.yaml
 source_model: data/models/qwen2.5-0.5b
-private_model: data/packages/qwen05b-candidate-v47-best-single
+private_model: data/packages/qwen05b-candidate-v47-stable-factor
+server_package: data/server-packages/qwen05b-candidate-v47-stable-factor
 full_key_dir: data/keys/dev-qwen05b-candidate-v47-best-single
 online_key_dir: data/keys/qwen05b-candidate-v47-best-single-online
 offline_key_dir: data/keys/qwen05b-candidate-v47-best-single-offline
@@ -22,7 +23,7 @@ evidence:
       - {path: runtime_pass, equals: true}
       - {path: functional_pass, equals: true}
   - id: direct_weight_match
-    path: artifacts/privacy/v47/direct-weight-score.json
+    path: artifacts/privacy/v47/direct-score.json
     binding: isolated_score
     rules:
       - {path: top1_recovery_rate, maximum: 0.15}
@@ -75,22 +76,39 @@ evidence:
       - {path: ttrsr, maximum: 0.15}
   - id: mmlu
     path: artifacts/accuracy/v47-final-mmlu-comparison.json
+    binding: paired_model_comparison
     rules:
+      - {path: sample_len, equals: 14042}
+      - {path: dtype_match, equals: true}
+      - {path: provenance.formal_run_binding, equals: true}
       - {path: absolute_change, minimum: -0.035}
       - {path: paired_change_95_percent_ci.0, minimum: -0.035}
   - id: ceval
     path: artifacts/accuracy/v47-final-ceval-comparison.json
+    binding: paired_model_comparison
     rules:
+      - {path: sample_len, equals: 1346}
+      - {path: dtype_match, equals: true}
+      - {path: provenance.formal_run_binding, equals: true}
       - {path: absolute_change, minimum: -0.035}
       - {path: paired_change_95_percent_ci.0, minimum: -0.035}
   - id: piqa
     path: artifacts/accuracy/v47-final-piqa-comparison.json
+    binding: paired_model_comparison
     rules:
+      - {path: sample_len, equals: 1838}
+      - {path: dtype_match, equals: true}
+      - {path: provenance.formal_run_binding, equals: true}
       - {path: absolute_change, minimum: -0.035}
       - {path: paired_change_95_percent_ci.0, minimum: -0.035}
   - id: ifeval
     path: artifacts/accuracy/v47-final-ifeval-comparison.json
+    binding: paired_model_comparison
     rules:
+      - {path: sample_len, equals: 541}
+      - {path: instruction_len, equals: 834}
+      - {path: dtype_match, equals: true}
+      - {path: provenance.formal_run_binding, equals: true}
       - {path: metrics.prompt_level_strict_acc.absolute_change, minimum: -0.035}
       - {path: metrics.prompt_level_strict_acc.paired_change_95_percent_ci.0, minimum: -0.035}
       - {path: metrics.inst_level_strict_acc.absolute_change, minimum: -0.035}
@@ -101,12 +119,27 @@ evidence:
       - {path: metrics.inst_level_loose_acc.paired_change_95_percent_ci.0, minimum: -0.035}
   - id: humaneval
     path: artifacts/accuracy/v47-final-humaneval-comparison.json
+    binding: paired_model_comparison
     rules:
+      - {path: sample_len, equals: 164}
+      - {path: dtype_match, equals: true}
+      - {path: provenance.formal_run_binding, equals: true}
       - {path: absolute_change, minimum: -0.035}
       - {path: paired_change_95_percent_ci.0, minimum: -0.035}
+  - id: hf_vllm_compatibility
+    path: artifacts/compatibility/v47-ifeval-hf-vllm-smoke.json
+    rules:
+      - {path: all_sequences_equal, equals: true}
+  - id: vllm_sglang_compatibility
+    path: artifacts/compatibility/v47-vllm-sglang-32tokens.json
+    rules:
+      - {path: expected_sequence_equal, equals: true}
   - id: product_questions
     path: artifacts/product/v47/question-gate.json
     rules:
+      - {path: sample_len, equals: 100}
+      - {path: provenance.formal_run_binding, equals: true}
+      - {path: provenance.server_package.pass, equals: true}
       - {path: empty_answers, equals: 0}
       - {path: garbled_answers, equals: 0}
       - {path: repetition_failures, equals: 0}
@@ -114,11 +147,16 @@ evidence:
   - id: transport_privacy
     path: artifacts/product/v47/transport-privacy.json
     rules:
+      - {path: all_pass, equals: true}
+      - {path: server_log_scanned, equals: true}
+      - {path: server_package.pass, equals: true}
       - {path: plaintext_found, equals: false}
       - {path: plain_token_sequence_found, equals: false}
       - {path: online_key_on_server, equals: false}
   - id: performance
     path: artifacts/performance/v47/comparison.json
     rules:
+      - {path: request_count, equals: 80}
+      - {path: protocol.validated, equals: true}
       - {path: ttft_relative_degradation, maximum: 0.15}
       - {path: tpot_relative_degradation, maximum: 0.15}

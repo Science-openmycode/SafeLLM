@@ -1,5 +1,8 @@
 task: humaneval_generate_local
-dataset_path: openai/openai_humaneval
+dataset_path: json
+dataset_kwargs:
+  data_files:
+    test: data/eval/humaneval_v47.jsonl
 output_type: generate_until
 test_split: test
 doc_to_text: "{{prompt}}"

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>AloePri 项目进展报告 · 2026-08-13</title>
+  <style>
+    :root{
+      --ink:#172033;--muted:#64748b;--line:#dbe3ef;--paper:#fff;--bg:#edf3f8;
+      --navy:#091633;--navy-2:#13264e;--blue:#2563eb;--cyan:#0891b2;
+      --green:#15803d;--amber:#b45309;--red:#b91c1c;--violet:#7c3aed;
+      --blue-soft:#eff6ff;--green-soft:#f0fdf4;--amber-soft:#fffbeb;
+      --red-soft:#fef2f2;--violet-soft:#f5f3ff;--shadow:0 18px 55px rgba(15,23,42,.10)
+    }
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.72 Inter,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}.shell{display:grid;grid-template-columns:278px minmax(0,1fr);max-width:1640px;margin:auto;min-height:100vh}aside{position:sticky;top:0;height:100vh;background:linear-gradient(180deg,var(--navy),#0c1b3d);color:#dbeafe;padding:28px 22px;overflow:auto}.brand{font-size:23px;font-weight:850;color:#fff}.brand small{display:block;margin-top:4px;color:#7dd3fc;font-size:11px;letter-spacing:.15em;text-transform:uppercase}.scope{margin:22px 0;padding:14px;border:1px solid #28416f;border-radius:12px;background:#111f43;font-size:12px;color:#bfdbfe}.scope b{color:#fff}nav a{display:block;color:#cbd5e1;padding:8px 10px;border-radius:8px;margin:2px 0;font-size:13px;transition:.15s}nav a:hover,nav a.active{background:#1e315b;color:#fff;text-decoration:none}.aside-note{margin-top:26px;padding-top:16px;border-top:1px solid #2a3b61;color:#94a3b8;font-size:11px;overflow-wrap:anywhere}main{min-width:0;padding:34px 42px 80px}.hero{position:relative;overflow:hidden;border-radius:24px;padding:46px;color:#fff;background:linear-gradient(125deg,#0b1736 0%,#183a77 56%,#0e7490 100%);box-shadow:var(--shadow)}.hero:after{content:"";position:absolute;width:380px;height:380px;border-radius:50%;right:-120px;top:-200px;background:rgba(125,211,252,.18)}.hero:before{content:"";position:absolute;width:210px;height:210px;border-radius:50%;right:170px;bottom:-160px;background:rgba(167,139,250,.17)}.eyebrow{font-size:12px;letter-spacing:.17em;text-transform:uppercase;color:#a5f3fc;font-weight:750}h1{font-size:38px;line-height:1.18;margin:13px 0 16px;max-width:980px}.hero p{max-width:980px;color:#dbeafe;font-size:16px;margin:0}.hero-meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:27px;color:#bae6fd;font-size:12px}.verdict{margin:-18px 28px 30px;position:relative;z-index:2;background:#fff;border-radius:18px;padding:21px 24px;box-shadow:var(--shadow);display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center}.verdict strong{font-size:19px}.verdict p{margin:3px 0 0;color:var(--muted)}section{scroll-margin-top:18px;background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:28px;margin:22px 0;box-shadow:0 5px 22px rgba(15,23,42,.045)}h2{font-size:23px;margin:0 0 7px}h3{font-size:17px;margin:26px 0 9px}.lead{color:var(--muted);margin-top:0}.badge{display:inline-flex;padding:7px 11px;border-radius:99px;font-size:12px;font-weight:800;white-space:nowrap}.bad{background:var(--red-soft);color:var(--red);border:1px solid #fecaca}.good{background:var(--green-soft);color:var(--green);border:1px solid #bbf7d0}.warn{background:var(--amber-soft);color:var(--amber);border:1px solid #fde68a}.info{background:var(--blue-soft);color:var(--blue);border:1px solid #bfdbfe}.violet{background:var(--violet-soft);color:var(--violet);border:1px solid #ddd6fe}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin:20px 0}.metric{border:1px solid var(--line);border-radius:14px;padding:16px;background:linear-gradient(180deg,#fff,#f8fafc)}.metric .label{font-size:11px;letter-spacing:.08em;color:var(--muted);font-weight:750;text-transform:uppercase}.metric .value{font-size:27px;font-weight:850;margin:4px 0;line-height:1.15}.metric .note{font-size:11px;color:var(--muted)}.metric.red .value{color:var(--red)}.metric.green .value{color:var(--green)}.metric.blue .value{color:var(--blue)}.metric.amber .value{color:var(--amber)}.metric.violet .value{color:var(--violet)}.formula{margin:10px 0;padding:12px 16px;border:1px solid #c7d7f4;border-radius:10px;background:#f7faff;color:#172554;text-align:center;font:18px/1.55 Cambria,"Times New Roman","Microsoft YaHei",serif;overflow:auto}.pipeline{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin:19px 0}.step{position:relative;padding:14px 11px;border:1px solid #bfdbfe;background:var(--blue-soft);border-radius:12px;text-align:center;font-size:12px;font-weight:750}.step small{display:block;margin-top:4px;color:var(--muted);font-weight:500}.step:not(:last-child):after{content:"›";position:absolute;right:-9px;top:50%;transform:translateY(-50%);color:#60a5fa;font-size:20px;z-index:2}.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}.three{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{border:1px solid var(--line);border-radius:14px;padding:18px;background:#fafcff}.card h3{margin-top:0}.card p:last-child{margin-bottom:0}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:13px;margin:15px 0}table{width:100%;border-collapse:collapse;min-width:760px;background:#fff}th{background:#f1f5f9;color:#334155;font-size:11px;letter-spacing:.035em;text-align:left}th,td{padding:11px 13px;border-bottom:1px solid #e8edf4;vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f8fafc}.num{text-align:right;font-variant-numeric:tabular-nums}.fail{color:var(--red);font-weight:780}.pass{color:var(--green);font-weight:780}.pending{color:var(--amber);font-weight:780}.na{color:var(--muted);font-weight:700}.callout{border-left:4px solid var(--blue);padding:13px 16px;background:var(--blue-soft);border-radius:0 10px 10px 0;margin:17px 0}.callout.red{border-color:var(--red);background:var(--red-soft)}.callout.amber{border-color:var(--amber);background:var(--amber-soft)}.callout.green{border-color:var(--green);background:var(--green-soft)}pre{background:#0b1225;color:#dbeafe;border-radius:13px;padding:17px;overflow:auto;font:12px/1.65 "Cascadia Code",Consolas,monospace;border:1px solid #243250}code{font-family:"Cascadia Code",Consolas,monospace}.tree{white-space:pre;overflow:auto;background:#f8fafc;border:1px solid var(--line);border-radius:13px;padding:18px;font:12px/1.6 "Cascadia Code",Consolas,monospace;color:#334155}.bar-row{display:grid;grid-template-columns:130px 1fr 92px;gap:10px;align-items:center;margin:10px 0;font-size:12px}.track{height:10px;background:#e2e8f0;border-radius:99px;overflow:hidden}.fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#ef4444,#f97316)}.fill.green{background:linear-gradient(90deg,#16a34a,#06b6d4)}.fill.blue{background:linear-gradient(90deg,#2563eb,#06b6d4)}details{border:1px solid var(--line);border-radius:12px;margin:12px 0;background:#fbfdff}summary{cursor:pointer;padding:12px 15px;font-weight:780;color:#334155}details>div{padding:0 15px 15px}.legend{display:flex;gap:8px;flex-wrap:wrap;margin:13px 0}.footer{text-align:center;color:var(--muted);font-size:12px;padding:25px}.mono{font-family:"Cascadia Code",Consolas,monospace;overflow-wrap:anywhere}.small{font-size:12px;color:var(--muted)}
+    @media(max-width:1100px){.shell{grid-template-columns:1fr}aside{position:relative;height:auto}nav{display:flex;flex-wrap:wrap}.grid{grid-template-columns:repeat(2,1fr)}main{padding:25px}.pipeline{grid-template-columns:1fr 1fr}.step:after{display:none}.three{grid-template-columns:1fr}}
+    @media(max-width:680px){main{padding:12px}.hero{padding:28px 22px}h1{font-size:29px}.verdict{margin:-10px 10px 20px;grid-template-columns:1fr}.grid,.two{grid-template-columns:1fr}.pipeline{grid-template-columns:1fr}section{padding:20px 16px}}
+    @media print{@page{size:A4 landscape;margin:10mm}body{background:#fff}.shell{display:block}aside{display:none}main{padding:0}.hero{border-radius:0;box-shadow:none}.verdict,section{box-shadow:none;break-inside:auto}.table-wrap{overflow:visible}table{min-width:0;table-layout:fixed;font-size:9px}th,td{padding:6px 7px;overflow-wrap:anywhere}pre,.tree{white-space:pre-wrap;overflow-wrap:anywhere;font-size:8px}.formula{font-size:15px}}
+  </style>
+</head>
+<body><div class="shell">
+<aside>
+  <div class="brand">AloePri<small>Current Project Report</small></div>
+  <div class="scope"><b>当前范围</b><br>Qwen2.5-0.5B 产品闭环<br>OpenSeek-Small-v1-SFT 架构扩展<br><br><b>证据截止</b><br>2026-08-13</div>
+  <nav>
+    <a href="#summary">项目结论</a><a href="#paper">论文与 PPT 流程</a><a href="#transport">真实通信链路</a>
+    <a href="#qwen">Qwen 0.5B 进展</a><a href="#openseek">OpenSeek 进展</a><a href="#comparison">三方结果对照</a>
+    <a href="#implementation">代码实现</a><a href="#commands">运行命令</a><a href="#evidence">证据与复核</a>
+    <a href="#pending">后续工作</a><a href="#conclusion">最终判断</a>
+  </nav>
+  <div class="aside-note">分支：<span class="mono">codex/aloepri-baseline</span><br>基准提交：<span class="mono">9f7af0e</span><br><br>报告不把旧 v15 工件、Toy 模型或代理攻击替代为当前正式结果。</div>
+</aside>
+<main>
+  <header class="hero">
+    <div class="eyebrow">Paper alignment · product boundary · evidence binding</div>
+    <h1>AloePri 论文复现、产品化与<br>OpenSeek 架构扩展进展报告</h1>
+    <p>从论文/PPT要求出发，说明客户端和服务端各做什么、当前代码实现了什么、Qwen 与 OpenSeek 实测到什么程度，以及距离功能验收和性能验收还差什么。</p>
+    <div class="hero-meta"><span>Qwen：v31 功能闭环 / v47 正式验收</span><span>OpenSeek：paper-complete checkpoint</span><span>环境：Windows + RTX 3060 Laptop</span><span>内部技术文档</span></div>
+  </header>
+
+  <div class="verdict"><div><strong>核心变换和产品通信链路已经可运行；最终发布仍为 NO-GO</strong><p>Qwen v31 能进行真实问答，OpenSeek 的适用隐私机制已覆盖到 checkpoint；但 Qwen v47 精度与部分攻击未过门禁，OpenSeek 尚未完成正式精度、全攻击和后端兼容验收。</p></div><span class="badge bad">CURRENT · NO-GO</span></div>
+
+  <section id="summary">
+    <h2>1. 当前进展结论</h2>
+    <p class="lead">项目已经从“公式脚本”推进到“可部署模型、可信客户端、服务端 API、网页演示和证据工件”。功能完成度与性能合格度必须分开判断。</p>
+    <div class="grid">
+      <div class="metric green"><div class="label">Qwen v31</div><div class="value">功能通过</div><div class="note">真实问答、KV Cache、API 与逆置换闭环</div></div>
+      <div class="metric red"><div class="label">Qwen v47</div><div class="value">6 / 21</div><div class="note">6 通过、9 失败、6 未测试</div></div>
+      <div class="metric green"><div class="label">OpenSeek</div><div class="value">83 / 83</div><div class="note">所有源权重张量被转换</div></div>
+      <div class="metric green"><div class="label">产品边界</div><div class="value">15 / 15</div><div class="note">OpenSeek 抓包、日志、错误路径全通过</div></div>
+    </div>
+    <div class="three">
+      <div class="card"><h3>已经能做</h3><p>用户输入文本；客户端本地套 Chat Template、分词和执行 <code>tau</code>；服务端只接收私有 token ID 并由混淆模型生成；客户端逐 token 执行 <code>inverse_tau</code> 并恢复回答。Qwen 网页端还具备流式输出、会话历史和隐私流程展示。</p></div>
+      <div class="card"><h3>功能层已经补到哪里</h3><p>Qwen 稠密 Transformer 的词表、Embedding、LM Head、P/Q、Attention、GQA、RoPE、FFN、RMSNorm、Residual、KV Cache、checkpoint、HF/API/SDK 已实现。OpenSeek 继续覆盖 MoE router、共享/路由专家和 MLA。</p></div>
+      <div class="card"><h3>尚不能宣布什么</h3><p>不能宣布达到论文或 PPT 的最终性能：Qwen v47 精度有三项实测超门槛；OpenSeek 目前只有小规模攻击和真实聊天冒烟，没有全量精度、正式多 key 攻击、vLLM/SGLang 与性能数据。</p></div>
+    </div>
+    <div class="callout green"><b>最重要的工程结论：</b>Qwen 当前实际网络传输的是 <code>tau(input_ids)</code>，并没有把界面上展示的“乱码文本”再送去服务器 tokenize。这个实现保持了私有 token 序列，不受 tokenizer 的 decode→encode 非可逆问题影响。</div>
+  </section>
+
+  <section id="paper">
+    <h2>2. 论文与 PPT 要求的整体流程</h2>
+    <p class="lead">AloePri 的目标不是只把 prompt 变成乱码，而是同时改变输入坐标、模型参数和输出坐标，使私有模型在新坐标下完成同一任务。</p>
+    <h3>2.1 协变目标</h3>
+    <div class="formula">f̃<sub>φΘ(θ)</sub>(φ<sub>X</sub>(x)) ≈ φ<sub>Y</sub>(f<sub>θ</sub>(x))</div>
+    <div class="formula">φ<sub>X</sub>(x)=τ(x), &nbsp; φ<sub>Y</sub>(y)=τ(y), &nbsp; ψ<sub>Y</sub>(ỹ)=τ<sup>−1</sup>(ỹ)</div>
+    <p>上式是第 5.1 节的基础协变形式。论文第 6 节和附录 C.6 把可选的在线指数机制 M1 与离线模型混淆 M2 进一步组合：</p>
+    <div class="formula">x<sup>★</sup> ∼ M<sub>1</sub>(x), &nbsp; p<sub>M1(x)</sub>(z) ∝ exp[−ε<sub>1</sub>d(x,z)], &nbsp; x̃=gx<sup>★</sup>=τ(x<sup>★</sup>)</div>
+    <div class="formula">M(x)=(gM<sub>1</sub>(x), M<sub>2</sub>(g)) ≡ (M<sub>1</sub>(gx), M<sub>2</sub>(g))</div>
+    <p>因此完整在线输入是“可选 M1 token 扰动，再做秘密词表置换”；默认不启用 M1 时才退化为 <code>x̃=τ(x)</code>。第二个分量 <code>M2(g)</code> 不是随请求传输的数据，而是客户端离线生成并部署到服务器的整套混淆模型权重。</p>
+    <div class="callout amber"><b>当前实现边界：</b>网页在线链路没有启用 M1。仓库提供了词表不超过 8 时枚举 <code>S<sub>n</sub></code> 的论文精确序列 M1，作为公式 oracle；SDK/CLI 的可扩展 <code>rmdp</code> 模式则按长度 1 的指数机制逐 token 组合，是工程替代，不等同于论文完整序列采样器。</div>
+    <h3>2.2 词表、Embedding 与 LM Head</h3>
+    <div class="formula">W<sub>e</sub><sup>★</sup>=W<sub>e</sub>+α<sub>e</sub>ℰ<sub>e</sub>, &nbsp; W<sub>h</sub><sup>★</sup>=W<sub>h</sub>+α<sub>h</sub>ℰ<sub>h</sub></div>
+    <div class="formula">W̃<sub>e</sub>=ΠW<sub>e</sub><sup>★</sup>P<sub>e</sub>, &nbsp; W̃<sub>h</sub>=Q<sub>h</sub>W<sub>h</sub><sup>★</sup>Π<sup>T</sup></div>
+    <p><code>Π</code> 是 <code>tau</code> 对应的词表置换矩阵。Embedding 行按私有词表重排，LM Head 输出列同步重排。论文第 5.3 节没有把在线 token 写成矩阵乘法；下面一式是把论文的索引映射 <code>τ(x)</code> 改写成 one-hot 形式后的等价推导，不是论文原式：</p>
+    <div class="formula">X̃=X<sup>★</sup>Π<sup>T</sup>, &nbsp; X̃W̃<sub>e</sub>=X<sup>★</sup>Π<sup>T</sup>ΠW<sub>e</sub><sup>★</sup>P<sub>e</sub>=X<sup>★</sup>W<sub>e</sub><sup>★</sup>P<sub>e</sub></div>
+    <p>也就是说，网络上传输的仍只是私有 token ID；在服务端做 Embedding lookup 时，它在数学上等价于 one-hot 私有 token 依次乘 <code>ΠW<sub>e</sub><sup>★</sup>P<sub>e</sub></code>。随后隐藏状态继续经过各层的 P/Q、Attention 和 FFN 变换。Embedding 和 Head 噪声分别由 <code>alpha_e</code>、<code>alpha_h</code> 控制；论文方法允许参数校准，不要求加噪后与原模型逐 token 完全相同。</p>
+    <h3>2.3 P/Q 扩维</h3>
+    <div class="formula">P ∈ ℝ<sup>d×D</sup>, &nbsp; Q ∈ ℝ<sup>D×d</sup>, &nbsp; D=d+2h, &nbsp; PQ=I<sub>d</sub></div>
+    <p>隐藏维由 <code>d</code> 扩到 <code>D</code>。模块输出侧进入 P，下一模块输入侧进入 Q；无噪声、算子关系正确时，中间的 PQ 抵消。Q 必须与当前输入侧 P 配对，不能把一个右逆无条件复用到所有分支。</p>
+    <h3>2.4 Attention 与 RoPE</h3>
+    <div class="formula">W̃<sub>q</sub>=Q<sub>q</sub>W<sub>q</sub>R<sub>qk</sub>H<sub>qk</sub>Z<sub>block</sub></div>
+    <div class="formula">W̃<sub>k</sub>=Q<sub>k</sub>W<sub>k</sub>R<sub>qk</sub>H<sub>qk</sub><sup>−1</sup>Z<sub>block</sub><sup>T</sup></div>
+    <div class="formula">W̃<sub>v</sub>=Q<sub>v</sub>W<sub>v</sub>U<sub>vo</sub>, &nbsp; W̃<sub>o</sub>=U<sub>vo</sub><sup>−1</sup>W<sub>o</sub>P<sub>o</sub></div>
+    <p>工程实现必须适配具体模型的 head 数、GQA 分组和 RoPE 坐标布局。Qwen 使用 GQA 和实际 <code>rotate_half</code> 布局；OpenSeek 的 MLA 还需要处理低秩 Q/KV 投影、解耦 RoPE 与 KV Cache 坐标。论文中会破坏 QK 内积的转置排列式采用单独勘误记录，生产代码使用推导后能保持内积的修正式。</p>
+    <h3>2.5 FFN、RMSNorm、Residual 与 MoE</h3>
+    <div class="formula">FFN(x)=[SiLU(xW<sub>gate</sub>) ⊙ (xW<sub>up</sub>)]W<sub>down</sub></div>
+    <div class="formula">W̃<sub>gate</sub>=Q<sub>gate</sub>W<sub>gate</sub>Z, &nbsp; W̃<sub>up</sub>=Q<sub>up</sub>W<sub>up</sub>HZ, &nbsp; W̃<sub>down</sub>=Z<sup>−1</sup>H<sup>−1</sup>W<sub>down</sub>P<sub>down</sub></div>
+    <p>Gate 与 Up 必须使用同步的中间维排列，Down 负责逆变换。Residual 两条支路必须处在同一扩维坐标；RMSNorm 的尺度要按实际 RMS 而不是只按 L2 范数修正。MoE 模型还要同步变换 router 输入、专家编号、共享专家和每个路由专家的 FFN 权重。</p>
+    <h3>2.6 客户端与服务端职责</h3>
+    <div class="table-wrap"><table><thead><tr><th>阶段</th><th>可信客户端</th><th>非可信服务端</th><th>必须保持的关系</th></tr></thead><tbody>
+      <tr><td>输入</td><td>保存明文、tokenizer、Chat Template 和会话历史</td><td>不得收到明文 prompt</td><td><code>plain_ids = tokenizer(chat)</code></td></tr>
+      <tr><td>私有化</td><td>可选 M1；随后执行 <code>tau</code></td><td>不持有 <code>tau</code>/<code>inverse_tau</code></td><td><code>private_ids = tau(plain_ids)</code></td></tr>
+      <tr><td>传输</td><td>发送 model/key 标识、私有 ID、生成参数</td><td>校验长度、范围、model_id、key_id</td><td>线上输入必须逐项等于 <code>tau(plain_ids)</code></td></tr>
+      <tr><td>推理</td><td>不参与模型 forward</td><td>仅加载私有 checkpoint</td><td>prefill/decode/KV Cache 均处于私有坐标</td></tr>
+      <tr><td>输出</td><td>逐 token 执行 <code>inverse_tau</code> 后 decode</td><td>只返回私有 output IDs</td><td><code>answer_ids = inverse_tau(private_output_ids)</code></td></tr>
+      <tr><td>日志</td><td>本地可保存对话</td><td>只记请求 ID、模型/密钥标识、token 数和耗时</td><td>不得记录原文、完整 token 流或密钥</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="transport">
+    <h2>3. Qwen 真实通信链路与 tokenizer 反例</h2>
+    <p class="lead">界面展示“混淆文本”和网络真正发送什么是两件事。当前 Qwen 主链路发送私有 token ID；展示文本只用于让人看到混淆效果。</p>
+    <div class="pipeline">
+      <div class="step">用户消息<small>客户端明文</small></div>
+      <div class="step">Chat Template<small>得到 plain_ids</small></div>
+      <div class="step">执行 τ<small>得到 private_ids</small></div>
+      <div class="step">POST input_ids<small>服务端直接建 Tensor</small></div>
+      <div class="step">τ<sup>−1</sup> + decode<small>客户端恢复答案</small></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>方式</th><th>实际操作</th><th>能否保证私有 ID 不变</th><th>当前用途</th></tr></thead><tbody>
+      <tr><td>论文/PPT文字直译</td><td><code>decode(private_ids) → 文本 → tokenizer.encode(text)</code></td><td class="fail">不能</td><td>不用于主链路</td></tr>
+      <tr><td>Token-ID 主接口</td><td>JSON 直接发送 <code>input_ids</code></td><td class="pass">能</td><td>Qwen 和 OpenSeek 默认产品接口</td></tr>
+      <tr><td>Encoded-text 可选接口</td><td><code>apids1.</code> + Base64URL + 长度 + SHA-256</td><td class="pass">能</td><td>需要“文本字段”时使用；不经过 tokenizer</td></tr>
+    </tbody></table></div>
+    <h3>3.1 当前 Qwen v31 全词表实验</h3>
+    <div class="grid">
+      <div class="metric red"><div class="label">单 token 全词表</div><div class="value">3,628</div><div class="note">151,936 个 ID 中 round-trip 失败</div></div>
+      <div class="metric red"><div class="label">单 token 失败率</div><div class="value">2.388%</div><div class="note">穷举，不是抽样估计</div></div>
+      <div class="metric red"><div class="label">200 条真实 prompt</div><div class="value">88</div><div class="note">44% 的私有序列 decode→encode 改变</div></div>
+      <div class="metric red"><div class="label">长度 64 随机序列</div><div class="value">93.8%</div><div class="note">469/500 失败</div></div>
+    </div>
+    <div class="bar-row"><span>长度 1</span><div class="track"><div class="fill" style="width:1.2%"></div></div><b>1.2%</b></div>
+    <div class="bar-row"><span>长度 2</span><div class="track"><div class="fill" style="width:7.2%"></div></div><b>7.2%</b></div>
+    <div class="bar-row"><span>长度 4</span><div class="track"><div class="fill" style="width:11.6%"></div></div><b>11.6%</b></div>
+    <div class="bar-row"><span>长度 8</span><div class="track"><div class="fill" style="width:32%"></div></div><b>32.0%</b></div>
+    <div class="bar-row"><span>长度 16</span><div class="track"><div class="fill" style="width:49.4%"></div></div><b>49.4%</b></div>
+    <div class="bar-row"><span>长度 32</span><div class="track"><div class="fill" style="width:76.6%"></div></div><b>76.6%</b></div>
+    <div class="bar-row"><span>长度 64</span><div class="track"><div class="fill" style="width:93.8%"></div></div><b>93.8%</b></div>
+    <div class="callout red"><b>反例：</b>私有 ID <code>[94]</code> 解码为替换字符 <code>�</code>，重新编码得到 <code>[5691]</code>。因此一般不能假设 <code>Encode(Decode(tau(x))) = tau(x)</code>。</div>
+    <h3>3.2 当前代码到底怎么处理</h3>
+    <div class="table-wrap"><table><thead><tr><th>代码位置</th><th>实际行为</th></tr></thead><tbody>
+      <tr><td><code>src/aloepri/demo/app.py</code></td><td>应用 Chat Template、分词、执行 tau；网络请求体使用 <code>"input_ids": private_ids</code>。<code>tokenizer.decode(private_ids)</code> 只生成页面追踪字段，不进入模型请求。</td></tr>
+      <tr><td><code>src/aloepri/client/sdk.py</code></td><td>默认 <code>transport_mode="token_ids"</code>；可选 encoded-text 走自定义可逆封装，不调用 tokenizer 重新编码。</td></tr>
+      <tr><td><code>src/aloepri/serving/app.py</code></td><td><code>/v1/private/generate</code> 接收 ID 列表；可选文本接口只解析 <code>apids1.</code> 封装。</td></tr>
+      <tr><td><code>src/aloepri/serving/hf_runtime.py</code></td><td>直接将请求中的 ID 构造为 <code>torch.tensor</code> 并交给私有模型，不经 tokenizer。</td></tr>
+      <tr><td><code>src/aloepri/serving/private_text.py</code></td><td>实现带 magic、数量和 SHA-256 校验的 Base64URL ID 文本封装。</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="qwen">
+    <h2>4. Qwen2.5-0.5B 当前进展</h2>
+    <p class="lead">Qwen 是当前产品演示基线。v31 证明功能闭环可用；v47 是绑定当前 checkpoint、key 和结果的正式性能验收，两者不可混用。</p>
+    <h3>4.1 功能层</h3>
+    <div class="table-wrap"><table><thead><tr><th>模块</th><th>实现内容</th><th>当前证据</th><th>状态</th></tr></thead><tbody>
+      <tr><td>词表与特殊 token</td><td>全词表 tau/inverse_tau；BOS/EOS/PAD 同步映射</td><td>v47 formula：round-trip PASS</td><td class="pass">完成</td></tr>
+      <tr><td>Embedding / LM Head</td><td>词表重排、P/Q 扩维、独立噪声</td><td>v47 formula/runtime PASS</td><td class="pass">完成</td></tr>
+      <tr><td>P/Q family</td><td>Algorithm 1，共享初始矩阵并生成独立右逆；逐层校验</td><td>24 层全部校验</td><td class="pass">完成</td></tr>
+      <tr><td>Attention</td><td>Q/K/V/O、GQA、QK scaling、head/block permutation、Qwen RoPE</td><td>转换器、公式检查、运行时通过</td><td class="pass">完成</td></tr>
+      <tr><td>FFN / RMSNorm / Residual</td><td>Gate/Up/Down，同步中间排列，RMS 尺度，残差坐标</td><td>运行时功能通过</td><td class="pass">完成</td></tr>
+      <tr><td>KV Cache</td><td>prefill、逐 token decode、cache 长度与私有坐标</td><td>v31 四项 runtime checks 全 true</td><td class="pass">完成</td></tr>
+      <tr><td>Checkpoint</td><td>safetensors、manifest、SHA-256、分片与重载</td><td>转换及模型加载可用</td><td class="pass">完成</td></tr>
+      <tr><td>客户端/服务端</td><td>CLI/SDK、FastAPI、SSE、model/key 校验、网页演示</td><td>本地真实问答可运行</td><td class="pass">完成</td></tr>
+      <tr><td>MoE / MLA / MTP</td><td>Qwen2.5-0.5B checkpoint 不包含这些结构</td><td>不使用 Toy 冒充 Qwen 结果</td><td class="na">模型不适用</td></tr>
+    </tbody></table></div>
+    <div class="callout"><b>v31 功能验证：</b><code>formula_pass=true</code>、<code>runtime_pass=true</code>、<code>functional_pass=true</code>。私有下一 token 经 inverse_tau 后等于明文下一 token，decode 输入等于 tau(明文下一 token)，greedy IDs 相等，cache 长度正确推进。噪声开启后逐层张量不要求和明文模型数值相等。</div>
+    <h3>4.2 v47 正式验收</h3>
+    <div class="grid">
+      <div class="metric blue"><div class="label">总检查</div><div class="value">21</div><div class="note">当前 final acceptance 工件</div></div>
+      <div class="metric green"><div class="label">通过</div><div class="value">6</div><div class="note">公式、运行时及 4 类攻击</div></div>
+      <div class="metric red"><div class="label">失败</div><div class="value">9</div><div class="note">精度、攻击协议与兼容性</div></div>
+      <div class="metric amber"><div class="label">未测试</div><div class="value">6</div><div class="note">IFEval、HumanEval、性能等</div></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>检查</th><th>当前值</th><th>门禁</th><th>判定</th><th>说明</th></tr></thead><tbody>
+      <tr><td>公式</td><td>词表、Algorithm 1/2、24 层通过</td><td>全部 true</td><td class="pass">PASS</td><td>工件绑定通过</td></tr>
+      <tr><td>运行时</td><td>formula/runtime/functional 全 true</td><td>全部 true</td><td class="pass">PASS</td><td>功能层成立</td></tr>
+      <tr><td>直接权重匹配</td><td>Top-1 0%</td><td>≤15%</td><td class="pass">PASS</td><td>当前攻击口径</td></tr>
+      <tr><td>VMA</td><td>Top-1 3.358%；TTRSR 30.787%；PIIRSR 1.054%；BLEU-4 0.370；CosSim −0.149</td><td>TTRSR≤15%；其余对应门限</td><td class="fail">FAIL</td><td>TTRSR 超标</td></tr>
+      <tr><td>Gate-IA</td><td>Top-1 19.141%</td><td>≤15%</td><td class="fail">FAIL</td><td>超过 4.141 pp</td></tr>
+      <tr><td>Attention-IA</td><td>Top-1 0.391%</td><td>≤15%</td><td class="pass">PASS</td><td>当前攻击口径</td></tr>
+      <tr><td>IMA</td><td>TTRSR 0.001%</td><td>≤15%</td><td class="pass">PASS</td><td>当前攻击口径</td></tr>
+      <tr><td>ISA-Attention</td><td>TTRSR 0%</td><td>≤15%</td><td class="pass">PASS</td><td>当前攻击口径</td></tr>
+      <tr><td>TFMA</td><td>Top-10 1.974%</td><td>≤20% 且正式语料完整</td><td class="fail">FAIL</td><td>数值通过；正式语料协议未完成</td></tr>
+      <tr><td>SDA</td><td>TTRSR 11.842%；BLEU-4 0.199</td><td>≤15%、≤2.5 且正式语料完整</td><td class="fail">FAIL</td><td>数值通过；正式语料协议未完成</td></tr>
+      <tr><td>Known-plaintext</td><td>TTRSR 17.191%</td><td>≤15%</td><td class="fail">FAIL</td><td>超过 2.191 pp</td></tr>
+      <tr><td>HF / vLLM</td><td>32-token 序列不一致</td><td>全部一致</td><td class="fail">FAIL</td><td>后端回归未对齐</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="openseek">
+    <h2>5. OpenSeek-Small-v1-SFT 架构扩展</h2>
+    <p class="lead">选择 OpenSeek 的目的，是在较小、已训练 checkpoint 上补足 Qwen 没有的 MoE 与 MLA；不是用结构夹具替代真实模型。</p>
+    <div class="grid">
+      <div class="metric violet"><div class="label">Transformer 层</div><div class="value">6</div><div class="note">真实已训练 checkpoint</div></div>
+      <div class="metric violet"><div class="label">隐藏维</div><div class="value">1280→1536</div><div class="note">P/Q 扩维后的私有宽度</div></div>
+      <div class="metric violet"><div class="label">MoE</div><div class="value">64 + 2</div><div class="note">64 routed / 2 shared，Top-6</div></div>
+      <div class="metric violet"><div class="label">MLA</div><div class="value">已覆盖</div><div class="note">低秩 Q/KV 与解耦 RoPE</div></div>
+    </div>
+    <h3>5.1 适用机制覆盖</h3>
+    <div class="table-wrap"><table><thead><tr><th>机制</th><th>OpenSeek 实现</th><th>审计方法</th><th>状态</th></tr></thead><tbody>
+      <tr><td>词表置换</td><td>tau/inverse_tau、特殊 token 同步</td><td>全排列和特殊 ID 校验</td><td class="pass">通过</td></tr>
+      <tr><td>Embedding / Head</td><td>置换、扩维、论文形式噪声</td><td>抽样重算噪声公式</td><td class="pass">通过</td></tr>
+      <tr><td>P/Q</td><td>多个角色的独立右逆</td><td>最大相对误差约 3.27×10<sup>−14</sup></td><td class="pass">通过</td></tr>
+      <tr><td>MLA</td><td>Q 低秩、KV 低秩、Q/K RoPE、V/O 变换</td><td>形状、非平凡 key、同步 blockperm</td><td class="pass">通过</td></tr>
+      <tr><td>MoE router</td><td>router 输入坐标变换和专家编号同步</td><td>逐层公式检查</td><td class="pass">通过</td></tr>
+      <tr><td>路由专家</td><td>每个专家 Gate/Up/Down 变换</td><td>源权重与私有权重逐名覆盖</td><td class="pass">通过</td></tr>
+      <tr><td>共享专家</td><td>共享 Gate/Up/Down 及 shared gate</td><td>形状与转换覆盖</td><td class="pass">通过</td></tr>
+      <tr><td>FFN/QK scaling</td><td>配置并激活</td><td>key 非平凡性与 metadata</td><td class="pass">通过</td></tr>
+      <tr><td>M1 / tokenwise RmDP</td><td>客户端可选逐 token 机制</td><td>smoke 与边界检查</td><td class="pass">通过</td></tr>
+      <tr><td>MTP</td><td>上游配置声明 1 个 nextn layer，但 checkpoint 含 0 个 MTP tensor</td><td>全 checkpoint tensor 名审计</td><td class="na">不适用</td></tr>
+    </tbody></table></div>
+    <h3>5.2 权重和产品边界</h3>
+    <div class="two">
+      <div class="card"><h3>Checkpoint 审计</h3><p><strong>83</strong> 个源张量；<strong>83</strong> 个源张量全部发生转换；私有 checkpoint 共 <strong>84</strong> 个张量，多出的 1 个是派生 RoPE order。17 项机制检查全部为 true，服务端包密钥扫描通过。</p><p class="small">源版本：<span class="mono">BAAI/OpenSeek-Small-v1-SFT@1515c184e6fe4a91e6061be513a79d607e8787cb</span></p></div>
+      <div class="card"><h3>网络与日志审计</h3><p>唯一标记不在请求、响应或日志中；明文 token 序列不在传输中；线上 ID 逐项等于 tau(plain IDs)；错误 key、错误 model、越界 ID 均安全失败；服务器包不包含 online key。</p><p><span class="badge good">15 项边界检查全通过</span></p></div>
+    </div>
+    <h3>5.3 当前真实聊天与攻击冒烟</h3>
+    <div class="table-wrap"><table><thead><tr><th>项目</th><th>当前实测</th><th>应如何解释</th></tr></thead><tbody>
+      <tr><td>真实问题</td><td>“你好，请用一句话介绍你自己。”</td><td>客户端明文只留在本地</td></tr>
+      <tr><td>恢复回答</td><td>“你好，我很高兴 to be to be”</td><td>链路成功，但输出重复，尚不满足产品质量门禁</td></tr>
+      <tr><td>CPU BF16</td><td>25 输入 token；8 输出 token；TTFT 1275.674 ms；TPOT 82.143 ms</td><td>仅为本机冒烟，不与 GPU/PPT 性能目标比较</td></tr>
+      <tr><td>直接权重匹配</td><td>0%</td><td>64 候选的小规模冒烟</td></tr>
+      <tr><td>Embedding-Head VMA</td><td>7/64 = 10.938%</td><td>小样本，不构成正式门禁</td></tr>
+      <tr><td>Embedding-Gate VMA</td><td>7/64 = 10.938%</td><td>小样本，不构成正式门禁</td></tr>
+      <tr><td>MLA Attention-IA</td><td>2/64 = 3.125%</td><td>小样本 self-score 冒烟</td></tr>
+      <tr><td>Known-plaintext</td><td>64 个观测恢复 64/151,851 = 0.0421% 的全词表映射</td><td>按直接已知映射计数，尚未做正式增长曲线与多 key</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="comparison">
+    <h2>6. 论文、PPT 与当前实测对照</h2>
+    <p class="lead">论文没有 Qwen2.5-0.5B 或 OpenSeek-Small-v1-SFT 的原始表格，因此只能并列展示，不能声称相同模型上的逐项复现。</p>
+    <h3>6.1 论文 Table 3 原始精度</h3>
+    <div class="table-wrap"><table><thead><tr><th>论文模型</th><th>MMLU</th><th>C-Eval</th><th>HumanEval</th><th>PIQA</th><th>IFEval</th></tr></thead><tbody>
+      <tr><td>Qwen3-14B 明文</td><td>87.64%</td><td>87.35%</td><td>94.51%</td><td>89.72%</td><td>86.14%</td></tr>
+      <tr><td>Qwen3-14B AloePri</td><td>84.57%</td><td>87.12%</td><td>95.12%</td><td>90.26%</td><td>85.40%</td></tr>
+      <tr><td>绝对变化</td><td>−3.07 pp</td><td>−0.23 pp</td><td>+0.61 pp</td><td>+0.54 pp</td><td>−0.74 pp</td></tr>
+      <tr><td>DeepSeek-V3.1 Terminus 明文</td><td>91.72%</td><td>87.67%</td><td>94.51%</td><td>83.84%</td><td>86.69%</td></tr>
+      <tr><td>DeepSeek-V3.1 Terminus AloePri</td><td>90.67%</td><td>85.65%</td><td>95.12%</td><td>80.96%</td><td>84.66%</td></tr>
+      <tr><td>绝对变化</td><td>−1.05 pp</td><td>−2.02 pp</td><td>+0.61 pp</td><td>−2.88 pp</td><td>−2.03 pp</td></tr>
+    </tbody></table></div>
+    <h3>6.2 Qwen v47 已实测精度与 PPT 门禁</h3>
+    <div class="table-wrap"><table><thead><tr><th>任务</th><th>样本数</th><th>Qwen v47 绝对变化</th><th>配对 95% CI 下界</th><th>PPT/项目门禁</th><th>判定</th></tr></thead><tbody>
+      <tr><td>MMLU</td><td>14,042</td><td>−4.779 pp</td><td>−5.594 pp</td><td>点估计下降≤3.5 pp；CI 下界≥−3.5 pp</td><td class="fail">未达到</td></tr>
+      <tr><td>C-Eval</td><td>1,346</td><td>−18.574 pp</td><td>−21.917 pp</td><td>同上</td><td class="fail">未达到</td></tr>
+      <tr><td>PIQA</td><td>1,838</td><td>−7.454 pp</td><td>−9.576 pp</td><td>同上</td><td class="fail">未达到</td></tr>
+    </tbody></table></div>
+    <p class="small">三项工件均有完整样本数和 formal run binding，但验收器同时记录 <code>dtype_match=false</code>，所以即使数值达到也仍需统一 dtype 后重新出正式报告。本表只列当前已完成任务；IFEval、HumanEval 放在后续工作，不用旧结果补位。</p>
+    <h3>6.3 隐私对照</h3>
+    <div class="table-wrap"><table><thead><tr><th>指标</th><th>论文 DeepSeek VMA</th><th>PPT/项目门限</th><th>Qwen v47 当前实测</th><th>判定</th></tr></thead><tbody>
+      <tr><td>TTRSR</td><td>4.80%</td><td>≤15%</td><td>30.787%</td><td class="fail">未达到</td></tr>
+      <tr><td>PIIRSR</td><td>1.12%</td><td>≤3%</td><td>1.054%</td><td class="pass">达到</td></tr>
+      <tr><td>BLEU-4</td><td>0.40</td><td>≤2.5</td><td>0.370</td><td class="pass">达到</td></tr>
+      <tr><td>CosSim</td><td>论文该表未列</td><td>≤0.5</td><td>−0.149</td><td class="pass">达到</td></tr>
+      <tr><td>Gate-IA Top-1</td><td>协议不完全公开</td><td>≤15%</td><td>19.141%</td><td class="fail">未达到</td></tr>
+      <tr><td>Attention-IA Top-1</td><td>协议不完全公开</td><td>≤15%</td><td>0.391%</td><td class="pass">达到</td></tr>
+      <tr><td>Known-plaintext TTRSR</td><td>论文无同口径表值</td><td>≤15%</td><td>17.191%</td><td class="fail">未达到</td></tr>
+    </tbody></table></div>
+    <div class="callout amber"><b>不能直接横向排名：</b>论文列使用不同参数规模和未完全公开的实验协议；Qwen v47 是 0.5B、当前仓库协议。并列表格的用途是展示目标差距，不是声称实验条件相同。</div>
+  </section>
+
+  <section id="implementation">
+    <h2>7. 当前代码实现与仓库结构</h2>
+    <p class="lead">工程分为“模型无关的产品边界”和“按模型架构实现的变换/运行时适配器”。换模型时，客户端协议、密钥拆分和 API 可以复用；权重映射、模型类和后端注册必须按架构适配。</p>
+    <div class="tree">E:\AloePri
+├── configs/
+│   ├── product/                    Qwen / OpenSeek 产品与转换配置
+│   ├── acceptance/                 v47 验收规则
+│   └── eval/                       固定评测集与生成配置
+├── src/aloepri/
+│   ├── transforms/                 P/Q、Qwen、DeepSeek/OpenSeek 结构变换
+│   ├── conversion/                 checkpoint 流式转换与 manifest
+│   ├── models/                     HF 自定义私有模型运行时
+│   ├── client/                     tokenizer、tau、会话、SDK、SSE 恢复
+│   ├── serving/                    FastAPI、HF/vLLM/SGLang 接口
+│   ├── attacks/                    VMA、IA、IMA、ISA 等攻击基础实现
+│   └── demo/                       ChatGPT 风格网页与隐私过程展示
+├── scripts/                        转换、审计、评测、攻击和部署入口
+├── tests/                          单元、服务端、集成和验收测试
+├── data/
+│   ├── models/                     本地原始模型
+│   ├── checkpoints/                私有 checkpoint
+│   ├── keys/                       online/offline key
+│   └── packages/                   清洗后的 server package
+├── artifacts/                      JSON 原始证据、日志和统计
+├── docs/                           报告、运行手册和论文勘误
+└── release/                        最终产品发布目录</div>
+    <h3>7.1 模型无关部分</h3>
+    <div class="table-wrap"><table><thead><tr><th>组件</th><th>职责</th><th>换模型时是否复用</th></tr></thead><tbody>
+      <tr><td>客户端 token-ID 协议</td><td>Chat Template 后执行 tau；SSE 后 inverse_tau</td><td class="pass">复用，替换 tokenizer 和 key</td></tr>
+      <tr><td>密钥拆分</td><td>online key 仅含 tau/inverse_tau；offline key 含转换秘密；server package 无密钥</td><td class="pass">复用</td></tr>
+      <tr><td>FastAPI / 审计日志</td><td>model/key 校验、长度限制、错误路径、无明文日志</td><td class="pass">复用</td></tr>
+      <tr><td>encoded-text</td><td>可逆封装私有 ID，不依赖 tokenizer</td><td class="pass">复用</td></tr>
+      <tr><td>M1 / RmDP 客户端</td><td>小词表精确序列 oracle；大词表采用逐 token 工程替代</td><td class="pending">协议可复用，但不得标为论文精确采样</td></tr>
+      <tr><td>manifest / SHA-256 / package scan</td><td>工件绑定和秘密扫描</td><td class="pass">复用</td></tr>
+    </tbody></table></div>
+    <h3>7.2 架构相关部分</h3>
+    <div class="table-wrap"><table><thead><tr><th>适配层</th><th>Qwen</th><th>OpenSeek</th><th>换新模型必须检查</th></tr></thead><tbody>
+      <tr><td>权重命名与形状</td><td>Qwen2 Dense</td><td>DeepSeek-V2 类 MoE/MLA</td><td>每个 tensor 名、方向、bias 和 tie-weights</td></tr>
+      <tr><td>Attention</td><td>GQA + RoPE</td><td>MLA + decoupled RoPE</td><td>Q/K/V/O 或低秩路径、cache 结构</td></tr>
+      <tr><td>FFN</td><td>Dense SwiGLU</td><td>shared + routed experts</td><td>router、专家布局、top-k、shared gate</td></tr>
+      <tr><td>运行时</td><td>自定义 Qwen2 HF</td><td>OpenSeek HF 适配</td><td>forward、generate、prefill/decode、EOS</td></tr>
+      <tr><td>vLLM/SGLang</td><td>已有适配但 v47 未完全对齐</td><td>尚未正式验收</td><td>模型注册、权重加载、KV Cache 和采样一致性</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="commands">
+    <h2>8. 复现命令</h2>
+    <p class="lead">以下命令均从仓库根目录 <code>E:\AloePri</code> 执行。报告中的结果可以由对应 JSON 工件复核。</p>
+    <details open><summary>8.1 Qwen v31 服务端与网页演示</summary><div><pre>cd E:\AloePri
+uv run aloepri serve --config configs/product/qwen05b_v31_blockperm8.yaml
+
+# 新终端：本地网页
+uv run aloepri demo `
+  --server http://127.0.0.1:8000 `
+  --key-dir data/keys/qwen05b-product-v31-blockperm8-online `
+  --tokenizer data/models/qwen2.5-0.5b `
+  --port 7860</pre></div></details>
+    <details><summary>8.2 验证 Qwen 私有 token 文本 round-trip</summary><div><pre>.\.venv\Scripts\python.exe scripts\verify_tokenizer_roundtrip.py `
+  --tokenizer data\models\qwen2.5-0.5b `
+  --key-dir data\keys\qwen05b-product-v31-blockperm8-online `
+  --prompts configs\eval\gate1_prompts_200.json `
+  --samples-per-length 500 `
+  --lengths 1 2 4 8 16 32 64 `
+  --exhaustive-singletons `
+  --seed 20260813 `
+  --out artifacts\audit\tokenizer-roundtrip-qwen05b-v31-current.json</pre></div></details>
+    <details><summary>8.3 OpenSeek paper-complete 审计</summary><div><pre>.\.venv\Scripts\python.exe scripts\audit_openseek_paper_complete.py `
+  --source data\models\openseek-small-v1-sft `
+  --private data\checkpoints\openseek-small-v1-sft-paper-complete `
+  --offline-key-dir data\keys\openseek-small-v1-sft-paper-complete-offline `
+  --online-key-dir data\keys\openseek-small-v1-sft-paper-complete-online `
+  --server-package data\packages\openseek-small-v1-sft-paper-complete `
+  --out artifacts\openseek-small-v1-sft-paper-complete\privacy-completeness-audit.json
+
+.\.venv\Scripts\python.exe scripts\verify_product_privacy_boundary.py `
+  --config configs\product\openseek_small_v1_sft_paper_complete.yaml `
+  --out artifacts\openseek-small-v1-sft-paper-complete\product-privacy-boundary.json</pre></div></details>
+    <details><summary>8.4 全仓库静态检查与测试</summary><div><pre>.\.venv\Scripts\ruff.exe check .
+.\.venv\Scripts\mypy.exe src
+.\.venv\Scripts\python.exe -m pytest -q</pre><p>最近一次完整结果：Ruff 通过；mypy 检查 64 个源文件通过；pytest 216 passed、1 skipped。真实 Qwen 集成测试默认需显式启用，因此记为 skipped，不计作通过。</p></div></details>
+  </section>
+
+  <section id="evidence">
+    <h2>9. 证据、基线与人类复核方法</h2>
+    <p class="lead">每个结论尽量指向原始 JSON，而不是只看本报告中的摘要。复核时先检查 hash 和路径，再检查规则中的 actual/expected/pass。</p>
+    <h3>9.1 甲方基线文件</h3>
+    <div class="table-wrap"><table><thead><tr><th>文件</th><th>SHA-256</th></tr></thead><tbody>
+      <tr><td><code>01_client_technical_route.pdf</code></td><td class="mono">a5fd16662e1ac2feb55952940edd0fdf9d4007da22bd2f0eacb5f5ea41dc4748</td></tr>
+      <tr><td><code>02_client_project_brief.pptx</code></td><td class="mono">244b6fcd3b48f75d8a77e84dd16df5456c1993ec840c0c719cb148a46360b337</td></tr>
+      <tr><td><code>03_aloepri_original_implementation_report.docx</code></td><td class="mono">d2ec3a50f143b9cc14b980e22f0f56fcdf79758332b0b72850ea0bcd5dc210af</td></tr>
+    </tbody></table></div>
+    <h3>9.2 当前关键证据</h3>
+    <div class="table-wrap"><table><thead><tr><th>证据</th><th>用途</th><th>复核重点</th></tr></thead><tbody>
+      <tr><td><a href="../artifacts/acceptance/qwen05b-v47-final.json"><code>artifacts/acceptance/qwen05b-v47-final.json</code></a></td><td>Qwen v47 最终判定</td><td>decision、summary、21 个 checks、binding_pass</td></tr>
+      <tr><td><a href="../artifacts/verification/qwen05b-product-v31-blockperm8/verification_summary.json"><code>verification_summary.json</code></a></td><td>Qwen v31 功能闭环</td><td>formula_pass、runtime_pass、functional_pass</td></tr>
+      <tr><td><a href="../artifacts/audit/tokenizer-roundtrip-qwen05b-v31-current.json"><code>tokenizer-roundtrip-qwen05b-v31-current.json</code></a></td><td>文本传输反例</td><td>3,628 单例失败、88/200 prompt 失败、provenance</td></tr>
+      <tr><td><a href="../artifacts/openseek-small-v1-sft-paper-complete/privacy-completeness-audit.json"><code>privacy-completeness-audit.json</code></a></td><td>OpenSeek 机制和张量覆盖</td><td>pass、checks、83/83、P/Q 误差、MTP</td></tr>
+      <tr><td><a href="../artifacts/openseek-small-v1-sft-paper-complete/product-privacy-boundary.json"><code>product-privacy-boundary.json</code></a></td><td>网络、日志和错误路径</td><td>all_pass、15 个 checks</td></tr>
+      <tr><td><a href="../artifacts/openseek-small-v1-sft-paper-complete/privacy-attack-smoke-64.json"><code>privacy-attack-smoke-64.json</code></a></td><td>OpenSeek 小规模攻击冒烟</td><td>sample_size=64，不外推为正式结果</td></tr>
+      <tr><td><a href="../artifacts/openseek-small-v1-sft-paper-complete/real-chat-smoke.json"><code>real-chat-smoke.json</code></a></td><td>真实问答链路</td><td>plain/private/restored IDs、回答、TTFT/TPOT</td></tr>
+      <tr><td><a href="../artifacts/openseek-small-v1-sft-paper-complete/evidence-index.json"><code>evidence-index.json</code></a></td><td>OpenSeek 工件索引</td><td>所有文件 SHA-256 与路径</td></tr>
+    </tbody></table></div>
+    <h3>9.3 人工复核顺序</h3>
+    <ol>
+      <li>用 <code>Get-FileHash -Algorithm SHA256</code> 检查甲方基线和 evidence index 中的文件。</li>
+      <li>打开私有 checkpoint 的 index/manifest，逐项核对源 tensor 到私有 tensor 的覆盖表。</li>
+      <li>读取 offline key 中的 P/Q 角色和层号，重算 <code>||PQ-I|| / ||I||</code>。</li>
+      <li>在客户端抓包，确认请求没有 prompt 字段，<code>input_ids</code> 逐项等于 tau(plain IDs)。</li>
+      <li>扫描 server package 和日志，确认不存在 online key、原始随机种子、明文或完整 token 流。</li>
+      <li>分别运行明文和私有模型，用 inverse_tau 恢复输出；不要用网页显示文本代替网络负载检查。</li>
+      <li>最终只以 acceptance JSON 的当前 hash 绑定工件做 GO/NO-GO，不引用旧版本摘要。</li>
+    </ol>
+    <div class="callout">论文公式勘误采用“一项错误一个文档”的方式保存在 <code>docs/paper_errata/</code> 和 <code>output/pdf/paper_errata/</code>。关于线上 tokenizer round-trip 的完整反例与修正见 <code>docs/paper_errata/E12_online_tokenizer_roundtrip.md</code>。</div>
+  </section>
+
+  <section id="pending">
+    <h2>10. 后续需要完成的工作</h2>
+    <p class="lead">以下项目没有实测完成，因此不出现在上面的“已实测结果”表中。</p>
+    <div class="table-wrap"><table><thead><tr><th>优先级</th><th>工作</th><th>输入</th><th>完成证据</th><th>停止条件</th></tr></thead><tbody>
+      <tr><td>P0</td><td>OpenSeek 产品参数校准</td><td>当前 paper-complete checkpoint；独立 calibration prompts</td><td>无空回答、乱码、重复；锁定唯一 product config</td><td>所有非零噪声组合均不能正常回答</td></tr>
+      <tr><td>P0</td><td>OpenSeek 无噪声逐层等价与 KV Cache 回归</td><td>原始/私有模型 hooks</td><td>首个失败算子报告；prefill/decode/cache 一致</td><td>架构坐标无法闭合</td></tr>
+      <tr><td>P1</td><td>OpenSeek 正式精度</td><td>MMLU、C-Eval、PIQA、IFEval、HumanEval</td><td>逐题结果、绝对/相对下降、配对 bootstrap 95% CI</td><td>单项下降或 CI 超 3.5 pp</td></tr>
+      <tr><td>P1</td><td>OpenSeek 正式攻击</td><td>至少 5 个 key、正式候选集和语料</td><td>VMA/IA/TFMA/SDA/known-plaintext 均值、标准差、CI</td><td>任一正式攻击超过门禁</td></tr>
+      <tr><td>P1</td><td>OpenSeek HF/vLLM/SGLang</td><td>同一 checkpoint、同一私有输入</td><td>首 token、32 token、cache、EOS、SSE 一致</td><td>后端不能加载或序列不一致</td></tr>
+      <tr><td>P1</td><td>OpenSeek 性能与显存</td><td>同硬件、相同请求分布</td><td>TTFT/TPOT/吞吐/显存 p50/p95/p99</td><td>劣化超过 15%</td></tr>
+      <tr><td>P1</td><td>Qwen v47 补齐正式验收</td><td>统一 dtype 的当前 v47 checkpoint</td><td>IFEval、HumanEval、产品问答、传输隐私、性能和 SGLang 工件</td><td>任何当前工件 hash 不匹配</td></tr>
+      <tr><td>P2</td><td>MTP 真实权重验证</td><td>包含实际 MTP tensor 的已训练 checkpoint</td><td>MTP 模块转换和推理回归</td><td>只在 config 声明、没有实际权重时不实施</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="conclusion">
+    <h2>11. 最终判断</h2>
+    <p><b>功能层：</b>Qwen2.5-0.5B 的适用论文机制和产品闭环已经实现，用户可以在本地网页输入问题，客户端把明文转成私有 token ID，服务端用私有模型生成，再由客户端恢复回答。OpenSeek 已把同一产品边界扩展到真实 MoE+MLA checkpoint，源权重转换覆盖为 83/83；MTP 因上游没有发布实际 tensor，不计为已实现。</p>
+    <p><b>论文忠实性：</b>代码以论文方法为主线；对无法成立的打印公式和 tokenizer round-trip 假设采用推导后的修正，并单独留有勘误。Qwen 和 OpenSeek 的主网络负载都是 token ID，避免 <code>decode→encode</code> 改写 <code>tau(input_ids)</code>。</p>
+    <p><b>性能层：</b>尚不能宣布达到论文/PPT目标。Qwen v47 当前正式工件为 NO-GO，主要差距是 MMLU/C-Eval/PIQA 精度、VMA TTRSR、Gate-IA、known-plaintext 和后端一致性。OpenSeek 目前证明了机制覆盖、产品边界和真实问答链路，但未完成正式精度、完整攻击、三后端和 GPU 性能。</p>
+    <p><b>发布结论：</b>现阶段适合继续作为研发演示和验证平台运行；不应把任何 checkpoint 标记为通过全部科研与甲方验收。下一阶段优先把 OpenSeek 的正常回答质量和无噪声等价锁定，再开展正式精度、攻击与性能实验。</p>
+  </section>
+  <div class="footer">AloePri internal project report · evidence date 2026-08-13 · standalone HTML</div>
+</main></div>
+<script>
+  const links=[...document.querySelectorAll('nav a')];
+  const sections=[...document.querySelectorAll('main section[id]')];
+  const observer=new IntersectionObserver(entries=>{
+    const visible=entries.filter(x=>x.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];
+    if(!visible)return;
+    links.forEach(a=>a.classList.toggle('active',a.getAttribute('href')==='#'+visible.target.id));
+  },{rootMargin:'-20% 0px -70% 0px',threshold:[0,.1,.5]});
+  sections.forEach(s=>observer.observe(s));
+</script>
+</body>
+</html>

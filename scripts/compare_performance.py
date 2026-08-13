@@ -89,6 +89,7 @@ def main() -> None:
             "prompts",
             "max_new_tokens",
             "warmup",
+            "gpu_memory_fraction",
             "runtime",
             "tokenizer",
             "script",
@@ -150,6 +151,12 @@ def main() -> None:
                 "degradation_95_percent_ci": interval,
             }
         payload["metrics"][metric] = metric_result
+    payload["ttft_relative_degradation"] = payload["metrics"]["ttft_ms"]["p50"][
+        "degradation"
+    ]
+    payload["tpot_relative_degradation"] = payload["metrics"]["tpot_ms"]["p50"][
+        "degradation"
+    ]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2))

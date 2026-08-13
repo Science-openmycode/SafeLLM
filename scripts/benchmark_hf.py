@@ -33,14 +33,19 @@ def main() -> None:
     parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     parser.add_argument("--run-id")
     parser.add_argument("--run-order", type=int)
     parser.add_argument("--model-role", choices=["baseline", "candidate"])
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        raise ValueError("--gpu-memory-fraction must be between 0.1 and 0.9")
     register_aloepri_qwen2()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
+    if device == "cuda":
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
     started = time.perf_counter()
     model = (
@@ -164,6 +169,7 @@ def main() -> None:
             "key": file_identity(args.key) if args.key else None,
             "max_new_tokens": args.max_new_tokens,
             "warmup": args.warmup,
+            "gpu_memory_fraction": args.gpu_memory_fraction,
             "runtime": runtime_identity(),
             "script": file_identity(Path(__file__)),
         },

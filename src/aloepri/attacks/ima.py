@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
-from transformers import AutoConfig, AutoModel, PretrainedConfig
+from transformers import AutoModel, PretrainedConfig, Qwen2Config
 
 
 def build_paper_like_inverter_config(
@@ -18,20 +18,22 @@ def build_paper_like_inverter_config(
 
     if observed_hidden_size < 8 or observed_hidden_size % 8 != 0:
         raise ValueError("observed_hidden_size must be divisible by 8")
-    config = cast(
-        PretrainedConfig, AutoConfig.from_pretrained(model_dir, local_files_only=True)
+    # The paper fixes the attacker backbone to Qwen, regardless of the target
+    # model family. Inheriting a DeepSeek target config accidentally constructs
+    # MLA/MoE layers and makes the attack architecture-dependent.
+    _ = model_dir
+    return cast(
+        PretrainedConfig,
+        Qwen2Config(
+            hidden_size=observed_hidden_size,
+            intermediate_size=observed_hidden_size * 4,
+            num_hidden_layers=2,
+            num_attention_heads=8,
+            num_key_value_heads=8,
+            vocab_size=vocab_size,
+            dtype="float32",
+        ),
     )
-    config.hidden_size = observed_hidden_size
-    config.num_hidden_layers = 2
-    config.num_attention_heads = 8
-    config.num_key_value_heads = 8
-    config.head_dim = observed_hidden_size // 8
-    config.intermediate_size = observed_hidden_size * 4
-    config.vocab_size = vocab_size
-    config.dtype = "float32"
-    if hasattr(config, "layer_types"):
-        config.layer_types = ["full_attention", "full_attention"]
-    return config
 
 
 class PaperLikeIMAInverter(nn.Module):

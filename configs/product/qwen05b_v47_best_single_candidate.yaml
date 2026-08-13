@@ -2,7 +2,7 @@ schema_version: 1
 model_id: qwen05b-candidate-v47-best-single
 key_id: dev-qwen05b-candidate-v47-best-single
 source_model: data/models/qwen2.5-0.5b
-output_model: data/packages/qwen05b-candidate-v47-best-single
+output_model: data/packages/qwen05b-candidate-v47-stable-factor
 full_key_dir: data/keys/dev-qwen05b-candidate-v47-best-single
 online_key_dir: data/keys/qwen05b-candidate-v47-best-single-online
 offline_key_dir: data/keys/qwen05b-candidate-v47-best-single-offline
@@ -18,6 +18,7 @@ conversion:
   dtype: float32
   attention_compute_dtype: float64
   rms_mode: exact-metric
+  rms_representation: stable-factor
   block_beta: 8
   sampling_gamma: 1000.0
   blockperm_mode: gamma-corrected
@@ -28,10 +29,12 @@ conversion:
   ffn_scale_max: 2.0
   uvo_condition_max: 42.0
 server:
+  model_path: data/server-packages/qwen05b-candidate-v47-stable-factor
   host: 127.0.0.1
   port: 8000
   device: cuda
   dtype: auto
+  gpu_memory_fraction: 0.65
   max_input_tokens: 2048
   max_output_tokens: 512
   max_request_bytes: 1000000

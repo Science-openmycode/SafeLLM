@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import yaml
@@ -9,8 +10,21 @@ def test_build_release_sanitizes_runtime_and_detects_tampering(tmp_path) -> None
     server = tmp_path / "server-source"
     server.mkdir()
     (server / "config.json").write_text("{}", encoding="utf-8")
+    server_config = server / "config.json"
     (server / "aloepri_manifest.json").write_text(
-        json.dumps({"metadata": {}, "files": []}), encoding="utf-8"
+        json.dumps(
+            {
+                "metadata": {},
+                "files": [
+                    {
+                        "path": "config.json",
+                        "bytes": server_config.stat().st_size,
+                        "sha256": hashlib.sha256(server_config.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
     config = tmp_path / "product.yaml"
     config.write_text(

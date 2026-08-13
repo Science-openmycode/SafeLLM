@@ -35,12 +35,31 @@ class AloePriMetricRMSNorm(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         input_dtype = hidden_states.dtype
-        working = hidden_states.to(torch.float32)
+        # ``G = Q Q^T`` is positive semidefinite, but the rectangular private
+        # coordinate system gives G an exact nullspace.  Evaluating z G z^T in
+        # FP32 can therefore suffer catastrophic cancellation and produce a
+        # negative variance after a long decode.  Keep the stored server-side
+        # Gram metric, but evaluate the paper's quadratic form in FP64.
+        working = hidden_states.to(torch.float64)
         owner = self._metric_owner()
         if owner is None:
             raise RuntimeError("AloePri RMS metric owner is no longer available")
-        metric = owner.aloepri_rms_metric.to(device=working.device, dtype=torch.float32)
-        variance = torch.einsum("...i,ij,...j->...", working, metric, working).unsqueeze(-1)
+        representation = getattr(
+            getattr(owner, "config", None), "aloepri_rms_representation", "gram"
+        )
+        if representation == "stable_factor":
+            factor = owner.aloepri_rms_factor.to(
+                device=working.device, dtype=torch.float64
+            )
+            projected = torch.matmul(working, factor)
+            variance = projected.square().sum(dim=-1, keepdim=True)
+        else:
+            metric = owner.aloepri_rms_metric.to(
+                device=working.device, dtype=torch.float64
+            )
+            variance = torch.einsum(
+                "...i,ij,...j->...", working, metric, working
+            ).unsqueeze(-1)
         variance = variance / self.plain_hidden_size
         normalized = working * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * normalized.to(input_dtype)
@@ -286,6 +305,16 @@ class AloePriQwen2ForCausalLM(Qwen2ForCausalLM):
                 torch.eye(private_dim, dtype=torch.float32),
                 persistent=True,
             )
+            if config.aloepri_rms_representation == "stable_factor":
+                self.register_buffer(
+                    "aloepri_rms_factor",
+                    torch.zeros(
+                        private_dim,
+                        config.plain_hidden_size,
+                        dtype=torch.float64,
+                    ),
+                    persistent=True,
+                )
             for layer in self.model.layers:
                 layer.input_layernorm = AloePriMetricRMSNorm(
                     private_dim, config.plain_hidden_size, config.rms_norm_eps, self

@@ -18,6 +18,7 @@ from aloepri.attacks.protocol import (
     load_private_token_sequences,
 )
 from aloepri.evidence import run_provenance
+from aloepri.models.modeling_aloepri_deepseek_v3 import register_aloepri_deepseek_v3
 from aloepri.models.modeling_aloepri_qwen2 import register_aloepri_qwen2
 
 
@@ -35,6 +36,7 @@ def main() -> None:
     args = parser.parse_args()
     assert_attack_inputs_exclude_target_key([args.original, args.private, args.private_token_ids])
     register_aloepri_qwen2()
+    register_aloepri_deepseek_v3()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     sequences = load_private_token_sequences(args.private_token_ids)

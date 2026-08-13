@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import lm_eval
+import torch
 from lm_eval.tasks import TaskManager
 from transformers import AutoConfig
 
@@ -32,6 +33,7 @@ def main() -> None:
     parser.add_argument("--max-gen-toks", type=int)
     parser.add_argument("--dtype", choices=["auto", "float32", "bfloat16"], default="auto")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     parser.add_argument(
         "--add-bos-token",
         action=argparse.BooleanOptionalAction,
@@ -39,6 +41,10 @@ def main() -> None:
         help="Prepend BOS so full splits containing empty contexts are valid.",
     )
     args = parser.parse_args()
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        parser.error("--gpu-memory-fraction must be between 0.1 and 0.9")
+    if torch.cuda.is_available():
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     register_aloepri_qwen2()
     model_config = AutoConfig.from_pretrained(args.model, local_files_only=True)
     if (
@@ -75,6 +81,9 @@ def main() -> None:
         confirm_run_unsafe_code=args.confirm_unsafe,
         gen_kwargs=generation,
     )
+    effective_model_dtype = results.get("config", {}).get("model_dtype")
+    if effective_model_dtype is None:
+        effective_model_dtype = args.dtype
     document_hashes = sorted(
         str(row["doc_hash"]) for rows in results.get("samples", {}).values() for row in rows
     )
@@ -90,8 +99,14 @@ def main() -> None:
             json.dumps(document_hashes, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
         "document_count": len(document_hashes),
-        "dtype": args.dtype,
+        "dtype": effective_model_dtype,
+        "requested_dtype": args.dtype,
+        "effective_model_dtype": effective_model_dtype,
+        "attention_compute_dtype": getattr(
+            model_config, "aloepri_attention_compute_dtype", "float32"
+        ),
         "batch_size": args.batch_size,
+        "gpu_memory_fraction": args.gpu_memory_fraction,
         "limit": args.limit,
         "script": file_identity(Path(__file__)),
         "runtime": runtime_identity(),

@@ -24,14 +24,14 @@ def test_real_private_api_round_trip() -> None:
     private = Path(
         os.environ.get(
             "ALOEPRI_PRIVATE_MODEL",
-            "data/checkpoints/qwen2.5-0.5b-paper-v15-complete-bf16",
+            "data/packages/qwen05b-product-v31-blockperm8",
         )
     )
     key = TokenKey.from_directory(
         Path(
             os.environ.get(
                 "ALOEPRI_KEY_DIR",
-                "data/keys/dev-qwen05b-paper-v15-complete-bf16",
+                "data/keys/qwen05b-product-v31-blockperm8-online",
             )
         )
     )

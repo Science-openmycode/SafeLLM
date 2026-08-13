@@ -9,7 +9,6 @@ import torch
 from torch import nn
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
-from vllm.model_executor.layers.attention import Attention, EncoderOnlyAttention
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import QKVParallelLinear, RowParallelLinear
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
@@ -18,7 +17,17 @@ from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.models.qwen2 import Qwen2ForCausalLM, Qwen2MLP, Qwen2Model
 from vllm.model_executor.models.utils import PPMissingLayer, extract_layer_index, maybe_prefix
-from vllm.v1.attention.backend import AttentionType
+
+try:
+    from vllm.model_executor.layers.attention import Attention, EncoderOnlyAttention
+    from vllm.v1.attention.backend import AttentionType
+
+    _VLLM_LEGACY_EXPLICIT_ATTENTION = False
+except ModuleNotFoundError:
+    from vllm.attention import Attention, AttentionType
+
+    EncoderOnlyAttention = None  # type: ignore[assignment,misc]
+    _VLLM_LEGACY_EXPLICIT_ATTENTION = True
 
 
 class AloePriVllmMetricRMSNorm(nn.Module):
@@ -39,12 +48,22 @@ class AloePriVllmMetricRMSNorm(nn.Module):
 
     def _normalize(self, hidden_states: torch.Tensor) -> torch.Tensor:
         input_dtype = hidden_states.dtype
-        working = hidden_states.float()
+        # Match the HF implementation: FP32 evaluation of the singular Gram
+        # quadratic form can turn a non-negative variance negative through
+        # cancellation during long decoding.
+        working = hidden_states.to(torch.float64)
         owner = self._metric_owner()
         if owner is None:
             raise RuntimeError("AloePri RMS metric owner is no longer available")
-        metric = owner.aloepri_rms_metric.to(working.device, torch.float32)
-        variance = torch.einsum("...i,ij,...j->...", working, metric, working)
+        representation = getattr(
+            getattr(owner, "config", None), "aloepri_rms_representation", "gram"
+        )
+        if representation == "stable_factor":
+            factor = owner.aloepri_rms_factor.to(working.device, torch.float64)
+            variance = torch.matmul(working, factor).square().sum(dim=-1)
+        else:
+            metric = owner.aloepri_rms_metric.to(working.device, torch.float64)
+            variance = torch.einsum("...i,ij,...j->...", working, metric, working)
         normalized = working * torch.rsqrt(
             variance.unsqueeze(-1) / self.plain_hidden_size + self.variance_epsilon
         )
@@ -112,12 +131,21 @@ class AloePriQwen2Attention(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.o_proj",
         )
-        self.rotary_emb = get_rope(
-            head_dim,
-            max_position=max_position,
-            rope_parameters=rope_parameters,
-            dual_chunk_attention_config=dual_chunk_attention_config,
-        )
+        if _VLLM_LEGACY_EXPLICIT_ATTENTION:
+            self.rotary_emb = get_rope(
+                head_dim,
+                rotary_dim=head_dim,
+                max_position=max_position,
+                base=int(rope_parameters["rope_theta"]),
+                rope_scaling=rope_scaling,
+            )
+        else:
+            self.rotary_emb = get_rope(
+                head_dim,
+                max_position=max_position,
+                rope_parameters=rope_parameters,
+                dual_chunk_attention_config=dual_chunk_attention_config,
+            )
         if block_orders is None:
             self.register_buffer("aloepri_block_orders", None, persistent=True)
             self.register_buffer("aloepri_q_block_maps", None, persistent=False)
@@ -151,30 +179,50 @@ class AloePriQwen2Attention(nn.Module):
             self.register_buffer(
                 "aloepri_k_block_maps", block_maps, persistent=False
             )
-        attention_class = (
-            EncoderOnlyAttention if attn_type == AttentionType.ENCODER_ONLY else Attention
-        )
-        extra = (
-            {
-                "layer_idx": extract_layer_index(prefix),
-                "dual_chunk_attention_config": dual_chunk_attention_config,
-            }
-            if dual_chunk_attention_config
-            else {}
-        )
-        self.attn = attention_class(
-            self.num_heads,
-            head_dim,
-            self.scaling,
-            num_kv_heads=self.num_kv_heads,
-            cache_config=cache_config,
-            quant_config=quant_config,
-            attn_type=attn_type,
-            prefix=f"{prefix}.attn",
-            **extra,
-        )
+        if _VLLM_LEGACY_EXPLICIT_ATTENTION:
+            self.attn = Attention(
+                self.num_heads,
+                head_dim,
+                self.scaling,
+                num_kv_heads=self.num_kv_heads,
+                cache_config=cache_config,
+                quant_config=quant_config,
+                prefix=f"{prefix}.attn",
+            )
+        else:
+            attention_class = (
+                EncoderOnlyAttention
+                if attn_type == AttentionType.ENCODER_ONLY
+                else Attention
+            )
+            extra = (
+                {
+                    "layer_idx": extract_layer_index(prefix),
+                    "dual_chunk_attention_config": dual_chunk_attention_config,
+                }
+                if dual_chunk_attention_config
+                else {}
+            )
+            self.attn = attention_class(
+                self.num_heads,
+                head_dim,
+                self.scaling,
+                num_kv_heads=self.num_kv_heads,
+                cache_config=cache_config,
+                quant_config=quant_config,
+                attn_type=attn_type,
+                prefix=f"{prefix}.attn",
+                **extra,
+            )
 
-    def forward(self, positions, hidden_states):
+    def forward(
+        self,
+        positions,
+        hidden_states,
+        kv_cache=None,
+        attn_metadata=None,
+        attn_type=None,
+    ):
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         if self.aloepri_q_block_maps is not None:
@@ -198,7 +246,15 @@ class AloePriQwen2Attention(nn.Module):
             ).reshape(token_count, self.kv_size)
         else:
             q, k = self.rotary_emb(positions, q, k)
-        output, _ = self.o_proj(self.attn(q, k, v))
+        if _VLLM_LEGACY_EXPLICIT_ATTENTION:
+            if kv_cache is None or attn_metadata is None or attn_type is None:
+                raise RuntimeError("vLLM 0.6 attention requires cache, metadata, and type")
+            attn_output = self.attn(
+                q, k, v, kv_cache, attn_metadata, attn_type=attn_type
+            )
+        else:
+            attn_output = self.attn(q, k, v)
+        output, _ = self.o_proj(attn_output)
         return output
 
 
@@ -251,14 +307,31 @@ class AloePriQwen2DecoderLayer(nn.Module):
         )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self._attn_type = attn_type
 
-    def forward(self, positions, hidden_states, residual):
+    def forward(self, positions, hidden_states, *runtime_args):
+        if _VLLM_LEGACY_EXPLICIT_ATTENTION:
+            if len(runtime_args) != 3:
+                raise RuntimeError("vLLM 0.6 decoder requires cache, metadata, residual")
+            kv_cache, attn_metadata, residual = runtime_args
+        else:
+            if len(runtime_args) != 1:
+                raise RuntimeError("vLLM decoder requires one residual argument")
+            residual = runtime_args[0]
+            kv_cache = None
+            attn_metadata = None
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
-        hidden_states = self.self_attn(positions=positions, hidden_states=hidden_states)
+        hidden_states = self.self_attn(
+            positions=positions,
+            hidden_states=hidden_states,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            attn_type=self._attn_type,
+        )
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
         return self.mlp(hidden_states), residual
 
@@ -266,21 +339,44 @@ class AloePriQwen2DecoderLayer(nn.Module):
 class AloePriQwen2ForCausalLM(Qwen2ForCausalLM):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         nn.Module.__init__(self)
-        config = vllm_config.model_config.hf_config.get_text_config()
+        raw_config = vllm_config.model_config.hf_config
+        config = (
+            raw_config
+            if _VLLM_LEGACY_EXPLICIT_ATTENTION
+            else raw_config.get_text_config()
+        )
         quant_config = vllm_config.quant_config
         self.config = config
         self.quant_config = quant_config
-        self.model = Qwen2Model(
-            vllm_config=vllm_config,
-            prefix=maybe_prefix(prefix, "model"),
-            decoder_layer_type=AloePriQwen2DecoderLayer,
-        )
-        if getattr(config, "aloepri_rms_mode", "paper_kappa") == "exact_metric":
-            self.register_buffer(
-                "aloepri_rms_metric",
-                torch.empty((config.hidden_size, config.hidden_size), dtype=torch.float32),
-                persistent=True,
+        model_prefix = maybe_prefix(prefix, "model")
+        if _VLLM_LEGACY_EXPLICIT_ATTENTION:
+            self.model = Qwen2Model(vllm_config=vllm_config, prefix=model_prefix)
+            for layer_index in range(self.model.start_layer, self.model.end_layer):
+                self.model.layers[layer_index] = AloePriQwen2DecoderLayer(
+                    config=config,
+                    cache_config=vllm_config.cache_config,
+                    quant_config=quant_config,
+                    prefix=f"{model_prefix}.layers.{layer_index}",
+                )
+        else:
+            self.model = Qwen2Model(
+                vllm_config=vllm_config,
+                prefix=model_prefix,
+                decoder_layer_type=AloePriQwen2DecoderLayer,
             )
+        if getattr(config, "aloepri_rms_mode", "paper_kappa") == "exact_metric":
+            self.aloepri_rms_metric = nn.Parameter(
+                torch.empty((config.hidden_size, config.hidden_size), dtype=torch.float32),
+                requires_grad=False,
+            )
+            if getattr(config, "aloepri_rms_representation", "gram") == "stable_factor":
+                self.aloepri_rms_factor = nn.Parameter(
+                    torch.empty(
+                        (config.hidden_size, config.plain_hidden_size),
+                        dtype=torch.float64,
+                    ),
+                    requires_grad=False,
+                )
             for layer in self.model.layers:
                 if isinstance(layer, PPMissingLayer):
                     continue

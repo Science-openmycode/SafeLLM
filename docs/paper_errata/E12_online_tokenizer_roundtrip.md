@@ -53,6 +53,20 @@ $$
 200 条非特殊 Token 序列时，长度 1、2、4、8、16 分别有
 2、11、28、61、106 条失败；20 条真实 prompt 置换后有 6 条失败。
 
+2026-08-13 又使用当前正在提供网页演示的
+`qwen05b-product-v31-blockperm8-online` 密钥重新验证：
+
+- 全词表 151,936 个单 Token ID 中，3,628 个不能完成相同 ID 的
+  `decode -> encode` 往返，失败率为 2.3878%；
+- 随机长度 1、2、4、8、16、32、64 的私有序列各 500 条，分别失败
+  6、36、58、160、247、383、469 条；
+- `configs/eval/gate1_prompts_200.json` 的 200 条真实 Chat Template 输入经过
+  当前 `tau` 后，有 88 条重新编码结果不等于私有 ID，失败率为 44%。
+
+机器可读证据为
+`artifacts/audit/tokenizer-roundtrip-qwen05b-v31-current.json`。该结果说明问题
+存在于当前 Qwen 产品密钥，而不只是历史 v15/v18 密钥。
+
 # 工程处理
 
 本仓库正式接口直接发送 `input_ids`：
@@ -63,6 +77,12 @@ $$
 
 这保持了论文所需的 Token 坐标，但不是论文描述的文本传输接口。只有某个具体
 tokenizer 和允许的 ID 子集通过完整 round-trip 证明后，才能开放文本接口。
+
+当前 Qwen 网页仍会计算 `tokenizer.decode(private_ids)`，但它只用于浏览器中的
+“混淆后的提示词”展示。发送给 8000 模型服务的请求体字段是原始
+`private_ids` 数组；展示字符串不会被送去重新分词。SDK 的可选 `encoded_text`
+模式也不是论文乱码路径，而是用带版本头和校验和的 Base64URL 文本无损封装整数 ID，
+服务端直接解包整数，不调用 tokenizer。
 
 # 来源定位
 

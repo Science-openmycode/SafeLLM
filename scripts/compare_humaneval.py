@@ -56,7 +56,13 @@ def main() -> None:
             raise ValueError("HumanEval generation document hashes differ")
         if baseline_run.get("document_count") != candidate_run.get("document_count"):
             raise ValueError("HumanEval generation document counts differ")
-        if baseline_run.get("dtype") != candidate_run.get("dtype"):
+        baseline_dtype = baseline_run.get(
+            "effective_model_dtype", baseline_run.get("dtype")
+        )
+        candidate_dtype = candidate_run.get(
+            "effective_model_dtype", candidate_run.get("dtype")
+        )
+        if baseline_dtype != candidate_dtype:
             raise ValueError("HumanEval generation dtypes differ")
     baseline_rows = {row["task_id"]: row for row in baseline["results"]}
     candidate_rows = {row["task_id"]: row for row in candidate["results"]}
@@ -76,12 +82,21 @@ def main() -> None:
         "absolute_change": float(candidate["pass@1"] - baseline["pass@1"]),
         "paired_change_95_percent_ci": paired_bootstrap_ci(differences),
         "confidence_interval_method": "paired nonparametric bootstrap, 10000 resamples",
-        "baseline_dtype": baseline_run.get("dtype") if isinstance(baseline_run, dict) else None,
-        "candidate_dtype": candidate_run.get("dtype") if isinstance(candidate_run, dict) else None,
+        "baseline_dtype": (
+            baseline_run.get("effective_model_dtype", baseline_run.get("dtype"))
+            if isinstance(baseline_run, dict)
+            else None
+        ),
+        "candidate_dtype": (
+            candidate_run.get("effective_model_dtype", candidate_run.get("dtype"))
+            if isinstance(candidate_run, dict)
+            else None
+        ),
         "dtype_match": bool(
             isinstance(baseline_run, dict)
             and isinstance(candidate_run, dict)
-            and baseline_run.get("dtype") == candidate_run.get("dtype")
+            and baseline_run.get("effective_model_dtype", baseline_run.get("dtype"))
+            == candidate_run.get("effective_model_dtype", candidate_run.get("dtype"))
         ),
         "provenance": {
             "schema_version": 1,

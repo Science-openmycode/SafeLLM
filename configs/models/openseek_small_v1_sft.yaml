@@ -1,0 +1,44 @@
+schema_version: 1
+model_id: openseek-small-v1-sft
+huggingface:
+  repo_id: BAAI/OpenSeek-Small-v1-SFT
+  revision: 1515c184e6fe4a91e6061be513a79d607e8787cb
+  weight_file: model.safetensors
+  weight_bytes: 3178063824
+  weight_sha256: 57c3bb227749d1bde282634591ef32bd8fd528439f04955a8141ffad818941a2
+paths:
+  source: data/models/openseek-small-v1-sft
+  normalized: data/models/openseek-small-v1-sft-transformers
+  output: data/packages/openseek-small-v1-sft-private
+  offline_key: data/keys/openseek-small-v1-sft-private-offline
+  online_key: data/keys/openseek-small-v1-sft-private-online
+  evidence: artifacts/openseek-small-v1-sft
+architecture:
+  model_type: deepseek_v3
+  hidden_size: 1280
+  layers: 6
+  routed_experts: 64
+  shared_experts: 2
+  experts_per_token: 6
+  kv_lora_rank: 512
+  declared_nextn_layers: 1
+  actual_mtp_tensor_count: 0
+normalization:
+  source_expert_layout: individual
+  target_expert_layout: fused_gate_up_and_down
+  rope_interleave: true
+  use_cache: true
+  max_shard_size_gib: 0.5
+conversion:
+  transform_version: deepseek-v2-latent-mla-moe-v3
+  seed: 20260813
+  ffn_scale_min: 1.0
+  ffn_scale_max: 1.0
+  vocab_permutation: true
+  resume: true
+runtime:
+  device: cpu
+  dtype: bfloat16
+  attention: eager
+  max_model_len: 2048
+  gpu_memory_fraction: 0.82

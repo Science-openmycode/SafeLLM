@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>AloePri · 访问验证</title>
+    <style>
+      :root { color-scheme: light; --green: #10a37f; --ink: #0d0d0d; --muted: #6b6b6b; --line: #dedede; }
+      * { box-sizing: border-box; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; color: var(--ink); background: #f7f7f8; font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif; }
+      main { width: min(420px, calc(100% - 32px)); padding: 34px; border: 1px solid #e8e8e8; border-radius: 20px; background: white; box-shadow: 0 18px 55px rgba(0,0,0,.08); }
+      .mark { width: 44px; height: 44px; display: grid; place-items: center; color: white; border-radius: 13px; background: var(--green); font-size: 20px; font-weight: 700; }
+      h1 { margin: 24px 0 8px; font-size: 25px; letter-spacing: -.03em; }
+      p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+      form { margin-top: 26px; }
+      label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; }
+      input { width: 100%; height: 48px; padding: 0 14px; border: 1px solid var(--line); border-radius: 11px; outline: 0; font: inherit; }
+      input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(16,163,127,.12); }
+      button { width: 100%; height: 46px; margin-top: 12px; color: white; border: 0; border-radius: 11px; background: var(--ink); cursor: pointer; font: 600 14px inherit; }
+      button:hover { background: #292929; }
+      .error { display: none; margin-top: 12px; padding: 10px 12px; color: #b42318; border-radius: 9px; background: #fff1f0; font-size: 11px; }
+      footer { margin-top: 24px; padding-top: 18px; display: flex; align-items: center; gap: 8px; color: #888; border-top: 1px solid #eee; font-size: 10px; }
+      footer i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(16,163,127,.1); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark">A</div>
+      <h1>进入 AloePri</h1>
+      <p>这是受保护的私有模型演示。请输入演示提供者发给你的访问码。</p>
+      <form method="post" action="/login" autocomplete="off">
+        <label for="access-code">共享访问码</label>
+        <input id="access-code" name="access_code" type="password" minlength="12" required autofocus autocomplete="current-password" />
+        <button type="submit">继续</button>
+        <div id="error" class="error" role="alert"></div>
+      </form>
+      <footer><i></i><span>模型和 checkpoint 运行在演示提供者的本地设备上</span></footer>
+    </main>
+    <script>
+      const reason = new URLSearchParams(window.location.search).get("error");
+      const error = document.querySelector("#error");
+      if (reason) {
+        error.textContent = reason === "limited" ? "尝试次数过多，请十分钟后再试。" : "访问码不正确，请重新输入。";
+        error.style.display = "block";
+      }
+    </script>
+  </body>
+</html>

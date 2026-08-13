@@ -21,8 +21,14 @@ def main() -> None:
         choices=["auto", "float32", "bfloat16"],
         help="auto preserves checkpoint dtype on CUDA and uses float32 on CPU",
     )
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     args = parser.parse_args()
-    runtime = PrivateHFRuntime(args.model, device=args.device, dtype=args.dtype)
+    runtime = PrivateHFRuntime(
+        args.model,
+        device=args.device,
+        dtype=args.dtype,
+        gpu_memory_fraction=args.gpu_memory_fraction,
+    )
     uvicorn.run(create_app(runtime), host=args.host, port=args.port, access_log=False)
 
 

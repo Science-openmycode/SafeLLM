@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM
 
+from aloepri.models.modeling_aloepri_deepseek_v3 import register_aloepri_deepseek_v3
 from aloepri.models.modeling_aloepri_qwen2 import register_aloepri_qwen2
 from aloepri.serving.protocol import GenerateRequest, GenerateResponse, Usage
 
@@ -21,14 +22,20 @@ class PrivateHFRuntime:
         dtype: str = "auto",
         max_input_tokens: int = 2048,
         max_output_tokens: int = 512,
+        gpu_memory_fraction: float = 0.70,
     ) -> None:
         register_aloepri_qwen2()
+        register_aloepri_deepseek_v3()
+        if device not in {"auto", "cpu", "cuda", "cuda-auto"}:
+            raise ValueError(f"unsupported device: {device}")
         actual_device = "cuda" if device == "auto" and torch.cuda.is_available() else device
         self.device = "cpu" if actual_device == "auto" else actual_device
         if max_input_tokens < 1 or max_output_tokens < 1:
             raise ValueError("token limits must be positive")
         self.max_input_tokens = max_input_tokens
         self.max_output_tokens = max_output_tokens
+        if not 0.1 <= gpu_memory_fraction <= 0.9:
+            raise ValueError("gpu_memory_fraction must be between 0.1 and 0.9")
         if dtype not in {"auto", "float32", "bfloat16"}:
             raise ValueError(f"unsupported dtype: {dtype}")
         load_options: dict[str, object] = {
@@ -37,9 +44,36 @@ class PrivateHFRuntime:
         }
         if dtype != "auto":
             load_options["dtype"] = torch.float32 if dtype == "float32" else torch.bfloat16
-        self.model = AutoModelForCausalLM.from_pretrained(model_dir, **load_options).to(
-            self.device
-        )
+        if self.device in {"cuda", "cuda-auto"}:
+            for index in range(torch.cuda.device_count()):
+                torch.cuda.set_per_process_memory_fraction(gpu_memory_fraction, device=index)
+        if self.device == "cuda-auto":
+            max_memory = {
+                index: int(
+                    torch.cuda.get_device_properties(index).total_memory
+                    * gpu_memory_fraction
+                )
+                for index in range(torch.cuda.device_count())
+            }
+            load_options["device_map"] = "auto"
+            load_options["max_memory"] = max_memory
+            self.model = AutoModelForCausalLM.from_pretrained(model_dir, **load_options)
+            self.input_device = str(self.model.get_input_embeddings().weight.device)
+            device_map = getattr(self.model, "hf_device_map", {})
+            offloaded = [
+                name
+                for name, placement in device_map.items()
+                if str(placement) in {"cpu", "disk"}
+            ]
+            if offloaded:
+                raise RuntimeError(
+                    f"model was offloaded outside GPUs: {offloaded[:10]}"
+                )
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(model_dir, **load_options).to(
+                self.device
+            )
+            self.input_device = self.device
         self.model.eval()
         metadata = getattr(self.model.config, "aloepri", None)
         if not isinstance(metadata, dict):
@@ -64,10 +98,8 @@ class PrivateHFRuntime:
 
     def iter_token_ids(self, request: GenerateRequest) -> Iterator[tuple[int, float]]:
         self.validate(request)
-        generator = None
-        if request.seed is not None:
-            generator = torch.Generator(device=self.device).manual_seed(request.seed)
-        input_ids = torch.tensor([request.input_ids], dtype=torch.long, device=self.device)
+        generator: torch.Generator | None = None
+        input_ids = torch.tensor([request.input_ids], dtype=torch.long, device=self.input_device)
         attention_mask = torch.ones_like(input_ids)
         past_key_values = None
         current = input_ids
@@ -84,6 +116,10 @@ class PrivateHFRuntime:
             if request.temperature == 0.0:
                 next_id = logits.argmax(dim=-1, keepdim=True)
             else:
+                if generator is None and request.seed is not None:
+                    generator = torch.Generator(device=logits.device).manual_seed(
+                        request.seed
+                    )
                 sampling_logits = logits / request.temperature
                 if request.top_k:
                     top_k = min(request.top_k, sampling_logits.shape[-1])
@@ -102,17 +138,21 @@ class PrivateHFRuntime:
                     next_id = sorted_ids.gather(-1, sampled)
                 else:
                     next_id = torch.multinomial(probabilities, 1, generator=generator)
-            if self.device == "cuda":
-                torch.cuda.synchronize()
+            if self.device in {"cuda", "cuda-auto"}:
+                torch.cuda.synchronize(self.input_device)
             elapsed_ms = (time.perf_counter() - started) * 1000
             token_id = int(next_id.item())
             yield token_id, elapsed_ms
             if token_id in self.eos_ids:
                 break
             past_key_values = result.past_key_values
-            current = next_id
+            current = next_id.to(self.input_device)
             attention_mask = torch.cat(
-                (attention_mask, torch.ones((1, 1), device=self.device, dtype=torch.long)), dim=-1
+                (
+                    attention_mask,
+                    torch.ones((1, 1), device=self.input_device, dtype=torch.long),
+                ),
+                dim=-1,
             )
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:

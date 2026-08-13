@@ -65,6 +65,14 @@ def create_app(
                 expected = f"Bearer {bearer_token}"
                 if not secrets.compare_digest(supplied, expected):
                     return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+            # Content-Length is only a declaration and may be absent or false (for
+            # example with chunked transfer encoding).  Starlette caches this body,
+            # so the downstream request parser receives the same bytes.
+            body = await request.body()
+            if len(body) > max_request_bytes:
+                return JSONResponse(
+                    status_code=413, content={"detail": "request body too large"}
+                )
         return await call_next(request)  # type: ignore[operator]
 
     @app.get("/healthz")

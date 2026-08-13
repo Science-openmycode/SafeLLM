@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "dataset": "openai/openai_humaneval",
+  "split": "test",
+  "row_count": 164,
+  "fields": [
+    "task_id",
+    "prompt",
+    "canonical_solution",
+    "test",
+    "entry_point"
+  ],
+  "content_sha256": "3c3148615a7e25da87784ec03b5f3bc3d168e8b129d72dcbfe05380056182f53",
+  "file_sha256": "df2b345e27c5cff5aef04993f927c5184a70c89d19b9fba909847265d7cb2031"
+}

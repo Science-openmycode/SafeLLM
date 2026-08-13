@@ -66,3 +66,23 @@ def test_manifest_verifier_rejects_seed_in_server_config(tmp_path) -> None:
     result = verify_manifest(tmp_path)
     assert not result.ok
     assert "secret-config:$.aloepri.seed" in result.failures
+
+
+def test_manifest_verifier_rejects_path_escape(tmp_path) -> None:
+    outside = tmp_path.parent / "outside.bin"
+    outside.write_bytes(b"secret")
+    manifest = {
+        "files": [
+            {
+                "path": "../outside.bin",
+                "bytes": outside.stat().st_size,
+                "sha256": hashlib.sha256(outside.read_bytes()).hexdigest(),
+            }
+        ]
+    }
+    (tmp_path / "aloepri_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = verify_manifest(tmp_path)
+
+    assert not result.ok
+    assert "path-escape:../outside.bin" in result.failures

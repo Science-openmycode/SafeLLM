@@ -18,11 +18,14 @@ def main() -> None:
     parser.add_argument("--decoder-dir", type=Path, required=True)
     parser.add_argument("--private-observations", type=Path, required=True)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=0.70)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     assert_attack_inputs_exclude_target_key([args.decoder_dir, args.private_observations])
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
+    if not 0.1 <= args.gpu_memory_fraction <= 0.9:
+        parser.error("--gpu-memory-fraction must be between 0.1 and 0.9")
 
     decoder_payload = json.loads((args.decoder_dir / "config.json").read_text(encoding="utf-8"))
     if decoder_payload.get("target_key_loaded") is not False:
@@ -45,6 +48,8 @@ def main() -> None:
         value=0,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.set_per_process_memory_fraction(args.gpu_memory_fraction)
     model = RecurrenceDecoder(config).to(device)
     model.load_state_dict(load_file(args.decoder_dir / "model.safetensors", device=str(device)))
     model.eval()
@@ -70,6 +75,9 @@ def main() -> None:
             "causal_decoder": True,
             "target_key_used_for_training": False,
             "formal_corpus_complete": decoder_payload.get("formal_corpus_complete") is True,
+            "gpu_memory_fraction": (
+                args.gpu_memory_fraction if device.type == "cuda" else None
+            ),
         },
         "provenance": run_provenance(
             script=Path(__file__),

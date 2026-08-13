@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="AloePri 隐私推理架构与数据流说明" />
+    <title>AloePri · 隐私原理</title>
+    <link rel="stylesheet" href="/assets/privacy.css?v=20260813-public2" />
+  </head>
+  <body>
+    <header class="page-nav">
+      <a class="brand" href="/"><span>A</span><strong>AloePri</strong></a>
+      <div class="nav-links"><a class="active" href="/privacy">隐私原理</a><a href="/">返回对话</a></div>
+    </header>
+
+    <main>
+      <section id="public-boundary-notice" class="public-boundary-notice" hidden>
+        <strong>公网展示边界</strong>
+        <p>访客输入通过 HTTPS 到达演示提供者电脑上的可信 gateway；gateway 完成分词、置换与恢复。模型服务仍只接收混淆 token。要验证“明文不离开使用者设备”，请运行本地客户端版本。</p>
+      </section>
+      <section class="hero">
+        <p class="eyebrow">PRIVACY ARCHITECTURE · QWEN2.5-0.5B</p>
+        <h1>一个问题，如何在不发送明文的情况下完成推理？</h1>
+        <p class="lead">AloePri 同时改变 token 坐标与模型权重。客户端保存词表置换，服务端运行混淆 checkpoint；两边在不同的表示空间中协同完成同一个生成过程。</p>
+        <div class="hero-pills"><span>明文留在客户端</span><span>服务端只见私有 token</span><span>输出逐 token 恢复</span></div>
+      </section>
+
+      <section class="live-lab" aria-labelledby="lab-title">
+        <div class="lab-intro">
+          <div><p class="eyebrow">LIVE PRIVACY LAB</p><h2 id="lab-title">亲手输入一句话，看它如何穿过隐私边界</h2><p>下面使用当前 Qwen2.5-0.5B tokenizer、online key 和混淆 checkpoint。显示的 token 与回答都来自真实运行。</p></div>
+          <div id="lab-status" class="lab-status idle"><i></i><span>等待输入</span></div>
+        </div>
+
+        <form id="lab-form" class="lab-composer">
+          <textarea id="lab-prompt" rows="2" maxlength="20000" placeholder="例如：请用一句话解释什么是矩阵乘法。">请用一句话解释什么是矩阵乘法。</textarea>
+          <div class="lab-actions">
+            <label><span>最长回答</span><select id="lab-max-tokens"><option value="32" selected>32 tokens</option><option value="64">64 tokens</option><option value="128">128 tokens</option></select></label>
+            <button id="lab-submit" type="submit">运行真实隐私推理 <span>→</span></button>
+          </div>
+        </form>
+
+        <div class="live-pipeline" aria-label="实时隐私处理进度">
+          <div class="live-stage" data-live-stage="plain"><b>1</b><span>本地明文</span><small>Prompt</small></div>
+          <i>→</i>
+          <div class="live-stage" data-live-stage="tokenize"><b>2</b><span>Chat Template</span><small>Plain IDs</small></div>
+          <i>→</i>
+          <div class="live-stage protected" data-live-stage="obfuscate"><b>3</b><span>执行 τ</span><small>Private IDs</small></div>
+          <i class="boundary-arrow">跨越边界</i>
+          <div class="live-stage server" data-live-stage="server"><b>4</b><span>混淆模型</span><small>Private checkpoint</small></div>
+          <i>→</i>
+          <div class="live-stage protected" data-live-stage="restore"><b>5</b><span>执行 τ⁻¹</span><small>Recovered IDs</small></div>
+          <i>→</i>
+          <div class="live-stage" data-live-stage="answer"><b>6</b><span>本地回答</span><small>Decoded text</small></div>
+        </div>
+
+        <div class="lab-results">
+          <article class="lab-card plain-card">
+            <header><span>CLIENT · BEFORE τ</span><em>不会发送</em></header>
+            <h3>真实输入与明文 token</h3>
+            <pre id="lab-plain-text" class="lab-text placeholder">等待运行</pre>
+            <div id="lab-plain-ids" class="lab-tokens"></div>
+            <footer><span id="lab-plain-count">—</span><small>原 tokenizer 生成</small></footer>
+          </article>
+
+          <article class="lab-card private-card">
+            <header><span>NETWORK · AFTER τ</span><em>实际发送</em></header>
+            <h3>混淆输入</h3>
+            <pre id="lab-private-text" class="lab-text cipher placeholder">等待运行</pre>
+            <div id="lab-private-ids" class="lab-tokens private"></div>
+            <footer><span id="lab-private-count">—</span><small>服务端看到的 token</small></footer>
+          </article>
+
+          <article class="lab-card output-card">
+            <header><span>NETWORK · MODEL OUTPUT</span><em>逐 token 返回</em></header>
+            <h3>混淆输出</h3>
+            <pre id="lab-output-text" class="lab-text cipher placeholder">等待模型首 token</pre>
+            <div id="lab-output-ids" class="lab-tokens output"></div>
+            <footer><span id="lab-output-count">—</span><small>尚未执行 τ⁻¹</small></footer>
+          </article>
+
+          <article class="lab-card answer-card">
+            <header><span>CLIENT · AFTER τ⁻¹</span><em>只在本地出现</em></header>
+            <h3>恢复后的回答</h3>
+            <pre id="lab-answer" class="lab-text answer placeholder">等待模型首 token</pre>
+            <div class="lab-metrics"><span>TTFT <b id="lab-ttft">—</b> ms</span><span>TPOT <b id="lab-tpot">—</b> ms</span></div>
+            <footer><span id="lab-request-id">—</span><small>原 tokenizer 解码</small></footer>
+          </article>
+        </div>
+
+        <details class="payload-inspector">
+          <summary><span>查看模型服务器实际收到的请求载荷</span><small>确认里面没有 prompt、明文 token 或 τ⁻¹</small></summary>
+          <pre id="lab-payload">尚未运行</pre>
+        </details>
+
+        <details class="mapping-inspector">
+          <summary><span>逐 token 对比本次 τ 映射</span><small>只展示本次输入，不公开完整 online key</small></summary>
+          <div class="mapping-list" id="lab-mapping"><p>尚未运行</p></div>
+        </details>
+      </section>
+
+      <section class="section offline-section">
+        <div class="section-title"><span>01</span><div><h2>部署前：一次性离线转换</h2><p>在线推理开始前，先把原模型变成只在私有坐标中工作的 checkpoint。</p></div></div>
+        <div class="offline-flow architecture-card">
+          <div class="offline-source node"><small>输入</small><strong>原始 Qwen checkpoint</strong><code>Wₑ · Attention · FFN · Head</code></div>
+          <div class="arrow"><i></i><span>离线转换器</span></div>
+          <div class="offline-transform node accent"><small>生成密钥并变换权重</small><strong>Π + Noise + P/Q</strong><code>Algorithm 1 / 2</code></div>
+          <div class="split-arrow"><span>分离发布</span></div>
+          <div class="package-stack">
+            <div class="node client-package"><small>只交给客户端</small><strong>online_key</strong><code>τ · τ⁻¹ · special IDs</code></div>
+            <div class="node server-package"><small>只部署到服务器</small><strong>private checkpoint</strong><code>不包含在线逆置换</code></div>
+            <div class="node archive-package"><small>离线归档</small><strong>master key</strong><code>P/Q · seeds · reconstruction</code></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title"><span>02</span><div><h2>在线推理：真实数据流架构图</h2><p>每条箭头表示请求运行时真实发生的一次转换或传输。</p></div></div>
+        <div class="architecture-card online-architecture">
+          <div class="lane trusted-lane">
+            <div class="lane-label"><i></i><span>可信客户端</span><small>浏览器 + 本地 gateway</small></div>
+            <div class="lane-flow">
+              <div class="flow-node"><b>1</b><span>Prompt + 历史</span><code>messages[]</code></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node"><b>2</b><span>Chat Template</span><code>tokenizer()</code></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node optional"><b>3</b><span>可选 M1</span><code>RmDP 扰动</code></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node protected"><b>4</b><span>词表置换</span><code>x̃ = τ(x)</code></div>
+            </div>
+          </div>
+
+          <div class="boundary-row">
+            <span class="boundary-name">HTTPS / token-ID boundary</span>
+            <div class="payload"><small>离开客户端的内容</small><strong>model_id · key_id · private input_ids</strong><code>不含 prompt、明文 IDs、τ⁻¹</code></div>
+          </div>
+
+          <div class="lane server-lane">
+            <div class="lane-label"><i></i><span>混淆模型服务</span><small>只持有 private checkpoint</small></div>
+            <div class="model-pipeline">
+              <div><span>Private Embedding</span><code>ΠWₑP + noise</code></div><b>→</b>
+              <div><span>RMS + Attention</span><code>P/Q · GQA · RoPE</code></div><b>→</b>
+              <div><span>Private FFN</span><code>Gate / Up / Down</code></div><b>→</b>
+              <div><span>Private LM Head</span><code>QWₕΠᵀ + noise</code></div>
+            </div>
+            <div class="server-view"><small>服务器能够观察</small><span>混淆权重</span><span>混淆输入 IDs</span><span>混淆输出 IDs</span><span>长度与时间</span></div>
+          </div>
+
+          <div class="return-boundary"><span>每生成一个 token，立即返回</span><strong>private output_id</strong><i>↑ SSE</i></div>
+
+          <div class="lane recovery-lane">
+            <div class="lane-label"><i></i><span>客户端恢复</span><small>服务端不参与解码</small></div>
+            <div class="lane-flow recovery-flow">
+              <div class="flow-node protected"><b>5</b><span>逆词表置换</span><code>y = τ⁻¹(ỹ)</code></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node"><b>6</b><span>本地解码</span><code>tokenizer.decode</code></div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-node result"><b>7</b><span>自然语言回答</span><code>逐字显示</code></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section step-section">
+        <div class="section-title"><span>03</span><div><h2>分段理解每一层保护</h2><p>选择一个步骤，查看它改变了什么、密钥在哪里、服务端能看到什么。</p></div></div>
+        <div class="step-layout">
+          <div class="step-tabs" role="tablist" aria-label="隐私流程步骤">
+            <button class="active" type="button" data-step="token"><b>1</b><span>输入置换</span></button>
+            <button type="button" data-step="embedding"><b>2</b><span>Embedding / Head</span></button>
+            <button type="button" data-step="hidden"><b>3</b><span>隐藏层坐标</span></button>
+            <button type="button" data-step="inference"><b>4</b><span>私有推理</span></button>
+            <button type="button" data-step="restore"><b>5</b><span>输出恢复</span></button>
+          </div>
+          <div class="step-details">
+            <article class="active" data-panel="token"><p class="step-kicker">CLIENT ONLY</p><h3>真实 token ID 被秘密置换</h3><code class="formula">x̃ᵢ = τ(xᵢ)</code><p>原 tokenizer 与完整对话历史只在可信客户端使用。置换保持序列长度，但改变每一个词表坐标。默认模式是确定性置换；M1 是可选扰动。</p><div class="facts"><span><b>客户端持有</b>τ、τ⁻¹</span><span><b>服务端看到</b>x̃</span><span><b>不发送</b>原文、明文 IDs</span></div></article>
+            <article data-panel="embedding"><p class="step-kicker">OFFLINE TRANSFORMATION</p><h3>输入、输出词表与权重同步变化</h3><code class="formula">W̃ₑ = Π(Wₑ + αₑEₑ)P　·　W̃ₕ = Q(Wₕ + αₕEₕ)Πᵀ</code><p>Embedding 与 LM Head 使用同一个词表置换 Π，并分别加入论文形式的高斯噪声。这样私有输入能进入模型，生成结果也落在同一个私有词表中。</p><div class="facts"><span><b>隐藏</b>词表对应关系</span><span><b>噪声</b>削弱权重匹配</span><span><b>同步</b>输入与输出坐标</span></div></article>
+            <article data-panel="hidden"><p class="step-kicker">COVARIANT COORDINATES</p><h3>P/Q 让隐藏状态在扩维坐标中传播</h3><code class="formula">P ∈ ℝᵈˣᴰ　·　Q ∈ ℝᴰˣᵈ　·　PQ = I</code><p>相邻算子成对吸收 P 与 Q。Attention 同步处理 Q/K/V/O、GQA 与 RoPE；FFN 同步处理 Gate/Up/Down；RMSNorm 使用经过证明的精确度量修正。</p><div class="facts"><span><b>Attention</b>head/block permutation</span><span><b>FFN</b>permutation + scaling</span><span><b>Residual</b>坐标一致</span></div></article>
+            <article data-panel="inference"><p class="step-kicker">MODEL SERVER</p><h3>服务端全程在私有坐标中计算</h3><code class="formula">f̃φ(θ)(τ(x)) → τ(y)</code><p>服务端不加载原始模型，也不持有在线逆置换。Prefill、逐 token decode 与 KV Cache 都保存私有坐标；日志只记录身份、token 数量和耗时。</p><div class="facts"><span><b>请求</b>private input_ids</span><span><b>模型</b>private checkpoint</span><span><b>响应</b>private output_ids</span></div></article>
+            <article data-panel="restore"><p class="step-kicker">CLIENT ONLY</p><h3>每个私有输出 token 到达后立即恢复</h3><code class="formula">yᵢ = τ⁻¹(ỹᵢ)</code><p>SSE 返回私有输出 ID。客户端检查 request ID 和序号，执行逆置换，再用原 tokenizer 增量解码。自然语言答案不会在模型服务器生成或记录。</p><div class="facts"><span><b>流式</b>逐 token 返回</span><span><b>恢复</b>τ⁻¹</span><span><b>展示</b>本地逐字输出</span></div></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section visibility-section">
+        <div class="section-title"><span>04</span><div><h2>谁能看到什么</h2><p>安全边界来自密钥和模型包的分离，而不是把所有内容放在同一台服务器。</p></div></div>
+        <div class="visibility-grid">
+          <article><div class="viewer client-viewer">客户端</div><ul><li>真实 prompt 与对话历史</li><li>原 tokenizer</li><li>τ 与 τ⁻¹</li><li>最终自然语言回答</li></ul></article>
+          <article><div class="viewer network-viewer">网络请求</div><ul><li>model_id / key_id</li><li>混淆 input_ids</li><li>生成参数</li><li>混淆 output_ids</li></ul></article>
+          <article><div class="viewer server-viewer">模型服务器</div><ul><li>混淆 checkpoint</li><li>私有 token 流</li><li>KV Cache 私有坐标</li><li>token 数与耗时</li></ul></article>
+          <article class="blocked"><div class="viewer blocked-viewer">服务器不应持有</div><ul><li>原始模型权重</li><li>真实 prompt</li><li>τ / τ⁻¹</li><li>离线转换种子</li></ul></article>
+        </div>
+        <p class="boundary-disclaimer">该边界表示工程上不把明文和逆置换材料交给模型服务，并通过已实现攻击进行验证；它不等同于对任意恶意服务器的绝对密码学不可恢复声明。</p>
+      </section>
+    </main>
+
+    <footer><span>AloePri · Qwen2.5-0.5B</span><a href="/">进入真实私有对话 →</a></footer>
+    <script src="/assets/privacy.js?v=20260813-public2" defer></script>
+  </body>
+</html>

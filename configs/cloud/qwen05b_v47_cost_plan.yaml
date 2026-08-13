@@ -1,0 +1,53 @@
+schema_version: 1
+currency: CNY
+quote_snapshot: 2026-08-11
+scenarios:
+  rtx4090_full_acceptance:
+    description: RTX 4090 24 GB, driver 580, HF plus vLLM 0.26 and SGLang 0.5.17
+    hourly_rate: "1.80"
+    gpu_count: 1
+    billing_increment_hours: "1.0"
+    contingency_percent: "20"
+    stages:
+      host_and_disk_setup: "0.5"
+      upload_and_sha256: "0.5"
+      core_cuda121_environment: "1.5"
+      cuda13_engine_environments: "2.5"
+      static_tests_and_model_verify: "1.0"
+      formal_privacy_attacks: "9.5"
+      mmlu_ceval_piqa_pairs: "6.0"
+      ifeval_baseline_and_candidate: "8.0"
+      humaneval_baseline_and_candidate: "3.0"
+      product_privacy_and_question_gate: "2.0"
+      balanced_hf_performance: "2.0"
+      vllm_sglang_compatibility: "3.0"
+      final_acceptance_and_download: "1.0"
+  rtx3090_hf_acceptance_only:
+    description: RTX 3090 24 GB, driver 530, HF formal run without the tested CUDA 13 engine stack
+    hourly_rate: "0.88"
+    gpu_count: 1
+    billing_increment_hours: "1.0"
+    contingency_percent: "20"
+    stages:
+      host_and_disk_setup: "0.5"
+      upload_and_sha256: "0.5"
+      core_cuda121_environment: "1.5"
+      static_tests_and_model_verify: "1.0"
+      formal_privacy_attacks: "11.0"
+      mmlu_ceval_piqa_pairs: "8.0"
+      ifeval_baseline_and_candidate: "11.0"
+      humaneval_baseline_and_candidate: "4.0"
+      product_privacy_and_question_gate: "2.5"
+      balanced_hf_performance: "2.5"
+      final_acceptance_and_download: "1.0"
+  rtx4090_engine_compatibility_only:
+    description: RTX 4090 24 GB, driver 580, source upload plus vLLM and SGLang compatibility stages
+    hourly_rate: "1.80"
+    gpu_count: 1
+    billing_increment_hours: "1.0"
+    contingency_percent: "20"
+    stages:
+      host_and_disk_setup: "0.5"
+      source_model_key_upload: "0.5"
+      cuda13_engine_environments: "2.5"
+      vllm_sglang_compatibility: "3.0"

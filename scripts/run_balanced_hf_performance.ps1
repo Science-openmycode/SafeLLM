@@ -7,7 +7,9 @@ param(
   [Parameter(Mandatory=$true)][string]$OutputDir,
   [string]$PythonExe = ".\.venv\Scripts\python.exe",
   [int]$MaxNewTokens = 100,
-  [int]$Warmup = 2
+  [int]$Warmup = 2,
+  [ValidateSet("float32", "bfloat16")][string]$Dtype = "float32",
+  [double]$GpuMemoryFraction = 0.65
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,7 +35,8 @@ foreach ($run in $runs) {
     "--model", $model,
     "--tokenizer", $Tokenizer,
     "--prompts", $Prompts,
-    "--dtype", "bfloat16",
+    "--dtype", $Dtype,
+    "--gpu-memory-fraction", $GpuMemoryFraction,
     "--max-new-tokens", $MaxNewTokens,
     "--warmup", $Warmup,
     "--run-id", $run.Pair,
