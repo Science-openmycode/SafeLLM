@@ -1,6 +1,6 @@
 # AloePri 0.5.0
 
-AloePri把“模型识别、权重私有化改造、密钥拆分、上传部署和本地问答”统一为一个可恢复任务流。0.5.0支持Qwen2/Qwen2.5、DeepSeek-V2/V2.5和DeepSeek-V3架构族；云端部分使用接口级Mock，不代表真实云集群或685B物理执行。
+AloePri把“模型识别、权重私有化改造、密钥拆分、上传部署和本地问答”统一为一个可恢复任务流。0.5.0支持Qwen2/Qwen2.5、DeepSeek-V2/V2.5和DeepSeek-V3架构族；云端部分使用接口级Mock，不代表真实云集群或671B物理执行。
 
 ## 当前状态
 
@@ -8,13 +8,13 @@ AloePri把“模型识别、权重私有化改造、密钥拆分、上传部署�
 |---|---|
 | 版本 | `0.5.0` |
 | 发布状态 | `CODE_COMPLETE_MOCK_CLOUD_PASS` |
-| 自动化测试 | 默认套件`246 passed, 1 skipped`；真实0.5B集成项单独`1 passed` |
+| 自动化测试 | `257 collected`：`256 passed, 1 skipped`；另有当前Qwen/OpenSeek真实checkpoint前向证据 |
 | Ruff / Mypy | PASS |
 | 官方DeepSeek-V3索引 | 91,991张量；missing=0；unknown=0 |
-| 真实Qwen2.5-0.5B | 私有token API、SSE、inverse_tau和错误key测试PASS |
-| OpenSeek-Small-v1-SFT | 保留现有MLA/MoE转换与本地闭环 |
+| 真实Qwen2.5-0.5B | 转换完成；私有next-token经`inverse_tau`恢复为108386，与明文一致 |
+| OpenSeek-Small-v1-SFT | MLA/MoE转换完成；私有next-token 123415恢复为9707，与明文一致 |
 | 真实云平台 | `NOT_TESTED` |
-| 真实DeepSeek-V3 685B转换 | `NOT_EXECUTED` |
+| 真实DeepSeek-V3 671B转换 | `NOT_EXECUTED` |
 
 ## 安装与检查
 
@@ -75,6 +75,8 @@ uv run python scripts\audit_conversion_plan.py `
 - [密钥备份与换钥](docs/KEY_BACKUP_ROTATION_0.5.0.md)
 - [故障恢复手册](docs/RECOVERY_0.5.0.md)
 - [真实云端待验收清单](docs/REAL_CLOUD_ACCEPTANCE_TODO_0.5.0.md)
+- [0.5.0验收报告](docs/ACCEPTANCE_0.5.0.md)
+- [0.5.0可视化验收报告](docs/AloePri_0.5.0_Mock_Cloud_Acceptance.html)
 - [版本说明](docs/VERSION_0.5.0.md)
 
 旧Qwen、OpenSeek、论文复现、实验数据和错误推导文档仍保留在`docs/`与`artifacts/`中；0.5.0的Mock结果不得用于替代真实精度、攻击或云端性能数据。

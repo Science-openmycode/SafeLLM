@@ -7,7 +7,7 @@
 - `uv`；
 - CUDA机器建议驱动支持当前PyTorch CUDA 12.8构建；
 - 本地转换最低目标为RTX 3060 6GB、11GiB可用系统内存和50GiB临时空间；
-- DeepSeek-V3完整权重本身约689GB，50GiB仅指转换过程额外临时空间，不含源和目标模型容量。
+- DeepSeek-V3完整权重目录约689GB，50GiB仅指转换过程额外临时空间，不含源模型、目标模型和对象存储容量。
 
 ## 安装
 
@@ -48,4 +48,4 @@ uv run mypy src
 uv run pytest -q
 ```
 
-0.5.0默认发布基线：`246 passed, 1 skipped`。跳过项需要`ALOEPRI_RUN_MODEL_TESTS=1`才启动；该真实0.5B集成项已另行在CPU执行并得到`1 passed`。
+0.5.0当前发布基线：`257 collected`，`256 passed, 1 skipped`。跳过项需要`ALOEPRI_RUN_MODEL_TESTS=1`才启动；当前Qwen和OpenSeek工件另有独立真实checkpoint前向证据，路径见`docs/ACCEPTANCE_0.5.0.md`。

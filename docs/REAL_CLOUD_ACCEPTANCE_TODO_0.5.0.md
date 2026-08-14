@@ -19,7 +19,7 @@
 
 ## DeepSeek-V3集群
 
-- 真实685B权重转换完成；
+- 真实DeepSeek-V3 671B权重转换完成；
 - 多节点SGLang加载；
 - TP/PP/EP拓扑；
 - InfiniBand/RDMA；

@@ -6,7 +6,7 @@
 版本：0.5.0
 发布状态：CODE_COMPLETE_MOCK_CLOUD_PASS
 真实云状态：NOT_TESTED
-真实DeepSeek-V3 685B状态：NOT_EXECUTED
+真实DeepSeek-V3 671B状态：NOT_EXECUTED
 ```
 
 ## 新增
@@ -29,7 +29,9 @@
 
 - Ruff：PASS；
 - Mypy strict：PASS；
-- Pytest默认套件：246 passed，1 skipped；真实0.5B集成项单独1 passed；
+- Pytest默认套件：256 passed，1 skipped；
+- Qwen2.5-0.5B当前checkpoint前向：私有token 6287经逆置换恢复108386，与明文next-token一致；
+- OpenSeek-Small-v1-SFT当前checkpoint前向：私有token 123415经逆置换恢复9707，与明文next-token一致；
 - Tiny DeepSeek-V3 FP8＋MTP真实Safetensors转换：PASS；
 - 官方固定commit索引：91,991张量，MTP 1,564，missing=0，unknown=0；
 - 官方静态计划门禁：PASS；
@@ -41,7 +43,7 @@
 
 ## 限制
 
-- 未真实转换完整685B；
+- 未真实转换完整671B；
 - 未真实启动多节点SGLang；
 - Mock token输出不是模型回答；
 - 真实0.5B集成测试默认跳过以避免自动占用GPU；当前工件已在CPU单独复测通过；
