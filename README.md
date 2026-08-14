@@ -1,4 +1,32 @@
-# AloePri 0.5.0
+# 隐变智模 1.0
+
+隐变智模在 Windows 本地生成密钥和改造模型权重，再通过 SSH 把私有模型部署到 Ubuntu GPU 服务器。问答时，本地程序完成 Chat Template、分词、Token 置换和回答恢复；服务器只接收私有 Token ID。
+
+## 1.0 入口
+
+```powershell
+yinbian models recommend
+yinbian models download --model qwen2.5-0.5b-instruct --metadata-only
+yinbian models download --model qwen2.5-0.5b-instruct --accept-license
+yinbian servers add --name gpu --host 203.0.113.10 --auth-type private_key --private-key C:\Keys\id_ed25519
+yinbian servers check <server-id> --trust-host-key
+yinbian plan create --model qwen2.5-0.5b-instruct --mode direct-deploy --device auto --server <server-id>
+yinbian convert --plan artifacts\plans\qwen05b.yaml --accept-license
+yinbian tunnel open <deployment-id>
+yinbian chat stream --deployment <deployment-id> --prompt "介绍一下隐变智模"
+```
+
+桌面入口为 `隐变智模部署.exe` 和 `隐变智模对话.exe`。两个程序与 `yinbian.exe` 使用同一状态库。安装、部署和故障处理见 [1.0 安装与运行手册](docs/YINBIAN_1.0_INSTALLATION.md)。
+
+`aloepri` 命令和内部 `src/aloepri` 包名保留一个兼容周期。旧模型、旧密钥和科研证据无需改名。
+
+## 1.0 发布状态
+
+当前仓库包含 1.0 代码与未签名 Windows 开发安装包。自动化结果为 277 通过、1 个真实模型集成测试跳过；正式外发仍需要完成干净 Windows 10/11 安装、受控 Ubuntu GPU 部署、固定 digest 运行镜像、代码签名和发布证据归档。未签名构建只能内部测试。
+
+---
+
+## 0.5.0 兼容记录
 
 AloePri把“模型识别、权重私有化改造、密钥拆分、上传部署和本地问答”统一为一个可恢复任务流。0.5.0支持Qwen2/Qwen2.5、DeepSeek-V2/V2.5和DeepSeek-V3架构族；云端部分使用接口级Mock，不代表真实云集群或671B物理执行。
 
