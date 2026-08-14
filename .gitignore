@@ -4,6 +4,7 @@
 .mypy_cache/
 .ruff_cache/
 .codex_review/
+.superpowers/
 .ssh-askpass.cmd
 .tmp-qwen05b-final-extract/
 __pycache__/
