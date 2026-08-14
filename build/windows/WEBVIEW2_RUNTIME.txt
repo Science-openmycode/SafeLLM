@@ -1,0 +1,5 @@
+version=151.0.4129.86
+architecture=x64
+cab_sha256=B62FC1E38544D038646173917AD158C8FB3D2C1C4B3C3EA5225E07D5D92FAC68
+source=https://developer.microsoft.com/en-us/microsoft-edge/webview2
+msedgewebview2_signature=Microsoft Corporation

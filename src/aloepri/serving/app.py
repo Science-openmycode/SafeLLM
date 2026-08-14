@@ -36,10 +36,11 @@ def create_app(
     *,
     bearer_token: str | None = None,
     max_request_bytes: int = 1_000_000,
+    enable_text_compat: bool = False,
 ) -> FastAPI:
     if max_request_bytes < 1:
         raise ValueError("max_request_bytes must be positive")
-    app = FastAPI(title="AloePri private inference", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Yinbian private inference", docs_url=None, redoc_url=None)
 
     @app.middleware("http")
     async def security_boundary(request: Request, call_next: object) -> object:
@@ -110,7 +111,6 @@ def create_app(
             seed=request.seed,
         )
 
-    @app.post("/v1/private/generate-text", response_model=GenerateTextResponse)
     def generate_text(request: GenerateTextRequest) -> GenerateTextResponse:
         try:
             response = runtime.generate(token_request(request))
@@ -167,7 +167,6 @@ def create_app(
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
-    @app.post("/v1/private/generate-text/stream")
     def stream_text(request: GenerateTextRequest) -> StreamingResponse:
         try:
             decoded_request = token_request(request)
@@ -199,5 +198,18 @@ def create_app(
             audit_event(LOGGER, "stream_text_complete", request_id=request_id)
 
         return StreamingResponse(text_events(), media_type="text/event-stream")
+
+    if enable_text_compat:
+        app.add_api_route(
+            "/v1/private/generate-text",
+            generate_text,
+            methods=["POST"],
+            response_model=GenerateTextResponse,
+        )
+        app.add_api_route(
+            "/v1/private/generate-text/stream",
+            stream_text,
+            methods=["POST"],
+        )
 
     return app

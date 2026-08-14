@@ -93,89 +93,12 @@ wheels = [
 ]
 
 [[package]]
-name = "aloepri"
-version = "0.5.0"
-source = { editable = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "blobfile" },
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "orjson" },
-    { name = "psutil" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "tiktoken" },
-    { name = "torch", version = "2.9.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
-    { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "transformers" },
-    { name = "typer" },
-    { name = "uvicorn" },
-]
-
-[package.optional-dependencies]
-eval = [
-    { name = "datasets" },
-    { name = "evaluate" },
-    { name = "immutabledict" },
-    { name = "langdetect" },
-    { name = "lm-eval" },
-    { name = "nltk" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "hypothesis" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "types-psutil" },
-    { name = "types-pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = "==1.14.0" },
-    { name = "blobfile", specifier = "==3.1.0" },
-    { name = "cryptography", specifier = ">=45,<47" },
-    { name = "datasets", marker = "extra == 'eval'", specifier = "==5.0.0" },
-    { name = "evaluate", marker = "extra == 'eval'", specifier = "==0.4.6" },
-    { name = "fastapi", specifier = ">=0.116,<1" },
-    { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "huggingface-hub", specifier = "==1.19.0" },
-    { name = "immutabledict", marker = "extra == 'eval'", specifier = ">=4,<5" },
-    { name = "langdetect", marker = "extra == 'eval'", specifier = ">=1.0.9,<2" },
-    { name = "lm-eval", marker = "extra == 'eval'", specifier = ">=0.4.9,<0.5" },
-    { name = "nltk", marker = "extra == 'eval'", specifier = "==3.9.2" },
-    { name = "numpy", specifier = ">=2.0,<3" },
-    { name = "orjson", specifier = ">=3.10,<4" },
-    { name = "psutil", specifier = ">=7,<8" },
-    { name = "pydantic", specifier = ">=2.10,<3" },
-    { name = "pyyaml", specifier = ">=6.0,<7" },
-    { name = "safetensors", specifier = ">=0.5,<1" },
-    { name = "tiktoken", specifier = "==0.11.0" },
-    { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = ">=2.4,<3" },
-    { name = "torch", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=2.4,<3", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "transformers", specifier = "==5.12.0" },
-    { name = "typer", specifier = ">=0.16,<1" },
-    { name = "uvicorn", specifier = ">=0.35,<1" },
-]
-provides-extras = ["eval"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "hypothesis", specifier = ">=6.130,<7" },
-    { name = "mypy", specifier = ">=1.15,<2" },
-    { name = "pytest", specifier = ">=8.3,<9" },
-    { name = "pytest-cov", specifier = ">=6,<7" },
-    { name = "ruff", specifier = ">=0.11,<1" },
-    { name = "types-psutil", specifier = ">=7,<8" },
-    { name = "types-pyyaml", specifier = ">=6.0,<7" },
+name = "altgraph"
+version = "0.17.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/f8/97fdf103f38fed6792a1601dbc16cc8aac56e7459a9fff08c812d8ae177a/altgraph-0.17.5.tar.gz", hash = "sha256:c87b395dd12fabde9c99573a9749d67da8d29ef9de0125c7f536699b4a9bc9e7", size = 48428, upload-time = "2025-11-21T20:35:50.583Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/ba/000a1996d4308bc65120167c21241a3b205464a2e0b58deda26ae8ac21d1/altgraph-0.17.5-py2.py3-none-any.whl", hash = "sha256:f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597", size = 21228, upload-time = "2025-11-21T20:35:49.444Z" },
 ]
 
 [[package]]
@@ -210,6 +133,19 @@ wheels = [
 ]
 
 [[package]]
+name = "asyncssh"
+version = "2.23.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a4/95/212d3d394f2a6ccb3f95056d3b9a7ce13c2f58503cbd6a38d037ef48cb13/asyncssh-2.23.1.tar.gz", hash = "sha256:d9dc3bc0206f3e4b5d80d1c0e6a24af2b4ad4beb556884c41fb2ad1c7ca3f44f", size = 542883, upload-time = "2026-06-07T14:15:18.832Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/94/9aa81bde40627af70388d634152e7c53e7533788e662b8093047501a1473/asyncssh-2.23.1-py3-none-any.whl", hash = "sha256:f68e55476d41253d785bcac9a90834ae5fdea0f417bd6d7182608bda248de88e", size = 376054, upload-time = "2026-06-07T14:15:17.375Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -231,6 +167,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f0/6d/2e7567da75ddbb24fe979f52284b708da349d67a41042635af36071a5a6b/blobfile-3.1.0.tar.gz", hash = "sha256:d45b6b1fa3b0920732314c23ddbdb4f494ca12f787c2b6eb6bba6faa51382671", size = 77229, upload-time = "2025-09-06T00:36:15.583Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/77/a7/51af11120d75af2828f8eede0b13a4caff650d708ac50e62d000aefe1ffb/blobfile-3.1.0-py3-none-any.whl", hash = "sha256:2b4c5e766ebb7dfa20e4990cf6ec3d2106bdc91d632fb9377f170a234c5a5c6a", size = 75741, upload-time = "2025-09-06T00:36:14.11Z" },
+]
+
+[[package]]
+name = "bottle"
+version = "0.13.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/71/cca6167c06d00c81375fd668719df245864076d284f7cb46a694cbeb5454/bottle-0.13.4.tar.gz", hash = "sha256:787e78327e12b227938de02248333d788cfe45987edca735f8f88e03472c3f47", size = 98717, upload-time = "2025-06-15T10:08:59.439Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/f6/b55ec74cfe68c6584163faa311503c20b0da4c09883a41e8e00d6726c954/bottle-0.13.4-py2.py3-none-any.whl", hash = "sha256:045684fbd2764eac9cdeb824861d1551d113e8b683d8d26e296898d3dd99a12e", size = 103807, upload-time = "2025-06-15T10:08:57.691Z" },
 ]
 
 [[package]]
@@ -307,6 +252,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
+]
+
+[[package]]
+name = "clr-loader"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e4/46/7eea92b6aa2d68af78e049cbecec5f757f1aad44ecdecdc16bbad7eead51/clr_loader-0.3.1.tar.gz", hash = "sha256:2e073e9aaf49d1ae2f56ecba27987ad5fb68be4bcd9dd34a5bed8f0e4e128366", size = 86805, upload-time = "2026-04-18T17:49:44.287Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/da/ec1a6e36624000b6df0dd61183c42342ee5814c073315e802cadaad04d2f/clr_loader-0.3.1-py3-none-any.whl", hash = "sha256:cbad189de20d202a7d621956b0fc38049e13c9bf7ca2923441eff725cd121aa1", size = 55730, upload-time = "2026-04-18T17:49:42.99Z" },
 ]
 
 [[package]]
@@ -769,6 +726,18 @@ wheels = [
 ]
 
 [[package]]
+name = "macholib"
+version = "1.16.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "altgraph" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/10/2f/97589876ea967487978071c9042518d28b958d87b17dceb7cdc1d881f963/macholib-1.16.4.tar.gz", hash = "sha256:f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362", size = 59427, upload-time = "2025-11-22T08:28:38.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/d1/a9f36f8ecdf0fb7c9b1e78c8d7af12b8c8754e74851ac7b94a8305540fc7/macholib-1.16.4-py2.py3-none-any.whl", hash = "sha256:da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea", size = 38117, upload-time = "2025-11-22T08:28:36.939Z" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1193,6 +1162,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pefile"
+version = "2024.8.26"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/4f/2750f7f6f025a1507cd3b7218691671eecfd0bbebebe8b39aa0fe1d360b8/pefile-2024.8.26.tar.gz", hash = "sha256:3ff6c5d8b43e8c37bb6e6dd5085658d658a7a0bdcd20b6a07b1fcfc1c4e9d632", size = 76008, upload-time = "2024-08-26T20:58:38.155Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl", hash = "sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f", size = 74766, upload-time = "2024-08-26T21:01:02.632Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1235,6 +1213,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c6/eb/6af6685077d22e8b33358d3c548e3282706a0b3cd85044ffba4e5dd08e3b/propcache-0.5.2-cp311-cp311-win_arm64.whl", hash = "sha256:54adaa85a22078d1e306304a40984dc5be99d599bf3dc0a24dc98f7daeab89ab", size = 38381, upload-time = "2026-05-08T21:00:09.692Z" },
     { url = "https://files.pythonhosted.org/packages/3a/ed/1cdcab6ba3d6ab7feca11fc14f0eeea80755bb53ef4e892079f31b10a25f/propcache-0.5.2-py3-none-any.whl", hash = "sha256:be1ddfcbb376e3de5d2e2db1d58d6d67463e6b4f9f040c000de8e300295465fe", size = 14036, upload-time = "2026-05-08T21:02:10.673Z" },
 ]
+
+[[package]]
+name = "proxy-tools"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/cf/77d3e19b7fabd03895caca7857ef51e4c409e0ca6b37ee6e9f7daa50b642/proxy_tools-0.1.0.tar.gz", hash = "sha256:ccb3751f529c047e2d8a58440d86b205303cf0fe8146f784d1cbcd94f0a28010", size = 2978, upload-time = "2014-05-05T21:02:24.606Z" }
 
 [[package]]
 name = "psutil"
@@ -1358,6 +1342,46 @@ wheels = [
 ]
 
 [[package]]
+name = "pyinstaller"
+version = "6.22.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "altgraph" },
+    { name = "macholib", marker = "sys_platform == 'darwin'" },
+    { name = "packaging" },
+    { name = "pefile", marker = "sys_platform == 'win32'" },
+    { name = "pyinstaller-hooks-contrib" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32'" },
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/03/669d06735cf57d7e2e5dfc3c2e1643554b34c559eff21449c58172ca0335/pyinstaller-6.22.0.tar.gz", hash = "sha256:8b0166fff4583b374bbe7fa044bf03ddc33cab0f792a665807d96048e63f060e", size = 4072247, upload-time = "2026-08-08T13:34:52.418Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/c7/abe1ca65ab55e615961df1b978b997129a8488ab9dc0931dc7664bdc4c99/pyinstaller-6.22.0-py3-none-macosx_10_13_universal2.whl", hash = "sha256:d7c7c5b149f7f9b37585b37e2376f774038b6a5633ba34db0de2698f75391e13", size = 1058495, upload-time = "2026-08-08T13:33:46.963Z" },
+    { url = "https://files.pythonhosted.org/packages/17/d0/b7874153bd034fcfe0f47abe1140b49d436e262a3ad18cd52ba86be6358c/pyinstaller-6.22.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:f92f78a9c463b884d57f90c7459c0cb263ccd26a499356bbfac7a5f41fd5b93f", size = 752753, upload-time = "2026-08-08T13:33:51.247Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/45/810aee0ad8c137667f2685783cde14c8517357ba08e1c54599ba77547578/pyinstaller-6.22.0-py3-none-manylinux2014_i686.whl", hash = "sha256:f6c750c8ae999cc5520ddbce4263ac3ece96db04ba359ef20acacd81bccc201b", size = 765543, upload-time = "2026-08-08T13:33:55.44Z" },
+    { url = "https://files.pythonhosted.org/packages/96/36/24af3e59ca090ae1c0ba9daaeaa10125e99b767df5e3ab06384b516ff1e7/pyinstaller-6.22.0-py3-none-manylinux2014_ppc64le.whl", hash = "sha256:0a20c37761851100f422ec261f513f46d8e57100ea22886b9ff7a6c346104bd8", size = 764130, upload-time = "2026-08-08T13:33:59.623Z" },
+    { url = "https://files.pythonhosted.org/packages/45/17/92cb544e29ad867bcf5a06efd63dcf93af7c662f2121333b99409615b50b/pyinstaller-6.22.0-py3-none-manylinux2014_s390x.whl", hash = "sha256:e6859e80b9c7dccb8a1687c5ed4644a722b370c2aa13e8a9ca5ebf5f9bb842ce", size = 759221, upload-time = "2026-08-08T13:34:03.687Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/aa/3733a6f590075c8a6678072480ee22f7b0237f7952b2c1521d5aafa15514/pyinstaller-6.22.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:b07ac9fd1d661ae4d0af6752c3941e4e5576a16cfe7e2d6504a32d57e17d0acc", size = 759087, upload-time = "2026-08-08T13:34:08.012Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/b0/300a00798920d5e8e52f71fb0ceb2955a71c24814eaf6c086aeb95944049/pyinstaller-6.22.0-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:7885de3c830356b0990b27fe164f2b008fb4a18560bac884cf33985f61469f44", size = 758597, upload-time = "2026-08-08T13:34:12.164Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/ba/3c5f8cbe3686f8080eadadee10a0da4c7af3eaff72998165d5f5174f5a40/pyinstaller-6.22.0-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:81dc305c16510c1f9ead6d115b66f381e3d3453ecb96653099c51aa3050420d1", size = 758149, upload-time = "2026-08-08T13:34:16.381Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/66/f7de05fa65b141cbd83bf61f56730b3f5249820a4de026e11feadffca3c8/pyinstaller-6.22.0-py3-none-win32.whl", hash = "sha256:6f527c1345d5010682587aebc2f0c1cc34a9b1f200424969c7bfda723cddc074", size = 1341311, upload-time = "2026-08-08T13:34:23.386Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/a7/0ea60e966a0da82961ecba80177627fae28fdda5127993281db479ee46fc/pyinstaller-6.22.0-py3-none-win_amd64.whl", hash = "sha256:6e5f3656de100954bf5db25536c43e097e46d482843a96d03a0852bf266e4853", size = 1403046, upload-time = "2026-08-08T13:34:30.352Z" },
+    { url = "https://files.pythonhosted.org/packages/47/9a/71fbfdeffc60107c8256436ea62eb39dd35266164f721091242924363747/pyinstaller-6.22.0-py3-none-win_arm64.whl", hash = "sha256:b1233da63926be213cdfbfbb314735bc7762136ed772b1082e1b0a2d7ed896b5", size = 1350592, upload-time = "2026-08-08T13:34:36.532Z" },
+]
+
+[[package]]
+name = "pyinstaller-hooks-contrib"
+version = "2026.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/5b/c9fe0db5e83ee1c39b2258fa21d23b15e1a60786b6c5990ee5074ead8bb6/pyinstaller_hooks_contrib-2026.6.tar.gz", hash = "sha256:bef5002c32f4f50bd55b005da12cff64eca8783e7eaf86a06a62410164bab725", size = 173354, upload-time = "2026-06-08T22:37:16.152Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/31/f2d7343d8ed5f7c4678377886f6ce533e6eaaa131b252ce950114c2a7efa/pyinstaller_hooks_contrib-2026.6-py3-none-any.whl", hash = "sha256:fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3", size = 457159, upload-time = "2026-06-08T22:37:14.722Z" },
+]
+
+[[package]]
 name = "pytablewriter"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1418,12 +1442,49 @@ wheels = [
 ]
 
 [[package]]
+name = "pythonnet"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "clr-loader" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/57/da1992e44663b71365c6e842c8d7fa453d4ec45fb99a68cfee5b7e944d3c/pythonnet-3.1.0.tar.gz", hash = "sha256:7b34c382905d10a371509ffafd64cae0416305c28817738a9cd138336f4e9991", size = 250599, upload-time = "2026-05-23T20:30:21.578Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/4b/52414f442624d2589f5374a48c08d5ae94f24bea67fc13a20a752884e5b7/pythonnet-3.1.0-cp310.cp311.cp312.cp313.cp314-none-any.whl", hash = "sha256:698dd88edc198819ad63b624a6ebe76208c7b46e4fe13626f65e484f0358d6ba", size = 217578, upload-time = "2026-05-23T20:30:19.527Z" },
+    { url = "https://files.pythonhosted.org/packages/db/67/031124fdcb937c266a3265118525bbf6dc13b8c79786d6a7290aecb6e7bb/pythonnet-3.1.0-cp310.cp311.cp312.cp313.cp314-none-win32.win_amd64.whl", hash = "sha256:7bdd4de03df3547a48122a3989265c8b31d5be0d19dadffa009eec7df8085e0b", size = 1644898, upload-time = "2026-05-23T20:30:16.213Z" },
+]
+
+[[package]]
 name = "pytz"
 version = "2026.3.post1"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fb/48/fb042503b6ca6cd271261dc559fd6432f7d8c713153e9ec5c591af4dfc1c/pytz-2026.3.post1.tar.gz", hash = "sha256:2211d3fcf9a797d3405cac96ac7f61d80e6a644f72a3309607282fe8a2010c5d", size = 319745, upload-time = "2026-07-25T15:12:07.385Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0f/7b/39c34ca613b0b198cb866466651b26b045e2009864c5183c979a3b83f383/pytz-2026.3.post1-py2.py3-none-any.whl", hash = "sha256:dd95840dd199baea12d9cc096a1d452caa6596a1c1e4b5f3dbd1541855d5e815", size = 508283, upload-time = "2026-07-25T15:12:05.782Z" },
+]
+
+[[package]]
+name = "pywebview"
+version = "6.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bottle" },
+    { name = "proxy-tools" },
+    { name = "pythonnet" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/59/4a/05307135dafba67778669d194bd1a3822a7685ec9ee8a6d7e70856c1a551/pywebview-6.2.1.tar.gz", hash = "sha256:71b7136752e40824655304d938efb62014218d1a90bd8e87e1cbdb1ce9c466af", size = 513126, upload-time = "2026-04-15T09:02:16.595Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/25/9491695c22c4842c5b3903b4dc172e0eecf67a27c0af34a71512c9b76a0a/pywebview-6.2.1-py3-none-any.whl", hash = "sha256:9d07275f53894ab4d5e2e0e996227193e7187dec276d9b624dccbce029216b46", size = 525463, upload-time = "2026-04-15T09:02:10.186Z" },
+]
+
+[[package]]
+name = "pywin32-ctypes"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/9f/01a1a99704853cb63f253eea009390c88e7131c67e66a0a02099a8c917cb/pywin32-ctypes-0.2.3.tar.gz", hash = "sha256:d162dc04946d704503b2edc4d55f3dba5c1d539ead017afa00142c38b9885755", size = 29471, upload-time = "2024-08-14T10:15:34.626Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/3d/8161f7711c017e01ac9f008dfddd9410dff3674334c233bde66e7ba65bbf/pywin32_ctypes-0.2.3-py3-none-any.whl", hash = "sha256:8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8", size = 30756, upload-time = "2024-08-14T10:15:33.187Z" },
 ]
 
 [[package]]
@@ -2053,4 +2114,96 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f5/46/d7bd3a8859d47dcfaffd7127af7076032a7da278a9a02e17b5f37bfb6712/yarl-1.24.5-cp311-cp311-win_amd64.whl", hash = "sha256:f4239bbec5a3577ddb49e4b50aeb32d8e5792098262ae2f63723f916a29b1a25", size = 97544, upload-time = "2026-07-20T02:05:21.523Z" },
     { url = "https://files.pythonhosted.org/packages/01/69/c1bfd21e32c638974ea2c542a0b8c53ef1fa9eff336020f5d014f9503ff2/yarl-1.24.5-cp311-cp311-win_arm64.whl", hash = "sha256:3ac6aff147deb9c09461b2d4bbdf6256831198f5d8a23f5d37138213090b6d8a", size = 93359, upload-time = "2026-07-20T02:05:23.493Z" },
     { url = "https://files.pythonhosted.org/packages/61/02/962c1cbfc401a30c1d034dc67ff395f64b52302c6d62de556c1fca99acc0/yarl-1.24.5-py3-none-any.whl", hash = "sha256:a33700d13d9b7d84fd10947b09ff69fb9a792e519c8cb9764a3ca70baa6c23a7", size = 58612, upload-time = "2026-07-20T02:07:43.461Z" },
+]
+
+[[package]]
+name = "yinbian-zhimo"
+version = "1.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "asyncssh" },
+    { name = "blobfile" },
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "orjson" },
+    { name = "psutil" },
+    { name = "pydantic" },
+    { name = "pywebview", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "tiktoken" },
+    { name = "torch", version = "2.9.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
+    { name = "torch", version = "2.9.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "transformers" },
+    { name = "typer" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+eval = [
+    { name = "datasets" },
+    { name = "evaluate" },
+    { name = "immutabledict" },
+    { name = "langdetect" },
+    { name = "lm-eval" },
+    { name = "nltk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "pyinstaller" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "types-psutil" },
+    { name = "types-pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = "==1.14.0" },
+    { name = "asyncssh", specifier = ">=2.20,<3" },
+    { name = "blobfile", specifier = "==3.1.0" },
+    { name = "cryptography", specifier = ">=45,<47" },
+    { name = "datasets", marker = "extra == 'eval'", specifier = "==5.0.0" },
+    { name = "evaluate", marker = "extra == 'eval'", specifier = "==0.4.6" },
+    { name = "fastapi", specifier = ">=0.116,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "huggingface-hub", specifier = "==1.19.0" },
+    { name = "immutabledict", marker = "extra == 'eval'", specifier = ">=4,<5" },
+    { name = "langdetect", marker = "extra == 'eval'", specifier = ">=1.0.9,<2" },
+    { name = "lm-eval", marker = "extra == 'eval'", specifier = ">=0.4.9,<0.5" },
+    { name = "nltk", marker = "extra == 'eval'", specifier = "==3.9.2" },
+    { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "orjson", specifier = ">=3.10,<4" },
+    { name = "psutil", specifier = ">=7,<8" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pywebview", marker = "sys_platform == 'win32'", specifier = ">=5.4,<7" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "safetensors", specifier = ">=0.5,<1" },
+    { name = "tiktoken", specifier = "==0.11.0" },
+    { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = ">=2.4,<3" },
+    { name = "torch", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=2.4,<3", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "transformers", specifier = "==5.12.0" },
+    { name = "typer", specifier = ">=0.16,<1" },
+    { name = "uvicorn", specifier = ">=0.35,<1" },
+]
+provides-extras = ["eval"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hypothesis", specifier = ">=6.130,<7" },
+    { name = "mypy", specifier = ">=1.15,<2" },
+    { name = "pyinstaller", specifier = ">=6.12,<7" },
+    { name = "pytest", specifier = ">=8.3,<9" },
+    { name = "pytest-cov", specifier = ">=6,<7" },
+    { name = "ruff", specifier = ">=0.11,<1" },
+    { name = "types-psutil", specifier = ">=7,<8" },
+    { name = "types-pyyaml", specifier = ">=6.0,<7" },
 ]

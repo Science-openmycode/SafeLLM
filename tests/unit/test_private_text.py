@@ -53,9 +53,22 @@ def test_private_id_text_roundtrip_and_tamper_rejection() -> None:
         raise AssertionError("tampered private text must be rejected")
 
 
+def test_private_text_compatibility_endpoint_is_disabled_by_default() -> None:
+    client = TestClient(create_app(_Runtime()))
+    response = client.post(
+        "/v1/private/generate-text",
+        json={
+            "model_id": "model",
+            "key_id": "key",
+            "private_text": encode_private_id_text([1]),
+        },
+    )
+    assert response.status_code == 404
+
+
 def test_private_text_http_and_sse_are_tokenizer_free_and_reversible() -> None:
     runtime = _Runtime()
-    client = TestClient(create_app(runtime))
+    client = TestClient(create_app(runtime, enable_text_compat=True))
     body = {
         "model_id": "model",
         "key_id": "key",
@@ -82,7 +95,7 @@ def test_private_text_http_and_sse_are_tokenizer_free_and_reversible() -> None:
 
 
 def test_private_text_endpoint_rejects_noncanonical_or_corrupt_text() -> None:
-    client = TestClient(create_app(_Runtime()))
+    client = TestClient(create_app(_Runtime(), enable_text_compat=True))
     response = client.post(
         "/v1/private/generate-text",
         json={"model_id": "model", "key_id": "key", "private_text": "not-token-text"},

@@ -1,0 +1,19 @@
+schema_version: 1
+catalog_id: openseek-small-v1-sft
+display_name: OpenSeek-Small-v1-SFT
+repo_id: BAAI/OpenSeek-Small-v1-SFT
+revision: 1515c184e6fe4a91e6061be513a79d607e8787cb
+adapter_id: deepseek_v3
+status: validated-conversion
+max_stage: convert
+source:
+  format: safetensors
+  dtype: bfloat16
+  expected_bytes: 3178063824
+conversion:
+  output_dtype: bfloat16
+  expansion_h: 0
+  tile_mib: 256
+runtime:
+  preferred: hf
+  fallback: null

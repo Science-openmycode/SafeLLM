@@ -1,0 +1,36 @@
+.form select {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.form h2,
+.form-actions {
+  grid-column: 1 / -1;
+}
+
+.form-actions,
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.card .primary {
+  margin-top: 14px;
+}
+
+.consent {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.consent input {
+  width: auto;
+}

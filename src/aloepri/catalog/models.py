@@ -58,6 +58,10 @@ class ModelCatalogEntry:
     conversion: dict[str, Any]
     runtime: dict[str, Any]
     license: str
+    max_stage: str = "inspect"
+    visibility: str = "advanced"
+    source_url: str | None = None
+    last_validated_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

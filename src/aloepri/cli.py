@@ -5,26 +5,49 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 import uvicorn
 import yaml
 
-from aloepri.client.sdk import PrivateInferenceClient
-from aloepri.conversion.executor import execute_conversion_plan
-from aloepri.demo.app import DemoGateway, create_demo_app
-from aloepri.jobs.store import JobState, JobStore
-from aloepri.packaging import build_server_package, inspect_server_package, split_key_package
-from aloepri.planning import ConversionPlan
-from aloepri.privacy.rmdp import calculate_rmdp_budget, expected_m1_change_rate
-from aloepri.product_cli import register_plan_job, register_product_commands
-from aloepri.release import build_product_release, inspect_product_release
-from aloepri.serving.app import create_app
-from aloepri.serving.hf_runtime import PrivateHFRuntime
+if TYPE_CHECKING:
+    from aloepri.client.sdk import PrivateInferenceClient
 
-app = typer.Typer(no_args_is_help=True, add_completion=False)
+from aloepri.product_cli import register_plan_job, register_product_commands
+
+app = typer.Typer(
+    no_args_is_help=True,
+    add_completion=False,
+    help="隐变智模：本地模型改造、私有部署和Token-ID问答工具。",
+)
 register_product_commands(app)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from aloepri import __version__
+
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main_options(
+    version: Annotated[
+        bool | None,
+        typer.Option("--version", callback=_version_callback, is_eager=True),
+    ] = None,
+) -> None:
+    """隐变智模命令行。"""
+
+
+def legacy_main() -> None:
+    typer.echo(
+        "提示：aloepri 命令将在下一个兼容周期移除，请改用 yinbian。",
+        err=True,
+    )
+    app(prog_name="aloepri")
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -123,12 +146,115 @@ def convert(
     execute: Annotated[
         bool, typer.Option("--execute/--schedule-only")
     ] = True,
+    password: Annotated[str | None, typer.Option("--password", hide_input=True)] = None,
+    private_key_passphrase: Annotated[
+        str | None, typer.Option("--private-key-passphrase", hide_input=True)
+    ] = None,
+    accept_license: Annotated[bool, typer.Option("--accept-license")] = False,
 ) -> None:
     """Convert through a product plan, or use the compatible legacy Qwen config."""
+
+    from aloepri.conversion.executor import execute_conversion_plan
+    from aloepri.jobs.store import JobState, JobStore
+    from aloepri.packaging import split_key_package
+    from aloepri.planning import ConversionPlan
 
     if plan is not None:
         if config is not None:
             raise typer.BadParameter("use either --plan or --config, not both")
+        current_plan = ConversionPlan.load(plan)
+        if current_plan.schema_version >= 2:
+            if current_plan.source.get("type") != "huggingface":
+                legacy_store = JobStore(
+                    Path(os.environ["YINBIAN_STATE_DB"])
+                    if os.environ.get("YINBIAN_STATE_DB")
+                    else (
+                        Path(os.environ["ALOEPRI_STATE_DB"])
+                        if os.environ.get("ALOEPRI_STATE_DB")
+                        else None
+                    )
+                )
+                try:
+                    legacy_store.get(current_plan.job_id)
+                except KeyError:
+                    legacy_store.create(current_plan.job_id, current_plan.to_dict())
+                if JobState(legacy_store.get(current_plan.job_id)["state"]) == JobState.CREATED:
+                    legacy_store.transition(current_plan.job_id, JobState.PREFLIGHT)
+                if execute:
+                    execute_conversion_plan(current_plan, legacy_store)
+                typer.echo(
+                    json.dumps(
+                        legacy_store.get(current_plan.job_id), ensure_ascii=False, indent=2
+                    )
+                )
+                return
+            from aloepri.cloud.ssh import SSHProfile
+            from aloepri.product.pipeline import (
+                ProgressiveConversionPipeline,
+                SSHDirectorySink,
+            )
+            from aloepri.product.state import ProductJobStatus, ProductStore
+
+            state_path = os.environ.get("YINBIAN_STATE_DB") or os.environ.get(
+                "ALOEPRI_STATE_DB"
+            )
+            product = ProductStore(None if state_path is None else Path(state_path))
+            pipeline = ProgressiveConversionPipeline(product)
+            mode = str(current_plan.output.get("deployment_mode", "local-only"))
+            if not execute:
+                try:
+                    product.create_job(
+                        current_plan.job_id,
+                        {
+                            "schema_version": 2,
+                            "mode": mode,
+                            "conversion": current_plan.to_dict(),
+                        },
+                    )
+                    product.transition_job(
+                        current_plan.job_id, ProductJobStatus.AWAITING_CONFIRMATION
+                    )
+                except Exception as error:
+                    if "UNIQUE constraint" not in str(error):
+                        raise
+                typer.echo(
+                    json.dumps(product.get_job(current_plan.job_id), ensure_ascii=False, indent=2)
+                )
+                return
+            sink = None
+            if mode == "direct-deploy":
+                server_id = current_plan.output.get("server_id")
+                if not server_id:
+                    raise typer.BadParameter("direct-deploy plan has no server_id")
+                server = product.get_server(str(server_id))
+                private_key = server.get("private_key_path")
+                profile = SSHProfile(
+                    host=str(server["host"]),
+                    port=int(server["port"]),
+                    username=str(server["username"]),
+                    password=password,
+                    private_key=None if not private_key else Path(str(private_key)),
+                    private_key_passphrase=private_key_passphrase,
+                    host_key_fingerprint=server.get("host_key_fingerprint"),
+                    sudo_mode=str(server["sudo_mode"]),
+                    model_root=str(server["model_root"]),
+                )
+                sink = SSHDirectorySink(
+                    profile,
+                    f"{profile.model_root}/uploads/{current_plan.job_id}",
+                )
+            result = pipeline.run_catalog_qwen(
+                current_plan,
+                mode=mode,
+                token=os.environ.get("YINBIAN_HF_TOKEN"),
+                sink=sink,
+                clean_source_after_commit=bool(
+                    current_plan.security.get("clean_source_after_commit", False)
+                ),
+                accept_license=accept_license,
+            )
+            typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+            return
         job = register_plan_job(plan)
         store = JobStore(
             Path(os.environ["ALOEPRI_STATE_DB"])
@@ -139,7 +265,7 @@ def convert(
         if state == JobState.CREATED:
             store.transition(job["job_id"], JobState.PREFLIGHT)
         if execute:
-            execute_conversion_plan(ConversionPlan.load(plan), store)
+            execute_conversion_plan(current_plan, store)
         typer.echo(json.dumps(store.get(job["job_id"]), ensure_ascii=False, indent=2))
         return
     if config is None:
@@ -284,6 +410,9 @@ def serve(
 ) -> None:
     """Start the token-ID-only HF inference service."""
 
+    from aloepri.serving.app import create_app
+    from aloepri.serving.hf_runtime import PrivateHFRuntime
+
     cfg = load_config(config)
     server = cfg.get("server", {})
     host = str(server.get("host", "127.0.0.1"))
@@ -312,6 +441,7 @@ def serve(
         runtime,
         bearer_token=bearer_token,
         max_request_bytes=int(server.get("max_request_bytes", 1_000_000)),
+        enable_text_compat=bool(server.get("enable_text_compat", False)),
     )
     uvicorn.run(
         api,
@@ -323,8 +453,8 @@ def serve(
     )
 
 
-@app.command()
-def chat(
+@app.command("chat-direct", hidden=True)
+def chat_direct(
     server: Annotated[str, typer.Option("--server")],
     key_dir: Annotated[Path, typer.Option("--key-dir", exists=True, file_okay=False)],
     tokenizer: Annotated[Path, typer.Option("--tokenizer", exists=True, file_okay=False)] = Path(
@@ -340,6 +470,9 @@ def chat(
 ) -> None:
     """Run an interactive client; plaintext and conversation history remain local."""
 
+    from aloepri.client.sdk import PrivateInferenceClient
+    from aloepri.privacy.rmdp import expected_m1_change_rate
+
     if privacy_mode == "rmdp" and epsilon1 is None:
         raise typer.BadParameter("--epsilon1 is required for rmdp mode")
     client = PrivateInferenceClient.from_directories(
@@ -350,7 +483,7 @@ def chat(
     )
     history: list[dict[str, str]] = []
     last_stats: dict[str, object] | None = None
-    typer.echo("AloePri chat: /clear /stats /privacy /quit")
+    typer.echo("隐变智模对话：/clear /stats /privacy /quit")
     try:
         while True:
             prompt = typer.prompt("you")
@@ -409,6 +542,229 @@ def chat(
         client.close()
 
 
+chat_app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
+
+
+@chat_app.callback()
+def chat_callback(
+    context: typer.Context,
+    server: Annotated[str | None, typer.Option("--server")] = None,
+    key_dir: Annotated[Path | None, typer.Option("--key-dir")] = None,
+    tokenizer: Annotated[Path, typer.Option("--tokenizer")] = Path(
+        "data/models/qwen2.5-0.5b"
+    ),
+    privacy_mode: Annotated[str, typer.Option("--privacy-mode")] = "permutation",
+    epsilon1: Annotated[float | None, typer.Option("--epsilon1")] = None,
+    bearer_token_env: Annotated[str, typer.Option("--bearer-token-env")] = (
+        "YINBIAN_BEARER_TOKEN"
+    ),
+    max_new_tokens: Annotated[int, typer.Option("--max-new-tokens")] = 128,
+    assume_yes: Annotated[bool, typer.Option("--yes")] = False,
+) -> None:
+    if context.invoked_subcommand is not None:
+        return
+    if server is None or key_dir is None:
+        raise typer.BadParameter(
+            "use a chat subcommand, or provide --server and --key-dir for direct mode"
+        )
+    chat_direct(
+        server,
+        key_dir,
+        tokenizer,
+        privacy_mode,
+        epsilon1,
+        bearer_token_env,
+        max_new_tokens,
+        assume_yes,
+    )
+
+
+def _deployment_client(
+    deployment_id: str,
+    *,
+    password: str | None,
+    private_key_passphrase: str | None,
+) -> tuple[PrivateInferenceClient, object | None]:
+    from aloepri.client.sdk import PrivateInferenceClient
+    from aloepri.cloud.ssh import SSHProfile
+    from aloepri.cloud.tunnel import ManagedTunnel
+    from aloepri.keys.vault import CredentialVault
+    from aloepri.product.paths import product_paths
+    from aloepri.product.state import DeploymentStatus, ProductStore
+
+    state_path = os.environ.get("YINBIAN_STATE_DB") or os.environ.get("ALOEPRI_STATE_DB")
+    store = ProductStore(None if state_path is None else Path(state_path))
+    deployment = store.get_deployment(deployment_id)
+    if deployment["status"] != DeploymentStatus.HEALTHY.value:
+        raise typer.BadParameter("deployment is not healthy")
+    metadata = deployment["metadata"]
+    endpoint = metadata.get("local_server_url")
+    tunnel = None
+    if endpoint is None:
+        server = store.get_server(str(deployment["server_id"]))
+        private_key = server.get("private_key_path")
+        profile = SSHProfile(
+            host=str(server["host"]),
+            port=int(server["port"]),
+            username=str(server["username"]),
+            password=password,
+            private_key=None if not private_key else Path(str(private_key)),
+            private_key_passphrase=private_key_passphrase,
+            host_key_fingerprint=server.get("host_key_fingerprint"),
+            sudo_mode=str(server["sudo_mode"]),
+            model_root=str(server["model_root"]),
+        )
+        tunnel = ManagedTunnel(
+            deployment_id, profile, remote_port=int(deployment["remote_port"])
+        )
+        status = tunnel.open()
+        if status.local_port is None:
+            raise typer.BadParameter("SSH tunnel did not expose a local port")
+        endpoint = f"http://127.0.0.1:{status.local_port}"
+    tokenizer_dir = metadata.get("tokenizer_dir")
+    online_key_dir = metadata.get("online_key_dir")
+    if not tokenizer_dir or not online_key_dir:
+        if tunnel is not None:
+            tunnel.close()
+        raise typer.BadParameter("deployment has no local tokenizer or online key path")
+    bearer = None
+    credential_id = metadata.get("bearer_credential_id")
+    if credential_id:
+        bearer = CredentialVault(product_paths().credentials).get(str(credential_id))["secret"]
+    client = PrivateInferenceClient.from_directories(
+        base_url=str(endpoint),
+        tokenizer_dir=Path(str(tokenizer_dir)),
+        key_dir=Path(str(online_key_dir)),
+        bearer_token=bearer,
+    )
+    return client, tunnel
+
+
+@chat_app.command("deployments")
+def chat_deployments() -> None:
+    from aloepri.product.state import ProductStore
+
+    state_path = os.environ.get("YINBIAN_STATE_DB") or os.environ.get("ALOEPRI_STATE_DB")
+    store = ProductStore(None if state_path is None else Path(state_path))
+    typer.echo(
+        json.dumps(store.list_deployments(healthy_only=True), ensure_ascii=False, indent=2)
+    )
+
+
+def _chat_once(
+    deployment_id: str,
+    prompt: str,
+    *,
+    stream: bool,
+    password: str | None,
+    private_key_passphrase: str | None,
+    history: list[dict[str, str]] | None = None,
+    max_new_tokens: int = 128,
+) -> str:
+    client, tunnel = _deployment_client(
+        deployment_id,
+        password=password,
+        private_key_passphrase=private_key_passphrase,
+    )
+    messages = [*(history or []), {"role": "user", "content": prompt}]
+    try:
+        if not stream:
+            response = client.chat(messages, max_new_tokens=max_new_tokens)
+            typer.echo(response.text)
+            return response.text
+        answer = ""
+        rendered = ""
+        for chunk in client.stream_chat(messages, max_new_tokens=max_new_tokens):
+            answer = chunk.accumulated_text
+            delta = answer[len(rendered) :] if answer.startswith(rendered) else answer
+            typer.echo(delta, nl=False)
+            rendered = answer
+        typer.echo()
+        return answer
+    finally:
+        client.close()
+        if tunnel is not None:
+            tunnel.close()  # type: ignore[attr-defined]
+
+
+@chat_app.command("send")
+def chat_send(
+    deployment_id: Annotated[str, typer.Option("--deployment")],
+    prompt: Annotated[str, typer.Option("--prompt")],
+    password: Annotated[str | None, typer.Option("--password", hide_input=True)] = None,
+    private_key_passphrase: Annotated[
+        str | None, typer.Option("--private-key-passphrase", hide_input=True)
+    ] = None,
+    max_new_tokens: Annotated[int, typer.Option("--max-new-tokens")] = 128,
+) -> None:
+    _chat_once(
+        deployment_id,
+        prompt,
+        stream=False,
+        password=password,
+        private_key_passphrase=private_key_passphrase,
+        max_new_tokens=max_new_tokens,
+    )
+
+
+@chat_app.command("stream")
+def chat_stream(
+    deployment_id: Annotated[str, typer.Option("--deployment")],
+    prompt: Annotated[str, typer.Option("--prompt")],
+    password: Annotated[str | None, typer.Option("--password", hide_input=True)] = None,
+    private_key_passphrase: Annotated[
+        str | None, typer.Option("--private-key-passphrase", hide_input=True)
+    ] = None,
+    max_new_tokens: Annotated[int, typer.Option("--max-new-tokens")] = 128,
+) -> None:
+    _chat_once(
+        deployment_id,
+        prompt,
+        stream=True,
+        password=password,
+        private_key_passphrase=private_key_passphrase,
+        max_new_tokens=max_new_tokens,
+    )
+
+
+@chat_app.command("interactive")
+def chat_interactive(
+    deployment_id: Annotated[str, typer.Option("--deployment")],
+    password: Annotated[str | None, typer.Option("--password", hide_input=True)] = None,
+    private_key_passphrase: Annotated[
+        str | None, typer.Option("--private-key-passphrase", hide_input=True)
+    ] = None,
+    max_new_tokens: Annotated[int, typer.Option("--max-new-tokens")] = 128,
+) -> None:
+    history: list[dict[str, str]] = []
+    typer.echo("隐变智模多轮对话：/clear /quit")
+    while True:
+        prompt = typer.prompt("you")
+        if prompt == "/quit":
+            return
+        if prompt == "/clear":
+            history.clear()
+            continue
+        answer = _chat_once(
+            deployment_id,
+            prompt,
+            stream=True,
+            password=password,
+            private_key_passphrase=private_key_passphrase,
+            history=history,
+            max_new_tokens=max_new_tokens,
+        )
+        history.extend(
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": answer},
+            ]
+        )
+
+
+app.add_typer(chat_app, name="chat")
+
+
 @app.command()
 def demo(
     server: Annotated[str, typer.Option("--server")] = "http://127.0.0.1:8000",
@@ -426,6 +782,8 @@ def demo(
     ] = "ALOEPRI_DEMO_SESSION_SECRET",
 ) -> None:
     """Start the trusted localhost visualization client."""
+
+    from aloepri.demo.app import DemoGateway, create_demo_app
 
     gateway = DemoGateway(
         model_server=server,
@@ -449,6 +807,8 @@ def demo(
 def inspect_package(
     server_package: Annotated[Path, typer.Option("--server-package", exists=True)],
 ) -> None:
+    from aloepri.packaging import inspect_server_package
+
     result = inspect_server_package(server_package)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
     if not result["pass"]:
@@ -462,6 +822,8 @@ def build_server(
     ],
     output: Annotated[Path, typer.Option("--output")],
 ) -> None:
+    from aloepri.packaging import build_server_package
+
     build_server_package(source_checkpoint, output)
     typer.echo(f"sanitized server package: {output}")
 
@@ -472,6 +834,8 @@ def split_key(
     online_dir: Annotated[Path, typer.Option("--online-dir")],
     offline_dir: Annotated[Path, typer.Option("--offline-dir")],
 ) -> None:
+    from aloepri.packaging import split_key_package
+
     split_key_package(source_key_dir, online_dir, offline_dir)
     typer.echo(f"online key: {online_dir}")
     typer.echo(f"offline master key: {offline_dir}")
@@ -486,6 +850,8 @@ def build_release(
     report: Annotated[list[Path] | None, typer.Option("--report", exists=True)] = None,
     evidence: Annotated[list[Path] | None, typer.Option("--evidence", exists=True)] = None,
 ) -> None:
+    from aloepri.release import build_product_release
+
     result = build_product_release(
         output=output,
         server_package=server_package,
@@ -501,6 +867,8 @@ def build_release(
 def inspect_release(
     release: Annotated[Path, typer.Option("--release", exists=True, file_okay=False)],
 ) -> None:
+    from aloepri.release import inspect_product_release
+
     result = inspect_product_release(release)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
     if not result["pass"]:
@@ -520,6 +888,8 @@ def rmdp_budget(
     head_top1: Annotated[float, typer.Option("--head-top1")],
     head_top2: Annotated[float, typer.Option("--head-top2")],
 ) -> None:
+    from aloepri.privacy.rmdp import calculate_rmdp_budget
+
     result = calculate_rmdp_budget(
         epsilon1=epsilon1,
         vocab_size=vocab_size,

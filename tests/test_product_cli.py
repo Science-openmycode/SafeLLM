@@ -124,6 +124,22 @@ def test_convert_requires_exactly_one_input() -> None:
     assert "one of --plan or --config is required" in result.output
 
 
+def test_yinbian_product_command_surface(tmp_path: Path) -> None:
+    environment = {"YINBIAN_STATE_DB": str(tmp_path / "state.db")}
+    runner = CliRunner()
+    for arguments in (
+        ["keys", "list"],
+        ["servers", "list"],
+        ["deploy", "list"],
+        ["chat", "deployments"],
+    ):
+        result = runner.invoke(app, arguments, env=environment)
+        assert result.exit_code == 0, f"{arguments}: {result.output}"
+    result = runner.invoke(app, ["tunnel", "status", "missing"], env=environment)
+    assert result.exit_code == 0, result.output
+    assert '"connected": false' in result.output
+
+
 def test_completed_local_conversion_waits_for_explicit_upload(
     tmp_path: Path, monkeypatch: object
 ) -> None:

@@ -168,6 +168,19 @@ def _run_qwen(plan: ConversionPlan, output: Path, source: Path | None = None) ->
     }
 
 
+def convert_qwen_checkpoint(
+    plan: ConversionPlan, output: Path, source: Path
+) -> dict[str, Any]:
+    """Public compatibility entry used by the product pipeline.
+
+    Qwen2.5-0.5B is a single weight shard, so its formal direct-deploy path can
+    convert that shard as one bounded checkpoint unit while the larger-family
+    adapters continue to use tensor-tile conversion.
+    """
+
+    return _run_qwen(plan, output, source)
+
+
 def _run_deepseek(
     plan: ConversionPlan,
     output: Path,
@@ -242,10 +255,12 @@ def _run_deepseek(
 def _encrypt_offline_if_required(plan: ConversionPlan, offline_directory: Path) -> None:
     if not bool(plan.security.get("offline_key_encrypted", True)):
         return
-    password = os.environ.get("ALOEPRI_OFFLINE_KEY_PASSWORD")
+    password = os.environ.get("YINBIAN_OFFLINE_KEY_PASSWORD") or os.environ.get(
+        "ALOEPRI_OFFLINE_KEY_PASSWORD"
+    )
     if not password:
         raise ValueError(
-            "ALOEPRI_OFFLINE_KEY_PASSWORD is required when offline_key_encrypted=true"
+            "YINBIAN_OFFLINE_KEY_PASSWORD is required when offline_key_encrypted=true"
         )
     encrypt_offline_key_directory(offline_directory, password)
 

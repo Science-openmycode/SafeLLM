@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Literal
 
-import psutil  # type: ignore[import-untyped]
+import psutil
 import torch
 
 

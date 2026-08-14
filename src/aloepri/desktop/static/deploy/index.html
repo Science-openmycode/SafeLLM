@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>隐变智模部署</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/enhancements.css">
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><span>隐</span><div><b>隐变智模</b><small>部署控制台</small></div></div>
+      <nav>
+        <button class="active" data-page="dashboard">总览</button>
+        <button data-page="models">模型</button>
+        <button data-page="jobs">转换任务</button>
+        <button data-page="servers">服务器</button>
+        <button data-page="deployments">云端部署</button>
+        <button data-page="keys">密钥与备份</button>
+      </nav>
+      <div class="boundary"><i></i><div><b>本地控制端</b><small>密钥不会上传到模型服务器</small></div></div>
+    </aside>
+    <main>
+      <header><div><h1 id="title">部署总览</h1><p id="subtitle">选择模型、完成本地改造并部署到您的服务器</p></div><button class="primary" id="refresh">刷新状态</button></header>
+      <section id="dashboard" class="page active"><div id="metrics" class="metrics"></div><div class="panel"><h2>最近任务</h2><div id="recent-jobs" class="empty">暂无任务</div></div></section>
+      <section id="models" class="page"><div class="section-head"><div><h2>模型目录</h2><p>只有完成对应门禁的模型才能进入正式部署。</p></div></div><div id="model-grid" class="grid"></div></section>
+      <section id="jobs" class="page">
+        <form id="deploy-wizard" class="panel form" hidden>
+          <h2>新建改造任务</h2>
+          <input name="model" id="wizard-model" placeholder="模型目录 ID" required>
+          <input name="destination" value="data/private/yinbian-model" placeholder="本地私有模型目录" required>
+          <select name="mode"><option value="direct-deploy">改造、上传并自动部署</option><option value="local-only">仅在本地改造</option></select>
+          <select name="device"><option value="auto">自动选择 CPU/GPU</option><option value="cuda">GPU 优先</option><option value="cpu">仅 CPU</option></select>
+          <select name="server_id" id="wizard-server"><option value="">不选择服务器</option></select>
+          <input name="password" type="password" placeholder="SSH 密码（不保存）">
+          <label class="consent"><input name="accept_license" type="checkbox" required> 我已查看模型许可证，并同意该固定版本的使用条款</label>
+          <div class="form-actions"><button type="button" id="cancel-wizard">取消</button><button class="primary">确认并开始</button></div>
+        </form>
+        <div class="panel"><div class="section-head"><h2>转换任务</h2><button class="primary" id="new-job">新建任务</button></div><div id="job-list" class="empty">暂无任务</div></div>
+      </section>
+      <section id="servers" class="page"><div class="section-head"><div><h2>服务器</h2><p>支持Ubuntu 22.04、NVIDIA 525+和SSH。</p></div><button class="primary" id="show-server-form">添加服务器</button></div><form id="server-form" class="panel form" hidden><input name="display_name" placeholder="显示名称" required><input name="host" placeholder="主机地址" required><input name="port" type="number" value="22"><input name="username" value="root"><input name="private_key_path" placeholder="SSH私钥路径"><button class="primary">保存</button></form><div id="server-list" class="grid"></div></section>
+      <section id="deployments" class="page"><div class="panel"><h2>云端部署</h2><p>转换完成后，可通过命令行或这里管理服务器中的版本。只有健康部署会进入对话程序。</p><div id="deployment-list" class="empty">只有健康部署会进入对话程序</div></div></section>
+      <section id="keys" class="page">
+        <div class="panel"><h2>密钥与备份</h2><p>在线密钥由 Windows 当前用户保护；跨电脑迁移请使用独立备份口令导出。</p><div class="notice">忘记备份口令后无法绕过或找回。</div></div>
+        <form id="key-backup-form" class="panel form"><h2>创建便携备份</h2><input name="source" placeholder="待备份密钥目录" required><input name="output" placeholder="输出文件，例如 D:\backup.ybkey" required><input name="password" type="password" minlength="12" placeholder="备份口令（至少12位）" required><input name="password_confirmation" type="password" minlength="12" placeholder="再次输入备份口令" required><button class="primary">创建备份</button></form>
+        <form id="key-restore-form" class="panel form"><h2>恢复便携备份</h2><input name="input" placeholder=".ybkey 备份文件" required><input name="destination" placeholder="恢复目录" required><input name="password" type="password" minlength="12" placeholder="备份口令" required><button class="primary">恢复</button></form>
+      </section>
+    </main>
+  </div>
+  <div id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
