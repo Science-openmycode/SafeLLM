@@ -32,12 +32,20 @@ def test_mock_object_store_resumes_failed_multipart_upload(tmp_path: Path) -> No
     store = MockObjectStore(tmp_path / "objects", fail_part_once=2)
     with pytest.raises(OSError, match="part 2"):
         store.upload_file(source, "s3://mock/model.bin", part_size=1024)
-    result = store.upload_file(source, "s3://mock/model.bin", part_size=1024)
+    # A fresh process/object must resume the durable multipart state.
+    result = MockObjectStore(tmp_path / "objects").upload_file(
+        source, "s3://mock/model.bin", part_size=1024
+    )
     assert result["environment"] == "mock-cloud"
     assert result["real_cloud_validated"] is False
     assert result["bytes"] == source.stat().st_size
     assert len(result["parts"]) == 5
     assert store.object_metadata("s3://mock/model.bin")["sha256"] == result["sha256"]
+    downloaded = store.download_prefix("s3://mock", tmp_path / "downloaded")
+    assert [path.relative_to(tmp_path / "downloaded").as_posix() for path in downloaded] == [
+        "model.bin"
+    ]
+    assert downloaded[0].read_bytes() == source.read_bytes()
     with pytest.raises(ValueError, match="unsafe path"):
         store.upload_file(source, "s3://mock/../../escape.bin", part_size=1024)
 
@@ -57,6 +65,7 @@ def test_mock_cluster_private_token_stream_and_blue_green_rollback() -> None:
     first = cluster.deploy(_spec("model-v1"))
     assert cluster.status(first) == ClusterStatus.HEALTHY
     second = cluster.deploy(_spec("model-v2"))
+    assert cluster.status(first) == ClusterStatus.STOPPED
     tokens_a = list(
         cluster.stream_private_tokens(
             second,

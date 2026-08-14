@@ -31,13 +31,17 @@ def test_offline_key_directory_replaces_plaintext_and_rebuilds_manifest(tmp_path
     directory = tmp_path / "offline"
     directory.mkdir()
     (directory / "offline_master_key.safetensors").write_bytes(b"secret key material")
+    (directory / "layer-000-key.safetensors").write_bytes(b"layer secret")
     (directory / "key.json").write_text(
         json.dumps({"vocab_file": "offline_master_key.safetensors"}), encoding="utf-8"
     )
     encrypted = encrypt_offline_key_directory(directory, "strong password")
     assert encrypted.is_file()
     assert not (directory / "offline_master_key.safetensors").exists()
+    assert not list(directory.glob("*.safetensors"))
+    assert (directory / "layer-000-key.aloepri-key").is_file()
     metadata = json.loads((directory / "key.json").read_text(encoding="utf-8"))
     assert metadata["encrypted"] is True
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["package_type"] == "encrypted_offline_master_key"
+    assert manifest["plaintext_safetensors_remaining"] == 0

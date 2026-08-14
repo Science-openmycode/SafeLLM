@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from typer.testing import CliRunner
 
 from aloepri.cli import app
 from aloepri.conversion import executor
-from aloepri.jobs.store import JobStore
+from aloepri.jobs.store import JobState, JobStore
 from aloepri.planning import ConversionPlan
 
 
@@ -34,6 +35,23 @@ def _tiny_qwen(path: Path) -> None:
             "lm_head.weight": torch.zeros(4, 2),
         },
         path / "model.safetensors",
+    )
+
+
+def _write_server_manifest(path: Path) -> None:
+    files = []
+    for item in sorted(path.iterdir()):
+        if item.is_file() and item.name != "aloepri_manifest.json":
+            files.append(
+                {
+                    "path": item.name,
+                    "bytes": item.stat().st_size,
+                    "sha256": hashlib.sha256(item.read_bytes()).hexdigest(),
+                }
+            )
+    (path / "aloepri_manifest.json").write_text(
+        json.dumps({"metadata": {"schema_version": 1}, "files": files}),
+        encoding="utf-8",
     )
 
 
@@ -65,12 +83,34 @@ def test_product_cli_plan_job_upload_and_mock_deploy(tmp_path: Path) -> None:
         app, ["convert", "--plan", str(plan_path), "--schedule-only"], env=environment
     )
     assert result.exit_code == 0, result.output
-    assert '"state": "CONVERTING"' in result.output
+    assert '"state": "PREFLIGHT"' in result.output
+    rejected = runner.invoke(
+        app, ["upload", plan.job_id, "--cloud-profile", "mock"], env=environment
+    )
+    assert rejected.exit_code != 0
+    assert "cannot upload" in rejected.output
+    private = tmp_path / "private"
+    private.mkdir()
+    package = private / "model.safetensors"
+    save_file({"tau": torch.arange(4)}, package)
+    _write_server_manifest(private)
+    store = JobStore(tmp_path / "state.db")
+    store.transition(plan.job_id, JobState.CONVERTING)
+    store.transition(plan.job_id, JobState.UPLOADING)
+    secret_rejected = runner.invoke(
+        app, ["upload", plan.job_id, "--cloud-profile", "mock"], env=environment
+    )
+    assert secret_rejected.exit_code != 0
+    assert "secret scan" in secret_rejected.output
+    package.unlink()
+    save_file({"private.weight": torch.zeros(1)}, package)
+    _write_server_manifest(private)
     result = runner.invoke(
         app, ["upload", plan.job_id, "--cloud-profile", "mock"], env=environment
     )
     assert result.exit_code == 0, result.output
     assert '"environment": "mock-cloud"' in result.output
+    assert (tmp_path / "mock-cloud" / "objects" / "mock" / "jobs").is_dir()
     result = runner.invoke(
         app, ["deploy", plan.job_id, "--cloud-profile", "mock"], env=environment
     )
@@ -96,8 +136,9 @@ def test_completed_local_conversion_waits_for_explicit_upload(
         output={"type": "local", "uri": str(tmp_path / "private")},
     )
 
-    def fake_run(current: ConversionPlan, output: Path) -> dict[str, str]:
+    def fake_run(current: ConversionPlan, output: Path, source: Path) -> dict[str, str]:
         assert current is plan
+        assert source == tmp_path / "source"
         return {"output": str(output)}
 
     monkeypatch.setattr(executor, "_run_qwen", fake_run)  # type: ignore[attr-defined]
