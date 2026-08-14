@@ -54,6 +54,10 @@ class Qwen2FamilyAdapter(ModelFamilyAdapter):
         self, config: Mapping[str, Any], inventory: TensorInventory
     ) -> CoverageReport:
         expected = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
+        optional = set(_GLOBAL_OPTIONAL)
+        if bool(config.get("tie_word_embeddings", False)):
+            expected.remove("lm_head.weight")
+            optional.add("lm_head.weight")
         for layer in range(int(config["num_hidden_layers"])):
             prefix = f"model.layers.{layer}"
             expected.update(
@@ -72,7 +76,6 @@ class Qwen2FamilyAdapter(ModelFamilyAdapter):
                     f"{prefix}.mlp.down_proj.weight",
                 }
             )
-        optional = set(_GLOBAL_OPTIONAL)
         if not bool(config.get("attention_bias", True)):
             for name in tuple(expected):
                 if name.endswith("_proj.bias"):
@@ -138,6 +141,19 @@ def _deepseek_layer_names(
     return names
 
 
+def _replace_individual_experts_with_fused(
+    expected: set[str], inventory: TensorInventory, layer: int
+) -> None:
+    prefix = f"model.layers.{layer}.mlp.experts"
+    gate_up = f"{prefix}.gate_up_proj"
+    down = f"{prefix}.down_proj"
+    if {gate_up, down}.issubset(inventory.names):
+        expected.difference_update(
+            name for name in tuple(expected) if name.startswith(f"{prefix}.")
+        )
+        expected.update({gate_up, down})
+
+
 class DeepSeekV2FamilyAdapter(ModelFamilyAdapter):
     adapter_id = "deepseek_v2"
 
@@ -160,6 +176,7 @@ class DeepSeekV2FamilyAdapter(ModelFamilyAdapter):
         expected = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
         for layer in range(int(config["num_hidden_layers"])):
             expected.update(_deepseek_layer_names(config, layer))
+            _replace_individual_experts_with_fused(expected, inventory, layer)
         optional = set(_GLOBAL_OPTIONAL)
         optional.update(
             name.replace(".mlp.gate.weight", ".mlp.gate.e_score_correction_bias")
@@ -205,6 +222,7 @@ class DeepSeekV3FamilyAdapter(DeepSeekV2FamilyAdapter):
         layers = int(config["num_hidden_layers"])
         for layer in range(layers):
             expected.update(_deepseek_layer_names(config, layer))
+            _replace_individual_experts_with_fused(expected, inventory, layer)
         for offset in range(int(config.get("num_nextn_predict_layers") or 0)):
             layer = layers + offset
             prefix = f"model.layers.{layer}"
@@ -219,6 +237,7 @@ class DeepSeekV3FamilyAdapter(DeepSeekV2FamilyAdapter):
                 }
             )
             expected.update(_deepseek_layer_names(config, layer, force_moe=True))
+            _replace_individual_experts_with_fused(expected, inventory, layer)
         optional = set(_GLOBAL_OPTIONAL)
         optional.update(
             name.replace(".mlp.gate.weight", ".mlp.gate.e_score_correction_bias")

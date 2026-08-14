@@ -1,0 +1,13 @@
+schema_version: 1
+model_id: qwen05b-v050
+key_id: key-9f07161c
+server:
+  host: 127.0.0.1
+  port: 8000
+  device: cuda
+  dtype: float32
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_BEARER_TOKEN
+  tls_terminated_by_proxy: true

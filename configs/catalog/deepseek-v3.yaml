@@ -1,0 +1,16 @@
+schema_version: 1
+catalog_id: deepseek-v3
+repo_id: deepseek-ai/DeepSeek-V3
+revision: bb399fea3bbfbea55d71cb018e12cdfb6b215179
+adapter_id: deepseek_v3
+source:
+  format: safetensors
+  dtype: fp8_e4m3fn
+  weight_block_size: [128, 128]
+conversion:
+  output_dtype: fp8_e4m3fn
+  expansion_h: 128
+  tile_mib: 256
+runtime:
+  preferred: sglang
+  fallback: null

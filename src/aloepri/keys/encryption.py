@@ -99,12 +99,17 @@ def decrypt_offline_key(source: Path, destination: Path, password: str) -> dict[
 
 
 def encrypt_offline_key_directory(directory: Path, password: str) -> Path:
-    source = directory / "offline_master_key.safetensors"
-    if not source.is_file():
-        raise FileNotFoundError(f"offline master key is missing: {source}")
-    destination = directory / "offline_master_key.aloepri-key"
-    encrypt_offline_key(source, destination, password)
-    source.unlink()
+    sources = sorted(directory.glob("*.safetensors"))
+    master = directory / "offline_master_key.safetensors"
+    if master not in sources:
+        raise FileNotFoundError(f"offline master key is missing: {master}")
+    encrypted_files: dict[str, str] = {}
+    for source in sources:
+        destination = source.with_suffix(".aloepri-key")
+        encrypt_offline_key(source, destination, password)
+        encrypted_files[source.name] = destination.name
+        source.unlink()
+    destination = directory / encrypted_files[master.name]
     key_path = directory / "key.json"
     if key_path.is_file():
         metadata = json.loads(key_path.read_text(encoding="utf-8"))
@@ -114,6 +119,7 @@ def encrypt_offline_key_directory(directory: Path, password: str) -> Path:
         metadata["encrypted"] = True
         metadata["cipher"] = "AES-256-GCM"
         metadata["kdf"] = "scrypt"
+        metadata["encrypted_files"] = encrypted_files
         key_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     files = []
     for path in sorted(directory.iterdir()):
@@ -124,6 +130,8 @@ def encrypt_offline_key_directory(directory: Path, password: str) -> Path:
     manifest = {
         "schema_version": 1,
         "package_type": "encrypted_offline_master_key",
+        "plaintext_safetensors_remaining": 0,
+        "encrypted_files": encrypted_files,
         "files": files,
     }
     (directory / "manifest.json").write_text(

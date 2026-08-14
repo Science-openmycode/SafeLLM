@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -13,10 +12,12 @@ import yaml
 
 from aloepri.adapters.deepseek_plan import build_deepseek_v3_static_plan
 from aloepri.adapters.registry import default_adapter_registry
+from aloepri.catalog.download import find_catalog_entry
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.catalog.registry import builtin_catalog
 from aloepri.jobs.store import JobState, JobStore
-from aloepri.planning import ConversionPlan, build_local_plan
+from aloepri.planning import ConversionPlan, build_catalog_plan, build_local_plan
+from aloepri.workflow import MockCloudWorkflow
 
 models_app = typer.Typer(no_args_is_help=True)
 jobs_app = typer.Typer(no_args_is_help=True)
@@ -48,9 +49,7 @@ def models_recommend() -> None:
 
 @models_app.command("inspect")
 def models_inspect(
-    model: Annotated[
-        Path | None, typer.Option("--model", exists=True, file_okay=False)
-    ] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
     model_fixture: Annotated[
         Path | None, typer.Option("--model-fixture", exists=True, file_okay=False)
     ] = None,
@@ -75,7 +74,23 @@ def models_inspect(
         return
     if model is None:
         raise typer.BadParameter("one of --model or --model-fixture is required")
-    config, inventory = inspect_local_checkpoint(model)
+    model_path = Path(model)
+    if not model_path.is_dir():
+        try:
+            entry = find_catalog_entry(model)
+        except KeyError as error:
+            raise typer.BadParameter(str(error)) from error
+        _echo(
+            {
+                "status": "SUPPORTED",
+                "adapter_id": entry.adapter_id,
+                "catalog": entry.to_dict(),
+                "coverage_basis": "catalog-pinned; revalidated after download",
+                "remote_code_executed": False,
+            }
+        )
+        return
+    config, inventory = inspect_local_checkpoint(model_path)
     registry = default_adapter_registry()
     match = registry.detect(config, inventory)
     coverage = (
@@ -102,14 +117,40 @@ def models_inspect(
 
 
 def doctor_command(
-    model: Annotated[Path, typer.Option("--model", exists=True, file_okay=False)],
+    model: Annotated[str, typer.Option("--model")],
 ) -> None:
-    config, inventory = inspect_local_checkpoint(model)
+    model_path = Path(model)
+    if not model_path.is_dir():
+        try:
+            entry = find_catalog_entry(model)
+        except KeyError as error:
+            raise typer.BadParameter(str(error)) from error
+        required = int(entry.expected_bytes or 0) * 2
+        free = shutil.disk_usage(Path.cwd()).free
+        result = {
+            "model": entry.repo_id,
+            "revision": entry.revision,
+            "adapter": entry.adapter_id,
+            "status": "SUPPORTED",
+            "resources": {
+                "gpu_memory_budget_gib": 4.5,
+                "host_memory_budget_gib": 11,
+                "estimated_source_bytes": entry.expected_bytes,
+                "estimated_source_and_output_bytes": required,
+                "free_disk_bytes": free,
+            },
+            "pass": free >= required,
+        }
+        _echo(result)
+        if not result["pass"]:
+            raise typer.Exit(1)
+        return
+    config, inventory = inspect_local_checkpoint(model_path)
     match = default_adapter_registry().detect(config, inventory)
-    temporary_required = sum(path.stat().st_size for path in model.glob("*.safetensors"))
-    free = shutil.disk_usage(model).free
+    temporary_required = sum(path.stat().st_size for path in model_path.glob("*.safetensors"))
+    free = shutil.disk_usage(model_path).free
     result = {
-        "model": str(model.resolve()),
+        "model": str(model_path.resolve()),
         "adapter": match.adapter_id,
         "status": match.status.value,
         "resources": {
@@ -128,9 +169,7 @@ def doctor_command(
 
 
 def plan_command(
-    model: Annotated[
-        Path | None, typer.Option("--model", exists=True, file_okay=False)
-    ] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
     model_fixture: Annotated[
         Path | None, typer.Option("--model-fixture", exists=True, file_okay=False)
     ] = None,
@@ -163,7 +202,12 @@ def plan_command(
         return
     if model is None:
         raise typer.BadParameter("one of --model or --model-fixture is required")
-    plan = build_local_plan(model, output_uri=destination)
+    model_path = Path(model)
+    plan = (
+        build_local_plan(model_path, output_uri=destination)
+        if model_path.is_dir()
+        else build_catalog_plan(model, output_uri=destination)
+    )
     plan.save(output)
     _echo({"plan": str(output.resolve()), **plan.to_dict()})
 
@@ -188,7 +232,15 @@ def jobs_pause(job_id: str) -> None:
 @jobs_app.command("resume")
 def jobs_resume(job_id: str) -> None:
     store = _store()
-    store.resume(job_id)
+    target = store.resume(job_id)
+    if target in {JobState.DOWNLOADING, JobState.CONVERTING}:
+        from aloepri.conversion.executor import execute_conversion_plan
+
+        execute_conversion_plan(
+            ConversionPlan.from_dict(store.get(job_id)["plan"]), store
+        )
+    elif target == JobState.UPLOADING:
+        MockCloudWorkflow(store).upload(job_id)
     _echo(store.get(job_id))
 
 
@@ -219,22 +271,11 @@ def upload_command(
     if cloud_profile != "mock":
         raise typer.BadParameter("this release only validates --cloud-profile mock")
     store = _store()
-    job = store.get(job_id)
-    current = JobState(job["state"])
-    if current == JobState.CONVERTING:
-        store.transition(job_id, JobState.UPLOADING)
-    elif current != JobState.UPLOADING:
-        raise typer.BadParameter(f"job state {current.value} cannot upload")
-    store.transition(job_id, JobState.VERIFYING, progress={"uploaded_parts": "mock-complete"})
-    store.transition(job_id, JobState.READY_TO_DEPLOY)
-    _echo(
-        {
-            "job_id": job_id,
-            "environment": "mock-cloud",
-            "real_cloud_validated": False,
-            "state": JobState.READY_TO_DEPLOY.value,
-        }
-    )
+    try:
+        result = MockCloudWorkflow(store).upload(job_id)
+    except (OSError, ValueError, KeyError) as error:
+        raise typer.BadParameter(str(error)) from error
+    _echo(result)
 
 
 def deploy_command(
@@ -244,34 +285,11 @@ def deploy_command(
     if cloud_profile != "mock":
         raise typer.BadParameter("this release only validates --cloud-profile mock")
     store = _store()
-    job = store.get(job_id)
-    if job["state"] != JobState.READY_TO_DEPLOY.value:
-        raise typer.BadParameter("job is not READY_TO_DEPLOY")
-    store.transition(job_id, JobState.DEPLOYING)
-    plan = job["plan"]
-    deployment_id = f"mock-{uuid.uuid4()}"
-    model_id = str(plan.get("output", {}).get("uri", job_id))
-    key_id = f"key-{job_id[:8]}"
-    metadata = {
-        "environment": "mock-cloud",
-        "real_cloud_validated": False,
-        "adapter": plan["adapter"],
-        "previous_deployment_id": None,
-    }
-    previous = store.latest_running_deployment()
-    if previous is not None:
-        metadata["previous_deployment_id"] = previous["deployment_id"]
-    store.put_deployment(
-        deployment_id,
-        job_id=job_id,
-        model_id=model_id,
-        key_id=key_id,
-        status="RUNNING",
-        environment="mock-cloud",
-        metadata=metadata,
-    )
-    store.transition(job_id, JobState.RUNNING)
-    _echo(store.get_deployment(deployment_id))
+    try:
+        result = MockCloudWorkflow(store).deploy(job_id)
+    except (OSError, ValueError, KeyError) as error:
+        raise typer.BadParameter(str(error)) from error
+    _echo(result)
 
 
 @deployment_app.command("status")

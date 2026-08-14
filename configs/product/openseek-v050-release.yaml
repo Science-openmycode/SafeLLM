@@ -1,0 +1,13 @@
+schema_version: 1
+model_id: openseek-v050-release
+key_id: key-133d2872
+server:
+  host: 127.0.0.1
+  port: 8000
+  device: cuda
+  dtype: bfloat16
+  max_input_tokens: 2048
+  max_output_tokens: 512
+  max_request_bytes: 1000000
+  bearer_token_env: ALOEPRI_BEARER_TOKEN
+  tls_terminated_by_proxy: true

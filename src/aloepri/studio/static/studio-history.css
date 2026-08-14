@@ -1,0 +1,47 @@
+.conversation-history {
+  min-height: 0;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #3f3f46;
+}
+
+.conversation-history > button {
+  width: 100%;
+  color: #f4f4f5;
+  text-align: left;
+  background: transparent;
+  border-color: #52525b;
+}
+
+.conversation-history > button:hover,
+.conversation-history .conversation-item:hover,
+.conversation-history .conversation-item.active {
+  color: #fff;
+  background: #343541;
+}
+
+.conversation-history > div {
+  display: grid;
+  max-height: 28vh;
+  margin-top: 8px;
+  overflow: auto;
+  gap: 4px;
+}
+
+.conversation-history .conversation-item {
+  width: 100%;
+  padding: 8px 9px;
+  overflow: hidden;
+  color: #d4d4d8;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+}
+
+@media (max-width: 900px) {
+  .conversation-history {
+    display: none;
+  }
+}

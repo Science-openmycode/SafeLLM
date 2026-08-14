@@ -9,6 +9,7 @@ import yaml
 
 from aloepri.adapters.base import CoverageReport, TensorInventory
 from aloepri.adapters.registry import AdapterRegistry, default_adapter_registry
+from aloepri.catalog.download import find_catalog_entry
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.catalog.models import ArchitectureFingerprint, MatchStatus
 
@@ -84,6 +85,11 @@ class ConversionPlan:
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("conversion plan root must be a mapping")
+        return cls.from_dict(payload)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ConversionPlan:
+        payload = dict(payload)
         payload["resources"] = ResourceSpec(**payload.get("resources", {}))
         payload["pipeline"] = PipelineSpec(**payload.get("pipeline", {}))
         return cls(**payload)
@@ -120,9 +126,10 @@ def build_local_plan(
             f"missing={list(coverage.missing)}, unknown={list(coverage.unknown)}"
         )
     source_dtype = match.fingerprint.weight_format
+    job_id = str(uuid.uuid4())
     return ConversionPlan(
         schema_version=1,
-        job_id=str(uuid.uuid4()),
+        job_id=job_id,
         source={"type": "local", "path": str(model_dir.resolve())},
         adapter=match.adapter_id,
         fingerprint=match.fingerprint.to_dict(),
@@ -130,9 +137,64 @@ def build_local_plan(
             "type": "local" if not output_uri.startswith("s3://") else "s3",
             "uri": output_uri,
             "dtype": output_dtype or source_dtype,
+            "model_id": Path(output_uri.rstrip("/")).name or match.adapter_id,
+            "key_id": f"key-{job_id[:8]}",
         },
         coverage=_coverage_payload(coverage),
     )
+
+
+def build_catalog_plan(
+    model: str,
+    *,
+    output_uri: str,
+    staging_path: Path | None = None,
+) -> ConversionPlan:
+    entry = find_catalog_entry(model)
+    output: dict[str, Any] = {
+        "type": "local" if not output_uri.startswith("s3://") else "s3",
+        "uri": output_uri,
+        "dtype": entry.conversion["output_dtype"],
+        "model_id": entry.catalog_id,
+    }
+    if output["type"] == "s3":
+        if staging_path is None:
+            staging_path = Path("artifacts/staging") / entry.catalog_id
+        output["staging_path"] = str(staging_path.resolve())
+    conversion = ConversionPlan(
+        schema_version=1,
+        job_id=str(uuid.uuid4()),
+        source={
+            "type": "huggingface",
+            "repo_id": entry.repo_id,
+            "revision": entry.revision,
+            "cache_path": str((Path("data/models") / entry.catalog_id).resolve()),
+        },
+        adapter=entry.adapter_id,
+        fingerprint={
+            "model_type": entry.adapter_id,
+            "attention": "mla" if entry.capabilities.get("mla") else "gqa",
+            "ffn": "moe" if entry.capabilities.get("moe") else "dense",
+            "normalization": "rmsnorm",
+            "position_encoding": (
+                "decoupled_rope" if entry.capabilities.get("mla") else "rope"
+            ),
+            "expert_layout": "individual" if entry.capabilities.get("moe") else "none",
+            "router": "sigmoid_noaux" if entry.capabilities.get("moe") else "none",
+            "mtp_layers": 1 if entry.capabilities.get("mtp") else 0,
+            "weight_format": (
+                "fp8_block" if entry.capabilities.get("fp8") else entry.source["dtype"]
+            ),
+            "weight_block_size": entry.source.get("weight_block_size"),
+        },
+        output=output,
+        coverage={
+            "basis": "catalog-pinned; checkpoint headers are revalidated after download",
+            "pass": True,
+        },
+    )
+    conversion.conversion["expansion_h"] = int(entry.conversion["expansion_h"])
+    return conversion
 
 
 def inspect_from_parts(

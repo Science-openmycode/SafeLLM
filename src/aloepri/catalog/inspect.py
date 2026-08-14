@@ -70,4 +70,32 @@ def inspect_local_checkpoint(model_dir: Path) -> tuple[dict[str, Any], TensorInv
                 raise ValueError(f"invalid data offsets for tensor: {name}")
             shapes[name] = tuple(int(value) for value in shape)
             dtypes[name] = dtype
-    return config, TensorInventory(frozenset(shapes), shapes, dtypes)
+    inventory = TensorInventory(frozenset(shapes), shapes, dtypes)
+    config = _effective_normalized_config(model_dir, config, inventory)
+    return config, inventory
+
+
+def _effective_normalized_config(
+    model_dir: Path, config: dict[str, Any], inventory: TensorInventory
+) -> dict[str, Any]:
+    declared = int(config.get("num_nextn_predict_layers") or 0)
+    if config.get("model_type") != "deepseek_v3" or declared == 0:
+        return config
+    first_mtp_layer = int(config.get("num_hidden_layers") or 0)
+    if any(name.startswith(f"model.layers.{first_mtp_layer}.") for name in inventory.names):
+        return config
+    manifest_path = model_dir / "normalization_manifest.json"
+    if not manifest_path.is_file():
+        return config
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    audit = manifest.get("source_audit", {}) if isinstance(manifest, dict) else {}
+    if audit.get("actual_mtp_present") is not False or int(
+        audit.get("actual_mtp_tensor_count", -1)
+    ) != 0:
+        return config
+    effective = dict(config)
+    effective["num_nextn_predict_layers"] = 0
+    effective["aloepri_source_declared_mtp_layers"] = declared
+    effective["aloepri_effective_mtp_layers"] = 0
+    effective["aloepri_mtp_override_basis"] = "verified-normalization-manifest"
+    return effective

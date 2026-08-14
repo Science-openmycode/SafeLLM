@@ -13,8 +13,11 @@ from pydantic import BaseModel, Field
 from aloepri.adapters.registry import default_adapter_registry
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.catalog.registry import builtin_catalog
+from aloepri.cloud import MockInferenceCluster
 from aloepri.jobs.store import JobState, JobStore
-from aloepri.planning import build_local_plan
+from aloepri.jobs.worker import ConversionWorker
+from aloepri.planning import ConversionPlan, build_local_plan
+from aloepri.workflow import MockCloudWorkflow
 
 
 class ModelPathRequest(BaseModel):
@@ -28,6 +31,7 @@ class PlanRequest(ModelPathRequest):
 
 class JobRequest(BaseModel):
     plan: str
+    execute: bool = True
 
 
 class JobActionRequest(BaseModel):
@@ -55,6 +59,7 @@ def _job_payload(store: JobStore, job_id: str) -> dict[str, Any]:
 def create_studio_app(*, state_path: Path | None = None) -> FastAPI:
     app = FastAPI(title="AloePri Studio", docs_url=None, redoc_url=None)
     store = JobStore(state_path)
+    worker = ConversionWorker(store)
     static = Path(__file__).with_name("static")
 
     @app.get("/")
@@ -64,6 +69,10 @@ def create_studio_app(*, state_path: Path | None = None) -> FastAPI:
     @app.get("/studio.css")
     def css() -> FileResponse:
         return FileResponse(static / "studio.css", media_type="text/css")
+
+    @app.get("/studio-history.css")
+    def history_css() -> FileResponse:
+        return FileResponse(static / "studio-history.css", media_type="text/css")
 
     @app.get("/studio.js")
     def javascript() -> FileResponse:
@@ -131,6 +140,11 @@ def create_studio_app(*, state_path: Path | None = None) -> FastAPI:
         if job["state"] == JobState.CREATED.value:
             store.transition(plan.job_id, JobState.PREFLIGHT)
             store.transition(plan.job_id, JobState.CONVERTING)
+        if request.execute:
+            try:
+                worker.start(plan)
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
         return store.get(plan.job_id)
 
     @app.get("/api/jobs/{job_id}")
@@ -158,7 +172,11 @@ def create_studio_app(*, state_path: Path | None = None) -> FastAPI:
 
     @app.post("/api/jobs/{job_id}/resume")
     def resume(job_id: str) -> dict[str, Any]:
-        store.resume(job_id)
+        target = store.resume(job_id)
+        if target in {JobState.DOWNLOADING, JobState.CONVERTING}:
+            worker.start(ConversionPlan.from_dict(store.get(job_id)["plan"]))
+        elif target == JobState.UPLOADING:
+            MockCloudWorkflow(store).upload(job_id)
         return store.get(job_id)
 
     @app.post("/api/jobs/{job_id}/cancel")
@@ -170,48 +188,20 @@ def create_studio_app(*, state_path: Path | None = None) -> FastAPI:
     def upload(request: DeploymentRequest) -> dict[str, Any]:
         if request.cloud_profile != "mock":
             raise HTTPException(status_code=400, detail="only mock cloud is validated")
-        job = _job_payload(store, request.job_id)
-        state = JobState(job["state"])
-        if state == JobState.CONVERTING:
-            store.transition(request.job_id, JobState.UPLOADING)
-        elif state != JobState.UPLOADING:
-            raise HTTPException(status_code=409, detail=f"cannot upload from {state.value}")
-        store.transition(request.job_id, JobState.VERIFYING)
-        store.transition(request.job_id, JobState.READY_TO_DEPLOY)
-        return {
-            "environment": "mock-cloud",
-            "real_cloud_validated": False,
-            "job": store.get(request.job_id),
-        }
+        try:
+            result = MockCloudWorkflow(store).upload(request.job_id)
+        except (OSError, ValueError, KeyError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return result
 
     @app.post("/api/deployments")
     def deployment(request: DeploymentRequest) -> dict[str, Any]:
-        import uuid
-
         if request.cloud_profile != "mock":
             raise HTTPException(status_code=400, detail="only mock cloud is validated")
-        job = _job_payload(store, request.job_id)
-        if job["state"] != JobState.READY_TO_DEPLOY.value:
-            raise HTTPException(status_code=409, detail="job is not ready to deploy")
-        store.transition(request.job_id, JobState.DEPLOYING)
-        deployment_id = f"mock-{uuid.uuid4()}"
-        previous = store.latest_running_deployment()
-        metadata = {
-            "environment": "mock-cloud",
-            "real_cloud_validated": False,
-            "previous_deployment_id": None if previous is None else previous["deployment_id"],
-        }
-        store.put_deployment(
-            deployment_id,
-            job_id=request.job_id,
-            model_id=str(job["plan"]["output"]["uri"]),
-            key_id=f"key-{request.job_id[:8]}",
-            status="RUNNING",
-            environment="mock-cloud",
-            metadata=metadata,
-        )
-        store.transition(request.job_id, JobState.RUNNING)
-        return store.get_deployment(deployment_id)
+        try:
+            return MockCloudWorkflow(store).deploy(request.job_id)
+        except (OSError, ValueError, KeyError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/api/deployments/{deployment_id}")
     def deployment_status(deployment_id: str) -> dict[str, Any]:
@@ -233,13 +223,24 @@ def create_studio_app(*, state_path: Path | None = None) -> FastAPI:
     @app.post("/api/chat/stream")
     def chat(request: ChatRequest) -> StreamingResponse:
         deployment = store.get_deployment(request.deployment_id)
+        if deployment["status"] != "RUNNING":
+            raise HTTPException(status_code=409, detail="deployment is not running")
         prompt = "\n".join(message.get("content", "") for message in request.messages)
         private_input = [value for value in hashlib.sha256(prompt.encode()).digest()[:16]]
-        response_text = "Mock Cloud 已收到私有 token ID；此输出是确定性接口模拟，不是模型回答。"
-        private_output = [
-            value
-            for value in hashlib.sha256((request.deployment_id + prompt).encode()).digest()[:16]
-        ]
+        cluster = MockInferenceCluster()
+        cluster.restore(deployment["metadata"])
+        private_output = list(
+            cluster.stream_private_tokens(
+                request.deployment_id,
+                model_id=deployment["model_id"],
+                key_id=deployment["key_id"],
+                input_ids=private_input,
+                max_new_tokens=min(request.max_new_tokens, 32),
+            )
+        )
+        response_text = (
+            "Mock Cloud 已接收私有 token ID；这是确定性的接口模拟输出，不是模型回答。"
+        )
 
         async def stream() -> Any:
             if request.show_private_trace:

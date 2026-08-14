@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -15,20 +16,12 @@ def _mock_identity() -> dict[str, object]:
     return {"environment": "mock-cloud", "real_cloud_validated": False}
 
 
-@dataclass
-class _MultipartUpload:
-    source_size: int
-    part_size: int
-    parts: dict[int, dict[str, Any]] = field(default_factory=dict)
-
-
 class MockObjectStore:
     def __init__(self, root: Path, *, fail_part_once: int | None = None) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.fail_part_once = fail_part_once
         self._failure_injected = False
-        self._uploads: dict[str, _MultipartUpload] = {}
 
     @staticmethod
     def _key(uri: str) -> str:
@@ -45,47 +38,79 @@ class MockObjectStore:
     ) -> dict[str, Any]:
         if part_size <= 0:
             raise ValueError("part_size must be positive")
+        if not source.is_file():
+            raise FileNotFoundError(f"upload source is not a file: {source}")
         key = self._key(uri)
-        upload = self._uploads.setdefault(key, _MultipartUpload(source.stat().st_size, part_size))
-        if upload.source_size != source.stat().st_size or upload.part_size != part_size:
+        upload_root = self.root / ".multipart" / hashlib.sha256(key.encode()).hexdigest()
+        upload_root.mkdir(parents=True, exist_ok=True)
+        state_path = upload_root / "state.json"
+        source_size = source.stat().st_size
+        if state_path.is_file():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        else:
+            state = {
+                "uri": uri,
+                "source_size": source_size,
+                "part_size": part_size,
+                "parts": {},
+            }
+            _write_json_atomic(state_path, state)
+        if state["source_size"] != source_size or state["part_size"] != part_size:
             raise ValueError("existing multipart upload does not match local object")
         with source.open("rb") as handle:
             part_number = 1
             while payload := handle.read(part_size):
                 digest = hashlib.sha256(payload).hexdigest()
-                existing = upload.parts.get(part_number)
-                if existing and existing["sha256"] == digest:
+                existing = state["parts"].get(str(part_number))
+                part_path = upload_root / f"part-{part_number:08d}"
+                if (
+                    existing
+                    and existing["sha256"] == digest
+                    and part_path.is_file()
+                    and _sha256(part_path) == digest
+                ):
                     part_number += 1
                     continue
                 if self.fail_part_once == part_number and not self._failure_injected:
                     self._failure_injected = True
                     raise OSError(f"injected multipart failure at part {part_number}")
-                upload.parts[part_number] = {
+                partial_part = part_path.with_suffix(".partial")
+                partial_part.write_bytes(payload)
+                os.replace(partial_part, part_path)
+                state["parts"][str(part_number)] = {
                     "part_number": part_number,
                     "bytes": len(payload),
                     "etag": hashlib.md5(payload, usedforsecurity=False).hexdigest(),
                     "sha256": digest,
-                    "payload": payload,
                 }
+                _write_json_atomic(state_path, state)
                 part_number += 1
         destination = self.root / key
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open("wb") as output:
-            for number in sorted(upload.parts):
-                output.write(upload.parts[number]["payload"])
+        partial_destination = destination.with_suffix(destination.suffix + ".partial")
+        with partial_destination.open("wb") as output:
+            for number in range(1, part_number):
+                part_path = upload_root / f"part-{number:08d}"
+                if not part_path.is_file():
+                    raise OSError(f"multipart state is missing part {number}")
+                with part_path.open("rb") as part_handle:
+                    while block := part_handle.read(8 * 1024 * 1024):
+                        output.write(block)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(partial_destination, destination)
+        if destination.stat().st_size != source_size:
+            raise OSError("completed mock object has an unexpected byte size")
         metadata = {
             **_mock_identity(),
             "uri": uri,
             "bytes": destination.stat().st_size,
             "sha256": _sha256(destination),
             "parts": [
-                {key: value for key, value in record.items() if key != "payload"}
-                for _, record in sorted(upload.parts.items())
+                state["parts"][str(number)] for number in range(1, part_number)
             ],
         }
-        (destination.with_suffix(destination.suffix + ".metadata.json")).write_text(
-            json.dumps(metadata, indent=2), encoding="utf-8"
-        )
+        _write_json_atomic(destination.with_suffix(destination.suffix + ".metadata.json"), metadata)
         return metadata
 
     def object_metadata(self, uri: str) -> dict[str, Any]:
@@ -97,6 +122,35 @@ class MockObjectStore:
         if not isinstance(payload, dict):
             raise ValueError("mock object metadata is invalid")
         return payload
+
+    def download_prefix(self, uri: str, destination: Path) -> list[Path]:
+        prefix = self._key(uri).rstrip("/")
+        source_root = self.root / prefix
+        if not source_root.is_dir():
+            raise FileNotFoundError(f"unknown mock object prefix: {uri}")
+        copied: list[Path] = []
+        for source in sorted(path for path in source_root.rglob("*") if path.is_file()):
+            if source.name.endswith(".metadata.json") or source.name.endswith(".partial"):
+                continue
+            relative = source.relative_to(source_root)
+            if ".." in relative.parts:
+                raise ValueError("mock object prefix contains an unsafe path")
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_suffix(target.suffix + ".partial")
+            with source.open("rb") as input_handle, partial.open("wb") as output_handle:
+                while block := input_handle.read(8 * 1024 * 1024):
+                    output_handle.write(block)
+            os.replace(partial, target)
+            metadata = self.object_metadata(
+                f"s3://{prefix}/{relative.as_posix()}"
+            )
+            if _sha256(target) != metadata["sha256"]:
+                raise OSError(f"downloaded mock object failed SHA-256: {relative}")
+            copied.append(target)
+        if not copied:
+            raise FileNotFoundError(f"mock object prefix has no data objects: {uri}")
+        return copied
 
 
 class MockRemoteHost:
@@ -147,8 +201,29 @@ class MockInferenceCluster:
             raise ValueError("production deployment must use private token-ID mode")
         deployment_id = f"mock-{uuid.uuid4()}"
         deployment = _Deployment(spec, ClusterStatus.STARTING, self.current_deployment_id)
+        if self.current_deployment_id is not None:
+            self.deployments[self.current_deployment_id].status = ClusterStatus.STOPPED
         self.deployments[deployment_id] = deployment
         deployment.status = ClusterStatus.HEALTHY
+        self.current_deployment_id = deployment_id
+        return deployment_id
+
+    def restore(self, evidence: Mapping[str, Any]) -> str:
+        """Restore deterministic mock state from durable deployment evidence."""
+
+        if evidence.get("environment") != "mock-cloud":
+            raise ValueError("deployment evidence is not mock-cloud evidence")
+        deployment_id = str(evidence["deployment_id"])
+        raw_spec = evidence.get("spec")
+        if not isinstance(raw_spec, Mapping):
+            raise ValueError("deployment evidence has no specification")
+        spec = DeploymentSpec(**dict(raw_spec))
+        previous = evidence.get("previous_deployment_id")
+        self.deployments[deployment_id] = _Deployment(
+            spec,
+            ClusterStatus(str(evidence.get("status", "HEALTHY"))),
+            None if previous is None else str(previous),
+        )
         self.current_deployment_id = deployment_id
         return deployment_id
 
@@ -210,3 +285,9 @@ def _sha256(path: Path) -> str:
         while block := handle.read(8 * 1024 * 1024):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    partial = path.with_suffix(path.suffix + ".partial")
+    partial.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(partial, path)

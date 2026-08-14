@@ -138,7 +138,6 @@ def convert(
         state = JobState(job["state"])
         if state == JobState.CREATED:
             store.transition(job["job_id"], JobState.PREFLIGHT)
-            store.transition(job["job_id"], JobState.CONVERTING)
         if execute:
             execute_conversion_plan(ConversionPlan.load(plan), store)
         typer.echo(json.dumps(store.get(job["job_id"]), ensure_ascii=False, indent=2))

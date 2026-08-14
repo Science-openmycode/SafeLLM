@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from aloepri import __version__
 from aloepri.packaging import inspect_server_package
 
 RELEASE_MANIFEST = Path("manifests/release_manifest.json")
@@ -157,7 +158,7 @@ def build_product_release(
         manifest = {
             "schema_version": 1,
             "package_type": "aloepri-private-model-release",
-            "release_version": "0.5.0",
+            "release_version": __version__,
             "release_status": "CODE_COMPLETE_MOCK_CLOUD_PASS",
             "environment": "mock-cloud",
             "real_cloud_validated": False,

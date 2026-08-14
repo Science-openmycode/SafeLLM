@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AloePri Studio</title>
   <link rel="stylesheet" href="/studio.css">
+  <link rel="stylesheet" href="/studio-history.css">
 </head>
 <body>
   <aside class="sidebar">
@@ -17,10 +18,14 @@
       <button data-page="privacy">隐私流程</button>
       <button data-page="settings">设置</button>
     </nav>
+    <section class="conversation-history">
+      <button id="new-conversation" type="button">＋ 新对话</button>
+      <div id="conversation-list"></div>
+    </section>
     <div class="cloud-badge"><span></span><div><strong>Mock Cloud</strong><small>不代表真实云验收</small></div></div>
   </aside>
   <main>
-    <header><div><h1 id="page-title">模型</h1><p id="page-subtitle">选择或检查待改造的模型架构</p></div><span class="status-pill">CODE PREVIEW</span></header>
+    <header><div><h1 id="page-title">模型</h1><p id="page-subtitle">选择或检查待改造的模型架构</p></div><span class="status-pill">0.5.0 · MOCK CLOUD</span></header>
 
     <section class="page active" id="page-models">
       <div class="hero"><div><span class="eyebrow">MODEL CATALOG</span><h2>从模型开始，而不是从脚本开始</h2><p>Studio只读取配置和Safetensors头部，不执行模型仓库中的远程代码。</p></div></div>

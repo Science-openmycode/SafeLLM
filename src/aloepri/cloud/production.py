@@ -41,6 +41,24 @@ class S3ObjectStore:
         response = self.client.head_object(Bucket=bucket, Key=key)
         return {"uri": uri, "bytes": int(response["ContentLength"])}
 
+    def download_prefix(self, uri: str, destination: Path) -> list[Path]:
+        bucket, prefix = _split_s3(uri)
+        paginator = self.client.get_paginator("list_objects_v2")
+        copied: list[Path] = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix.rstrip("/") + "/"):
+            for item in page.get("Contents", []):
+                key = str(item["Key"])
+                relative = Path(key.removeprefix(prefix.rstrip("/") + "/"))
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError(f"unsafe S3 object key: {key}")
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                self.client.download_file(bucket, key, str(target))
+                copied.append(target)
+        if not copied:
+            raise FileNotFoundError(f"S3 prefix contains no objects: {uri}")
+        return copied
+
 
 class SSHRemoteHost:
     def __init__(self, host: str, *, port: int = 22, user: str = "root") -> None:

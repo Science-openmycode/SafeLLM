@@ -1,17 +1,32 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from aloepri.adapters.registry import default_adapter_registry
+from aloepri.catalog.download import download_pinned_snapshot, find_catalog_entry
+from aloepri.catalog.inspect import inspect_local_checkpoint
+from aloepri.cloud import MockObjectStore
 from aloepri.conversion.deepseek_streaming import convert_deepseek_checkpoint
+from aloepri.conversion.resource_estimate import estimate_deepseek_host_memory
 from aloepri.jobs.store import JobState, JobStore
 from aloepri.keys.encryption import encrypt_offline_key_directory
 from aloepri.packaging import split_key_package
 from aloepri.planning import ConversionPlan
 from aloepri.resources import ResourceBudgetMonitor
+
+
+class ConversionPaused(RuntimeError):
+    pass
+
+
+class ConversionCancelled(RuntimeError):
+    pass
 
 
 def _local_output(plan: ConversionPlan) -> Path:
@@ -24,6 +39,58 @@ def _local_output(plan: ConversionPlan) -> Path:
     return Path(uri)
 
 
+def _resolve_source(plan: ConversionPlan, store: JobStore) -> Path:
+    source_type = str(plan.source.get("type", "local"))
+    if source_type == "local":
+        return Path(str(plan.source["path"]))
+    if source_type == "s3":
+        destination = Path(str(plan.source["cache_path"]))
+        if JobState(store.get(plan.job_id)["state"]) == JobState.PREFLIGHT:
+            store.transition(plan.job_id, JobState.DOWNLOADING)
+        objects = MockObjectStore(store.path.parent / "mock-cloud" / "objects")
+        files = objects.download_prefix(str(plan.source["uri"]), destination)
+        store.update_progress(
+            plan.job_id,
+            {"download": {"source": "s3", "files_completed": len(files)}},
+        )
+        config, inventory = inspect_local_checkpoint(destination)
+        match = default_adapter_registry().detect(config, inventory)
+        if match.adapter_id != plan.adapter or match.status.value != "SUPPORTED":
+            raise ValueError(f"downloaded S3 checkpoint adapter mismatch: {match.to_dict()}")
+        if JobState(store.get(plan.job_id)["state"]) == JobState.DOWNLOADING:
+            store.transition(plan.job_id, JobState.CONVERTING)
+        return destination
+    if source_type != "huggingface":
+        raise ValueError(f"unsupported source type: {source_type}")
+    entry = find_catalog_entry(str(plan.source["repo_id"]))
+    if str(plan.source.get("revision")) != entry.revision:
+        raise ValueError("plan revision no longer matches the pinned catalog revision")
+    destination = Path(str(plan.source["cache_path"]))
+    state = JobState(store.get(plan.job_id)["state"])
+    if state == JobState.PREFLIGHT:
+        store.transition(plan.job_id, JobState.DOWNLOADING)
+    download_pinned_snapshot(
+        entry,
+        destination,
+        progress=lambda phase: store.update_progress(
+            plan.job_id, {"download": {"phase": phase, "revision": entry.revision}}
+        ),
+    )
+    config, inventory = inspect_local_checkpoint(destination)
+    match = default_adapter_registry().detect(config, inventory)
+    if match.adapter_id != plan.adapter or match.status.value != "SUPPORTED":
+        raise ValueError(f"downloaded checkpoint adapter mismatch: {match.to_dict()}")
+    coverage = default_adapter_registry().get(plan.adapter).validate_inventory(config, inventory)
+    if not coverage.pass_:
+        raise ValueError(
+            "downloaded checkpoint inventory rejected: "
+            f"missing={list(coverage.missing)}, unknown={list(coverage.unknown)}"
+        )
+    if JobState(store.get(plan.job_id)["state"]) == JobState.DOWNLOADING:
+        store.transition(plan.job_id, JobState.CONVERTING)
+    return destination
+
+
 def _key_paths(plan: ConversionPlan, output: Path) -> tuple[Path, Path, Path]:
     root = output.parent / f"{output.name}-keys"
     return (
@@ -33,8 +100,8 @@ def _key_paths(plan: ConversionPlan, output: Path) -> tuple[Path, Path, Path]:
     )
 
 
-def _run_qwen(plan: ConversionPlan, output: Path) -> dict[str, Any]:
-    source = Path(str(plan.source["path"]))
+def _run_qwen(plan: ConversionPlan, output: Path, source: Path | None = None) -> dict[str, Any]:
+    source = source or Path(str(plan.source["path"]))
     full_key, online_key, offline_key = _key_paths(plan, output)
     conversion = plan.conversion
     root = Path(__file__).resolve().parents[3]
@@ -62,9 +129,9 @@ def _run_qwen(plan: ConversionPlan, output: Path) -> dict[str, Any]:
         "--attention-compute-dtype",
         "float32",
         "--rms-mode",
-        "exact_metric",
+        "exact-metric",
         "--rms-representation",
-        "stable_factor",
+        "stable-factor",
         "--block-beta",
         str(conversion["block_beta"]),
         "--sampling-gamma",
@@ -101,10 +168,44 @@ def _run_qwen(plan: ConversionPlan, output: Path) -> dict[str, Any]:
     }
 
 
-def _run_deepseek(plan: ConversionPlan, output: Path) -> dict[str, Any]:
-    source = Path(str(plan.source["path"]))
+def _run_deepseek(
+    plan: ConversionPlan,
+    output: Path,
+    store: JobStore | None = None,
+    source: Path | None = None,
+) -> dict[str, Any]:
+    source = source or Path(str(plan.source["path"]))
     full_key, online_key, _ = _key_paths(plan, output)
     conversion = plan.conversion
+    config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    estimate = estimate_deepseek_host_memory(
+        config,
+        expansion_h=int(conversion["expansion_h"]),
+        host_budget_gib=plan.resources.host_memory_budget_gib,
+    )
+    if not estimate.pass_:
+        raise MemoryError(
+            f"conversion plan exceeds host budget: {estimate.estimated_peak_gib:.3f} GiB"
+        )
+
+    def progress(name: str, tile_index: int, phase: str) -> None:
+        if store is None:
+            return
+        job = store.get(plan.job_id)
+        state = JobState(job["state"])
+        if state == JobState.PAUSED:
+            raise ConversionPaused(f"conversion paused before {name}")
+        if state == JobState.CANCELLED:
+            raise ConversionCancelled(f"conversion cancelled before {name}")
+        payload = {
+            **job.get("progress", {}),
+            "conversion": {"tensor": name, "tile": tile_index, "phase": phase},
+        }
+        store.update_progress(plan.job_id, payload)
+        if phase in {"completed", "resumed"}:
+            digest = hashlib.sha256(f"{name}:{tile_index}:{phase}".encode()).hexdigest()
+            store.record_tile(plan.job_id, name, tile_index, digest)
+
     result = convert_deepseek_checkpoint(
         source_root=source,
         output_root=output,
@@ -125,9 +226,17 @@ def _run_deepseek(plan: ConversionPlan, output: Path) -> dict[str, Any]:
         qk_scale_min=float(conversion["qk_scale_min"]),
         qk_scale_max=float(conversion["qk_scale_max"]),
         value_condition_max=float(conversion["value_condition_max"]),
+        progress_callback=progress,
+        model_id=str(plan.output.get("model_id", output.name)),
+        key_id=str(plan.output.get("key_id", f"key-{plan.job_id[:8]}")),
     )
     _encrypt_offline_if_required(plan, full_key)
-    return {"adapter": plan.adapter, "output": str(output.resolve()), "result": result}
+    return {
+        "adapter": plan.adapter,
+        "output": str(output.resolve()),
+        "resource_estimate": estimate.to_dict(),
+        "result": result,
+    }
 
 
 def _encrypt_offline_if_required(plan: ConversionPlan, offline_directory: Path) -> None:
@@ -151,11 +260,18 @@ def execute_conversion_plan(plan: ConversionPlan, store: JobStore) -> dict[str, 
         state = JobState(job["state"])
         if state == JobState.CREATED:
             store.transition(plan.job_id, JobState.PREFLIGHT)
-            store.transition(plan.job_id, JobState.CONVERTING)
+        elif state == JobState.FAILED:
+            store.transition(plan.job_id, JobState.PREFLIGHT)
         elif state == JobState.PAUSED:
             store.resume(plan.job_id)
-        elif state != JobState.CONVERTING:
+        elif state not in {JobState.PREFLIGHT, JobState.DOWNLOADING, JobState.CONVERTING}:
             raise ValueError(f"job cannot convert from state {state.value}")
+        source = _resolve_source(plan, store)
+        state = JobState(store.get(plan.job_id)["state"])
+        if state == JobState.PREFLIGHT:
+            store.transition(plan.job_id, JobState.CONVERTING)
+        elif state == JobState.DOWNLOADING:
+            store.transition(plan.job_id, JobState.CONVERTING)
         output = _local_output(plan)
         with ResourceBudgetMonitor(
             gpu_budget_gib=plan.resources.gpu_memory_budget_gib,
@@ -163,9 +279,9 @@ def execute_conversion_plan(plan: ConversionPlan, store: JobStore) -> dict[str, 
             host_budget_gib=plan.resources.host_memory_budget_gib,
         ) as monitor:
             result = (
-                _run_qwen(plan, output)
+                _run_qwen(plan, output, source)
                 if plan.adapter == "qwen2"
-                else _run_deepseek(plan, output)
+                else _run_deepseek(plan, output, store, source)
             )
         assert monitor.observation is not None
         result["resources"] = {
@@ -179,6 +295,8 @@ def execute_conversion_plan(plan: ConversionPlan, store: JobStore) -> dict[str, 
         # store can record multipart evidence before deployment becomes legal.
         store.transition(plan.job_id, JobState.UPLOADING, progress=result)
         return result
+    except (ConversionPaused, ConversionCancelled):
+        raise
     except BaseException as error:
         try:
             current = JobState(store.get(plan.job_id)["state"])

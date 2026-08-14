@@ -1,0 +1,15 @@
+schema_version: 1
+catalog_id: deepseek-v2-lite-chat
+repo_id: deepseek-ai/DeepSeek-V2-Lite-Chat
+revision: 85864749cd611b4353ce1decdb286193298f64c7
+adapter_id: deepseek_v2
+source:
+  format: safetensors
+  dtype: bfloat16
+conversion:
+  output_dtype: bfloat16
+  expansion_h: 0
+  tile_mib: 256
+runtime:
+  preferred: hf
+  fallback: sglang

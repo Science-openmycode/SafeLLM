@@ -208,6 +208,17 @@ class JobStore:
             )
             self._event(connection, job_id, target, progress_payload)
 
+    def update_progress(self, job_id: str, progress: dict[str, Any]) -> None:
+        """Persist progress without pretending that the job changed phase."""
+        payload = self.get(job_id)
+        state = JobState(payload["state"])
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE jobs SET progress_json = ?, updated_at = ? WHERE job_id = ?",
+                (json.dumps(progress), self._now(), job_id),
+            )
+            self._event(connection, job_id, state, progress)
+
     def resume(self, job_id: str) -> JobState:
         payload = self.get(job_id)
         if payload["state"] != JobState.PAUSED.value or not payload["resume_state"]:

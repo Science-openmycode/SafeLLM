@@ -1,0 +1,15 @@
+schema_version: 1
+catalog_id: qwen2.5-0.5b-instruct
+repo_id: Qwen/Qwen2.5-0.5B-Instruct
+revision: 7ae557604adf67be50417f59c2c2f167def9a775
+adapter_id: qwen2
+source:
+  format: safetensors
+  dtype: bfloat16
+conversion:
+  output_dtype: bfloat16
+  expansion_h: 128
+  tile_mib: 256
+runtime:
+  preferred: hf
+  fallback: vllm

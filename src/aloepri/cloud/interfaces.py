@@ -43,6 +43,8 @@ class ObjectStore(Protocol):
 
     def object_metadata(self, uri: str) -> dict[str, Any]: ...
 
+    def download_prefix(self, uri: str, destination: Path) -> list[Path]: ...
+
 
 class RemoteHost(Protocol):
     def run(

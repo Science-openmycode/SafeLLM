@@ -215,6 +215,20 @@ class SafeTensorRangeSink:
             handle.seek(self._data_start + start + byte_offset)
             handle.write(data)
 
+    def read_range(self, name: str, byte_offset: int, length: int) -> bytes:
+        try:
+            start, end = self._offsets[name]
+        except KeyError as error:
+            raise KeyError(f"unknown output tensor: {name}") from error
+        if byte_offset < 0 or length < 0 or byte_offset + length > end - start:
+            raise ValueError(f"read exceeds tensor boundary: {name}")
+        with self.partial_path.open("rb", buffering=0) as handle:
+            handle.seek(self._data_start + start + byte_offset)
+            payload = handle.read(length)
+        if len(payload) != length:
+            raise OSError(f"short partial tensor read: {name}")
+        return payload
+
     def flush(self) -> None:
         with self.partial_path.open("r+b", buffering=0) as handle:
             handle.flush()

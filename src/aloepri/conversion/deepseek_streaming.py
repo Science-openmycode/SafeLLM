@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,9 +20,9 @@ from aloepri.conversion.paper_qwen2 import (
     transform_input_projection,
     transform_output_projection,
 )
-from aloepri.formats.deepseek_fp8 import dequantize_fp8, quantize_fp8
+from aloepri.formats.deepseek_fp8 import dequantize_fp8, quantize_fp8_bounded
 from aloepri.keys.generate import generate_vocab_key
-from aloepri.tensor_io import SafeTensorRangeSource
+from aloepri.tensor_io import SafeTensorRangeSink, SafeTensorRangeSource, TensorOutputSpec
 from aloepri.transforms.deepseek import (
     DeepseekLayerKey,
     make_deepseek_key,
@@ -33,7 +35,7 @@ from aloepri.transforms.paper_key_matrix import (
     make_compatible_inverse_family,
     make_paper_key_pair,
 )
-from aloepri.transforms.paper_noise import add_paper_weight_noise
+from aloepri.transforms.paper_noise import add_paper_weight_noise_bounded
 from aloepri.transforms.qwen_structural import make_dynamic_rope_block_order
 from aloepri.transforms.vocab import permute_vocab_rows
 
@@ -160,23 +162,28 @@ class IndexedSafeTensorSource:
             and tuple(quantization.get("weight_block_size", ())) == (128, 128)
         )
         self.range_source = SafeTensorRangeSource(self.root) if self.fp8_block else None
+        self._decoded_dtype_cache: dict[str, torch.dtype] = {}
+
+    @staticmethod
+    def _torch_dtype(dtype: str) -> torch.dtype:
+        dtype_map = {
+            "F8_E4M3": torch.float8_e4m3fn,
+            "F8_E4M3FN": torch.float8_e4m3fn,
+            "F16": torch.float16,
+            "BF16": torch.bfloat16,
+            "F32": torch.float32,
+            "I64": torch.int64,
+            "I32": torch.int32,
+        }
+        try:
+            return dtype_map[dtype]
+        except KeyError as error:
+            raise ValueError(f"unsupported range-read dtype: {dtype}") from error
 
     def _raw(self, name: str) -> Tensor:
         if self.range_source is not None:
             metadata = self.range_source.metadata(name)
-            dtype_map = {
-                "F8_E4M3": torch.float8_e4m3fn,
-                "F8_E4M3FN": torch.float8_e4m3fn,
-                "F16": torch.float16,
-                "BF16": torch.bfloat16,
-                "F32": torch.float32,
-                "I64": torch.int64,
-                "I32": torch.int32,
-            }
-            try:
-                dtype = dtype_map[metadata.dtype]
-            except KeyError as error:
-                raise ValueError(f"unsupported range-read dtype: {metadata.dtype}") from error
+            dtype = self._torch_dtype(metadata.dtype)
             element_size = torch.empty((), dtype=dtype).element_size()
             output = torch.empty(metadata.byte_length // element_size, dtype=dtype)
             tile_bytes = 256 * 1024 * 1024
@@ -198,6 +205,41 @@ class IndexedSafeTensorSource:
             return dequantize_fp8(tensor, self._raw(scale_name))
         return tensor
 
+    def get_dim0(self, name: str, index: int) -> Tensor:
+        """Read one contiguous leading-dimension slice without loading the tensor."""
+
+        if self.fp8_block:
+            raise ValueError(
+                "fused FP8 expert tensors are unsupported; normalize to individual experts"
+            )
+        path = self.root / self.weight_map[name]
+        range_source = SafeTensorRangeSource(path)
+        metadata = range_source.metadata(name)
+        if len(metadata.shape) < 2 or index < 0 or index >= metadata.shape[0]:
+            raise ValueError(f"invalid leading-dimension slice for {name}: {index}")
+        elements = 1
+        for dimension in metadata.shape[1:]:
+            elements *= dimension
+        dtype = self._torch_dtype(metadata.dtype)
+        byte_length = elements * torch.empty((), dtype=dtype).element_size()
+        payload = range_source.read_range(name, index * byte_length, byte_length)
+        return torch.frombuffer(bytearray(payload), dtype=dtype).reshape(metadata.shape[1:]).clone()
+
+    def decoded_dtype(self, name: str) -> torch.dtype:
+        """Return ``get(name).dtype`` without materializing the tensor."""
+
+        cached = self._decoded_dtype_cache.get(name)
+        if cached is not None:
+            return cached
+        scale_name = f"{name.removesuffix('.weight')}.weight_scale_inv"
+        if self.fp8_block and name.endswith(".weight") and scale_name in self.weight_map:
+            dtype = torch.float32
+        else:
+            metadata = SafeTensorRangeSource(self.root / self.weight_map[name]).metadata(name)
+            dtype = self._torch_dtype(metadata.dtype)
+        self._decoded_dtype_cache[name] = dtype
+        return dtype
+
     def shape(self, name: str) -> tuple[int, ...]:
         filename = self.weight_map[name]
         with safe_open(self.root / filename, framework="pt", device="cpu") as handle:
@@ -208,67 +250,56 @@ def _layer_prefix(layer_index: int) -> str:
     return f"model.layers.{layer_index}"
 
 
-def _make_keys(
+def _make_layer_key(
     config: dict[str, Any],
     names: set[str],
     *,
+    layer_index: int,
     seed: int,
     scale_min: float,
     scale_max: float,
-    rope_pair_order: Tensor | None = None,
-    block_beta: int = 1,
-    sampling_gamma: float = 1000.0,
-    blockperm_mode: str = "paper-distribution-boundary-corrected",
-    qk_scale_min: float = 1.0,
-    qk_scale_max: float = 1.0,
-    value_condition_max: float | None = None,
-) -> dict[int, DeepseekLayerKey]:
-    keys: dict[int, DeepseekLayerKey] = {}
-    layers = int(config["num_hidden_layers"]) + int(
-        config.get("num_nextn_predict_layers") or 0
-    )
-    experts = int(config["n_routed_experts"])
+    rope_pair_order: Tensor | None,
+    block_beta: int,
+    sampling_gamma: float,
+    blockperm_mode: str,
+    qk_scale_min: float,
+    qk_scale_max: float,
+    value_condition_max: float | None,
+) -> DeepseekLayerKey:
+    prefix = _layer_prefix(layer_index)
+    has_experts = any(name.startswith(f"{prefix}.mlp.experts.") for name in names)
     intermediate = int(config["moe_intermediate_size"])
-    for layer_index in range(layers):
-        prefix = _layer_prefix(layer_index)
-        has_experts = any(
-            name.startswith(f"{prefix}.mlp.experts.") for name in names
-        )
-        keys[layer_index] = make_deepseek_key(
-            heads=int(config["num_attention_heads"]),
-            q_nope=int(config["qk_nope_head_dim"]),
-            q_rope=int(config["qk_rope_head_dim"]),
-            value_dim=int(config["v_head_dim"]),
-            q_lora_rank=(
-                None
-                if config.get("q_lora_rank") is None
-                else int(config["q_lora_rank"])
-            ),
-            kv_lora_rank=int(config["kv_lora_rank"]),
-            expert_count=experts if has_experts else None,
-            expert_group_count=int(config.get("n_group", 1)),
-            expert_intermediate=intermediate if has_experts else None,
-            nonrouted_intermediate=(
-                intermediate * int(config.get("n_shared_experts") or 0)
-                if has_experts
-                and int(config.get("n_shared_experts") or 0) > 0
-                else int(config["intermediate_size"])
-                if not has_experts
-                else None
-            ),
-            ffn_scale_min=scale_min,
-            ffn_scale_max=scale_max,
-            qk_scale_min=qk_scale_min,
-            qk_scale_max=qk_scale_max,
-            value_condition_max=value_condition_max,
-            rope_pair_order=rope_pair_order,
-            block_beta=block_beta,
-            sampling_gamma=sampling_gamma,
-            blockperm_mode=blockperm_mode,
-            rope_theta=float(config.get("rope_theta", 1_000_000.0)),
-            seed=seed + layer_index * 100_000,
-        )
-    return keys
+    return make_deepseek_key(
+        heads=int(config["num_attention_heads"]),
+        q_nope=int(config["qk_nope_head_dim"]),
+        q_rope=int(config["qk_rope_head_dim"]),
+        value_dim=int(config["v_head_dim"]),
+        q_lora_rank=(
+            None if config.get("q_lora_rank") is None else int(config["q_lora_rank"])
+        ),
+        kv_lora_rank=int(config["kv_lora_rank"]),
+        expert_count=int(config["n_routed_experts"]) if has_experts else None,
+        expert_group_count=int(config.get("n_group", 1)),
+        expert_intermediate=intermediate if has_experts else None,
+        nonrouted_intermediate=(
+            intermediate * int(config.get("n_shared_experts") or 0)
+            if has_experts and int(config.get("n_shared_experts") or 0) > 0
+            else int(config["intermediate_size"])
+            if not has_experts
+            else None
+        ),
+        ffn_scale_min=scale_min,
+        ffn_scale_max=scale_max,
+        qk_scale_min=qk_scale_min,
+        qk_scale_max=qk_scale_max,
+        value_condition_max=value_condition_max,
+        rope_pair_order=rope_pair_order,
+        block_beta=block_beta,
+        sampling_gamma=sampling_gamma,
+        blockperm_mode=blockperm_mode,
+        rope_theta=float(config.get("rope_theta", 1_000_000.0)),
+        seed=seed + layer_index * 100_000,
+    )
 
 
 def _validate_shapes(
@@ -395,8 +426,26 @@ def audit_deepseek_checkpoint(source_root: Path) -> dict[str, Any]:
     }:
         raise ValueError(f"unsupported model_type: {config.get('model_type')}")
     names = set(source.weight_map)
-    keys = _make_keys(config, names, seed=0, scale_min=1.0, scale_max=1.0)
-    _validate_shapes(source, config, keys)
+    layer_count = int(config["num_hidden_layers"]) + int(
+        config.get("num_nextn_predict_layers") or 0
+    )
+    for layer_index in range(layer_count):
+        key = _make_layer_key(
+            config,
+            names,
+            layer_index=layer_index,
+            seed=0,
+            scale_min=1.0,
+            scale_max=1.0,
+            rope_pair_order=None,
+            block_beta=1,
+            sampling_gamma=1000.0,
+            blockperm_mode="paper-distribution-boundary-corrected",
+            qk_scale_min=1.0,
+            qk_scale_max=1.0,
+            value_condition_max=None,
+        )
+        _validate_shapes(source, config, {layer_index: key})
     raw_experts = sum(1 for name in names if _RAW_EXPERT_PATTERN.match(name))
     fused_experts = sum(1 for name in names if name.endswith("mlp.experts.gate_up_proj"))
     return {
@@ -465,6 +514,13 @@ def _consolidate_output_shards(
     new_records: dict[str, dict[str, Any]] = {}
     total = len(groups)
     for index, group in enumerate(groups, start=1):
+        if len(group) == 1 and int(file_records[group[0]]["bytes"]) > maximum_shard_bytes:
+            original = group[0]
+            with safe_open(root / original, framework="pt", device="cpu") as handle:
+                for tensor_name in handle.keys():
+                    new_weight_map[str(tensor_name)] = original
+            new_records[original] = file_records[original]
+            continue
         filename = f"model-{index:05d}-of-{total:05d}.safetensors"
         destination = root / filename
         tensors: dict[str, Tensor] = {}
@@ -520,6 +576,7 @@ def _write_private_configs(
     model_id: str,
     key_id: str,
     paper_complete: dict[str, Any] | None = None,
+    config_overrides: dict[str, Any] | None = None,
 ) -> None:
     for name in ("config.json", "generation_config.json"):
         path = source / name
@@ -536,6 +593,8 @@ def _write_private_configs(
                 if field in payload:
                     payload[field] = _map_token_value(payload[field], tau)
         if name == "config.json":
+            if config_overrides:
+                payload.update(config_overrides)
             if paper_complete is not None:
                 payload["model_type"] = "aloepri_deepseek_v3"
                 payload["architectures"] = ["AloePriDeepseekV3ForCausalLM"]
@@ -626,10 +685,17 @@ def convert_deepseek_checkpoint(
     qk_scale_min: float = 0.5,
     qk_scale_max: float = 2.0,
     value_condition_max: float = 100.0,
+    progress_callback: Callable[[str, int, str], None] | None = None,
+    model_id: str | None = None,
+    key_id: str | None = None,
 ) -> dict[str, Any]:
     """Stream a DeepSeek-V2/V3 MLA+MoE checkpoint with bounded host memory."""
 
     source = IndexedSafeTensorSource(source_root)
+    resolved_model_id = model_id or output_root.name
+    resolved_key_id = key_id or (
+        online_key_root.name if online_key_root is not None else key_root.name
+    )
     config_path = source.root / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     receipt_path = source.root / "download_receipt.json"
@@ -646,10 +712,21 @@ def convert_deepseek_checkpoint(
             raise ValueError("source download receipt is not complete")
     elif normalization_path.is_file():
         normalization = json.loads(normalization_path.read_text(encoding="utf-8"))
+        _verify_normalization_manifest(source.root, normalization)
         source_audit = normalization.get("source_audit", {})
         source_revision = str(source_audit.get("revision", "missing"))
         source_receipt_sha256 = _sha256(normalization_path)
         source_provenance_type = "normalization_manifest"
+        declared_mtp = int(config.get("num_nextn_predict_layers") or 0)
+        if (
+            declared_mtp
+            and source_audit.get("actual_mtp_present") is False
+            and int(source_audit.get("actual_mtp_tensor_count", -1)) == 0
+        ):
+            config["num_nextn_predict_layers"] = 0
+            config["aloepri_source_declared_mtp_layers"] = declared_mtp
+            config["aloepri_effective_mtp_layers"] = 0
+            config["aloepri_mtp_override_basis"] = "verified-normalization-manifest"
     if expected_source_revision is not None and source_revision != expected_source_revision:
         raise ValueError(
             "source revision mismatch: "
@@ -682,6 +759,7 @@ def convert_deepseek_checkpoint(
         names.sort()
     paper_key: PaperKeyPair | None = None
     inverse_family: CompatibleInverseFamily | None = None
+    algorithm1_storage: dict[str, Tensor] = {}
     rope_pair_order: Tensor | None = None
     kappa: float | None = None
     if paper_complete:
@@ -694,6 +772,31 @@ def convert_deepseek_checkpoint(
         inverse_family = make_compatible_inverse_family(
             paper_key, seed=seed + 10_100_000
         )
+        if paper_key.algorithm1_base is not None:
+            algorithm1_storage = {
+                name: tensor.float()
+                for name, tensor in paper_key.algorithm1_base.tensors().items()
+            }
+        paper_key = PaperKeyPair(
+            p=paper_key.p.float(),
+            q=paper_key.q.float(),
+            b=paper_key.b.float(),
+            condition_b=paper_key.condition_b,
+            pq_relative_error=paper_key.pq_relative_error,
+            spectral_norm_p=paper_key.spectral_norm_p,
+            spectral_norm_q=paper_key.spectral_norm_q,
+            algorithm1_base=None,
+        )
+        inverse_family = CompatibleInverseFamily(
+            head=inverse_family.head.float(),
+            attention_q=inverse_family.attention_q.float(),
+            attention_k=inverse_family.attention_k.float(),
+            attention_v=inverse_family.attention_v.float(),
+            ffn_gate=inverse_family.ffn_gate.float(),
+            ffn_up=inverse_family.ffn_up.float(),
+            maximum_relative_error=inverse_family.maximum_relative_error,
+        )
+        gc.collect()
         rope_pair_order = make_dynamic_rope_block_order(
             int(config["qk_rope_head_dim"]),
             beta=block_beta,
@@ -704,21 +807,30 @@ def convert_deepseek_checkpoint(
             seed=seed + 10_200_000,
         )
         kappa = analytic_rms_kappa(paper_key.p)
-    keys = _make_keys(
-        config,
-        name_set,
-        seed=seed,
-        scale_min=ffn_scale_min,
-        scale_max=ffn_scale_max,
-        rope_pair_order=rope_pair_order,
-        block_beta=block_beta if paper_complete else 1,
-        sampling_gamma=sampling_gamma,
-        blockperm_mode=blockperm_mode,
-        qk_scale_min=qk_scale_min if paper_complete else 1.0,
-        qk_scale_max=qk_scale_max if paper_complete else 1.0,
-        value_condition_max=value_condition_max if paper_complete else None,
+    layer_count = int(config["num_hidden_layers"]) + int(
+        config.get("num_nextn_predict_layers") or 0
     )
-    _validate_shapes(source, config, keys)
+
+    def make_layer_key(layer_index: int) -> DeepseekLayerKey:
+        return _make_layer_key(
+            config,
+            name_set,
+            layer_index=layer_index,
+            seed=seed,
+            scale_min=ffn_scale_min,
+            scale_max=ffn_scale_max,
+            rope_pair_order=rope_pair_order,
+            block_beta=block_beta if paper_complete else 1,
+            sampling_gamma=sampling_gamma,
+            blockperm_mode=blockperm_mode,
+            qk_scale_min=qk_scale_min if paper_complete else 1.0,
+            qk_scale_max=qk_scale_max if paper_complete else 1.0,
+            value_condition_max=value_condition_max if paper_complete else None,
+        )
+
+    # Shape validation also stays layer-bounded; no full-model expert key set is retained.
+    for layer_index in range(layer_count):
+        _validate_shapes(source, config, {layer_index: make_layer_key(layer_index)})
     tau: Tensor | None = None
     inverse_tau: Tensor | None = None
     if vocab_permutation:
@@ -778,7 +890,12 @@ def convert_deepseek_checkpoint(
             raise ValueError("partial conversion specification differs from this invocation")
     else:
         output_partial.mkdir(parents=True)
-        progress = {"specification": specification, "weight_map": {}, "files": {}}
+        progress = {
+            "specification": specification,
+            "weight_map": {},
+            "files": {},
+            "fp8_reports": {},
+        }
         _atomic_json(progress_path, progress)
     if key_partial.exists() and not resume:
         raise FileExistsError(f"partial key directory exists: {key_partial}")
@@ -788,8 +905,37 @@ def convert_deepseek_checkpoint(
             raise FileExistsError(f"partial online key directory exists: {online_partial}")
         online_partial.mkdir(parents=True, exist_ok=True)
 
+    key_file_records: dict[str, dict[str, Any]] = progress.setdefault("key_files", {})
+
+    def persist_layer_key(layer_index: int, key: DeepseekLayerKey) -> None:
+        filename = f"layer-{layer_index:03d}-key.safetensors"
+        path = key_partial / filename
+        existing = key_file_records.get(filename)
+        if existing is not None:
+            if (
+                not path.is_file()
+                or path.stat().st_size != existing["bytes"]
+                or _sha256(path) != existing["sha256"]
+            ):
+                raise ValueError(f"resume layer key changed: {filename}")
+            return
+        temporary = path.with_suffix(path.suffix + ".partial")
+        save_file(_key_tensors({layer_index: key}), temporary)
+        os.replace(temporary, path)
+        key_file_records[filename] = {
+            "bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        _atomic_json(progress_path, progress)
+
+    def get_layer_key(layer_index: int) -> DeepseekLayerKey:
+        key = make_layer_key(layer_index)
+        persist_layer_key(layer_index, key)
+        return key
+
     weight_map: dict[str, str] = progress["weight_map"]
     file_records: dict[str, dict[str, Any]] = progress["files"]
+    fp8_reports: dict[str, dict[str, Any]] = progress.setdefault("fp8_reports", {})
     for name, filename in weight_map.items():
         path = output_partial / filename
         record = file_records.get(filename)
@@ -802,11 +948,13 @@ def convert_deepseek_checkpoint(
 
     def save(name: str, tensor: Tensor) -> None:
         if name in weight_map:
+            if progress_callback is not None:
+                progress_callback(name, 0, "resumed")
             return
         filename = f"tensor-{ordinal[name]:05d}-of-{len(names):05d}.safetensors"
         scale_name = f"{name.removesuffix('.weight')}.weight_scale_inv"
         if source.fp8_block and name.endswith(".weight") and tensor.ndim == 2:
-            quantized, scale, _ = quantize_fp8(tensor.float())
+            quantized, scale, report = quantize_fp8_bounded(tensor)
             temporary = (output_partial / filename).with_name(filename + ".partial")
             save_file({name: quantized.cpu(), scale_name: scale.cpu()}, temporary)
             os.replace(temporary, output_partial / filename)
@@ -815,14 +963,96 @@ def convert_deepseek_checkpoint(
                 "sha256": _sha256(output_partial / filename),
             }
             weight_map[scale_name] = filename
+            fp8_reports[name] = {
+                "source_dtype": (
+                    source.range_source.metadata(name).dtype
+                    if source.range_source is not None
+                    else str(tensor.dtype)
+                ),
+                "output_dtype": "float8_e4m3fn",
+                "block_size": list(report.block_size),
+                "padded_shape": list(report.padded_shape),
+                "scale_min": report.scale_min,
+                "scale_max": report.scale_max,
+                "saturation_rate": report.saturation_rate,
+                "max_abs_error": report.max_abs_error,
+            }
         else:
             record = _save_tensor(output_partial / filename, name, tensor)
         weight_map[name] = filename
         file_records[filename] = record
         _atomic_json(progress_path, progress)
+        if progress_callback is not None:
+            progress_callback(name, 0, "completed")
+
+    tensor_tiles: dict[str, dict[str, str]] = progress.setdefault("tensor_tiles", {})
+
+    def save_dim0_slices(
+        name: str,
+        output_shape: tuple[int, ...],
+        build_slice: Callable[[int], Tensor],
+    ) -> None:
+        if name in weight_map:
+            return
+        filename = f"tensor-{ordinal[name]:05d}-of-{len(names):05d}.safetensors"
+        destination = output_partial / filename
+        source_file = source.root / source.weight_map[name]
+        source_metadata = SafeTensorRangeSource(source_file).metadata(name)
+        if source_metadata.dtype not in {"F16", "BF16", "F32"}:
+            raise ValueError(f"streamed fused tensor dtype is unsupported: {source_metadata.dtype}")
+        slice_bytes = TensorOutputSpec(
+            name, source_metadata.dtype, output_shape[1:]
+        ).byte_length
+        completed = tensor_tiles.setdefault(name, {})
+        partial = destination.with_suffix(destination.suffix + ".partial")
+        if destination.is_file() and not partial.exists():
+            if len(completed) != output_shape[0]:
+                raise ValueError(f"committed streamed tensor has incomplete progress: {name}")
+            committed = SafeTensorRangeSource(destination)
+            for index in range(output_shape[0]):
+                payload = committed.read_range(name, index * slice_bytes, slice_bytes)
+                if hashlib.sha256(payload).hexdigest() != completed.get(str(index)):
+                    raise ValueError(f"committed resume tile changed for {name}[{index}]")
+            weight_map[name] = filename
+            file_records[filename] = {
+                "bytes": destination.stat().st_size,
+                "sha256": _sha256(destination),
+            }
+            _atomic_json(progress_path, progress)
+            if progress_callback is not None:
+                progress_callback(name, output_shape[0] - 1, "resumed")
+            return
+        sink = SafeTensorRangeSink(
+            destination,
+            (TensorOutputSpec(name, source_metadata.dtype, output_shape),),
+        )
+        for index in range(output_shape[0]):
+            existing = completed.get(str(index))
+            if existing is not None:
+                payload = sink.read_range(name, index * slice_bytes, slice_bytes)
+                if hashlib.sha256(payload).hexdigest() != existing:
+                    raise ValueError(f"resume tile changed for {name}[{index}]")
+                continue
+            tensor_slice = build_slice(index).detach().contiguous().cpu()
+            payload = tensor_slice.view(torch.uint8).numpy().tobytes()
+            if len(payload) != slice_bytes:
+                raise ValueError(f"streamed slice has a wrong shape for {name}[{index}]")
+            sink.write_range(name, index * slice_bytes, payload)
+            sink.flush()
+            completed[str(index)] = hashlib.sha256(payload).hexdigest()
+            _atomic_json(progress_path, progress)
+            if progress_callback is not None:
+                progress_callback(name, index, "completed")
+        digest = sink.commit()
+        weight_map[name] = filename
+        file_records[filename] = {"bytes": destination.stat().st_size, "sha256": digest}
+        _atomic_json(progress_path, progress)
 
     handled: set[str] = set(weight_map)
-    for layer_index, key in keys.items():
+    for layer_index in range(layer_count):
+        key = get_layer_key(layer_index)
+        if progress_callback is not None:
+            progress_callback(f"model.layers.{layer_index}.self_attn", 0, "starting")
         prefix = f"{_layer_prefix(layer_index)}.self_attn"
         query_name = (
             f"{prefix}.q_b_proj.weight"
@@ -922,7 +1152,7 @@ def convert_deepseek_checkpoint(
                 value = transformed[field]
                 assert value is not None
                 if paper_complete:
-                    value = value.to(source.get(name).dtype)
+                    value = value.to(source.decoded_dtype(name))
                 save(name, value)
                 handled.add(name)
             for field, name in optional_names.items():
@@ -930,7 +1160,7 @@ def convert_deepseek_checkpoint(
                     value = transformed[field]
                     assert value is not None
                     if paper_complete:
-                        value = value.to(source.get(name).dtype)
+                        value = value.to(source.decoded_dtype(name))
                     save(name, value)
                     handled.add(name)
 
@@ -939,12 +1169,106 @@ def convert_deepseek_checkpoint(
         save("model.rotary_emb.aloepri_pair_order", rope_pair_order)
         handled.add("model.rotary_emb.aloepri_pair_order")
 
+    # Fused expert checkpoints are processed one expert at a time and written
+    # directly into a preallocated Safetensors tensor.
+    for layer_index in range(layer_count):
+        prefix = f"model.layers.{layer_index}.mlp.experts"
+        gate_up_name = f"{prefix}.gate_up_proj"
+        down_name = f"{prefix}.down_proj"
+        if gate_up_name not in name_set:
+            continue
+        key = get_layer_key(layer_index)
+        if key.expert_order is None:
+            raise ValueError(f"fused expert key is missing for layer {layer_index}")
+        assert key.expert_ffn_orders is not None
+        assert key.expert_ffn_scales is not None
+        expert_count = int(key.expert_order.numel())
+        intermediate = int(config["moe_intermediate_size"])
+        if paper_complete:
+            assert paper_key is not None
+            private_hidden = int(paper_key.p.shape[1])
+        else:
+            private_hidden = int(config["hidden_size"])
+        norm = (
+            source.get(f"model.layers.{layer_index}.post_attention_layernorm.weight")
+            if paper_complete
+            else None
+        )
+
+        current_key = key
+        current_gate_up_name = gate_up_name
+        current_down_name = down_name
+        current_intermediate = intermediate
+        current_norm = norm
+
+        def build_gate_up(
+            expert_index: int,
+            current_key: DeepseekLayerKey = current_key,
+            current_name: str = current_gate_up_name,
+            current_intermediate: int = current_intermediate,
+            current_norm: Tensor | None = current_norm,
+        ) -> Tensor:
+            old_expert = int(cast(Tensor, current_key.expert_order)[expert_index])
+            source_slice = source.get_dim0(current_name, old_expert)
+            gate = source_slice[:current_intermediate]
+            up = source_slice[current_intermediate:]
+            order = cast(Tensor, current_key.expert_ffn_orders)[expert_index]
+            scales = cast(Tensor, current_key.expert_ffn_scales)[expert_index]
+            gate = gate.index_select(0, order)
+            up = (up.index_select(0, order).float() / scales.float().unsqueeze(1)).to(
+                up.dtype
+            )
+            if paper_complete:
+                assert inverse_family is not None and current_norm is not None
+                gate = transform_input_projection(gate, current_norm, inverse_family.ffn_gate)
+                up = transform_input_projection(up, current_norm, inverse_family.ffn_up)
+            return torch.cat((gate, up)).to(source_slice.dtype)
+
+        save_dim0_slices(
+            gate_up_name,
+            (expert_count, 2 * intermediate, private_hidden),
+            build_gate_up,
+        )
+        handled.add(gate_up_name)
+
+        def build_down(
+            expert_index: int,
+            current_key: DeepseekLayerKey = current_key,
+            current_name: str = current_down_name,
+        ) -> Tensor:
+            old_expert = int(cast(Tensor, current_key.expert_order)[expert_index])
+            down = source.get_dim0(current_name, old_expert)
+            source_dtype = down.dtype
+            order = cast(Tensor, current_key.expert_ffn_orders)[expert_index]
+            scales = cast(Tensor, current_key.expert_ffn_scales)[expert_index]
+            down = (down.index_select(1, order).float() * scales.float().unsqueeze(0)).to(
+                down.dtype
+            )
+            if paper_complete:
+                assert paper_key is not None
+                down = transform_output_projection(down, paper_key.p)
+            return down.to(source_dtype)
+
+        save_dim0_slices(
+            down_name,
+            (expert_count, private_hidden, intermediate),
+            build_down,
+        )
+        handled.add(down_name)
+
+    cached_layer_index: int | None = None
+    cached_layer_key: DeepseekLayerKey | None = None
     for name in source_names:
         if name in handled:
             continue
+        if progress_callback is not None:
+            progress_callback(name, 0, "starting")
         layer_match = _LAYER_PATTERN.match(name)
         current_layer_index = int(layer_match.group(1)) if layer_match else None
-        layer_key = keys.get(current_layer_index) if current_layer_index is not None else None
+        if current_layer_index is not None and current_layer_index != cached_layer_index:
+            cached_layer_key = get_layer_key(current_layer_index)
+            cached_layer_index = current_layer_index
+        layer_key = cached_layer_key if current_layer_index is not None else None
         raw_match = _RAW_EXPERT_PATTERN.match(name)
         nonrouted_match = _NONROUTED_FFN_PATTERN.match(name)
         if raw_match and layer_key is not None and layer_key.expert_order is not None:
@@ -1112,7 +1436,7 @@ def convert_deepseek_checkpoint(
         ):
             assert kappa is not None and paper_key is not None
             tensor = torch.full(
-                (paper_key.p.shape[1],), kappa, dtype=source.get(name).dtype
+                (paper_key.p.shape[1],), kappa, dtype=source.decoded_dtype(name)
             )
         elif (
             paper_complete
@@ -1121,8 +1445,11 @@ def convert_deepseek_checkpoint(
             and name.endswith(".embed_tokens.weight")
         ):
             assert paper_key is not None and tau is not None
-            noisy, _ = add_paper_weight_noise(
-                source.get(name), alpha=alpha_e, seed=seed + 11_000_000
+            noisy, _ = add_paper_weight_noise_bounded(
+                source.get(name),
+                alpha=alpha_e,
+                seed=seed + 11_000_000,
+                in_place=True,
             )
             tensor = permute_vocab_rows(noisy @ paper_key.p.float(), tau)
         elif (
@@ -1132,8 +1459,11 @@ def convert_deepseek_checkpoint(
             and name.endswith(".shared_head.head.weight")
         ):
             assert inverse_family is not None and tau is not None
-            noisy, _ = add_paper_weight_noise(
-                source.get(name), alpha=alpha_h, seed=seed + 12_000_000
+            noisy, _ = add_paper_weight_noise_bounded(
+                source.get(name),
+                alpha=alpha_h,
+                seed=seed + 12_000_000,
+                in_place=True,
             )
             final_norm = source.get(f"model.layers.{current_layer_index}.shared_head.norm.weight")
             tensor = permute_vocab_rows(
@@ -1144,18 +1474,21 @@ def convert_deepseek_checkpoint(
         ):
             assert kappa is not None and paper_key is not None
             tensor = torch.full(
-                (paper_key.p.shape[1],), kappa, dtype=source.get(name).dtype
+                (paper_key.p.shape[1],), kappa, dtype=source.decoded_dtype(name)
             )
         elif paper_complete and name == "model.norm.weight":
             assert kappa is not None and paper_key is not None
             tensor = torch.full(
-                (paper_key.p.shape[1],), kappa, dtype=source.get(name).dtype
+                (paper_key.p.shape[1],), kappa, dtype=source.decoded_dtype(name)
             )
         elif tau is not None and name == "model.embed_tokens.weight":
             if paper_complete:
                 assert paper_key is not None
-                noisy, _ = add_paper_weight_noise(
-                    source.get(name), alpha=alpha_e, seed=seed + 11_000_000
+                noisy, _ = add_paper_weight_noise_bounded(
+                    source.get(name),
+                    alpha=alpha_e,
+                    seed=seed + 11_000_000,
+                    in_place=True,
                 )
                 tensor = permute_vocab_rows(noisy @ paper_key.p.float(), tau)
             else:
@@ -1163,8 +1496,11 @@ def convert_deepseek_checkpoint(
         elif tau is not None and name == "lm_head.weight":
             if paper_complete:
                 assert inverse_family is not None
-                noisy, _ = add_paper_weight_noise(
-                    source.get(name), alpha=alpha_h, seed=seed + 12_000_000
+                noisy, _ = add_paper_weight_noise_bounded(
+                    source.get(name),
+                    alpha=alpha_h,
+                    seed=seed + 12_000_000,
+                    in_place=True,
                 )
                 final_norm = source.get("model.norm.weight")
                 tensor = permute_vocab_rows(
@@ -1178,7 +1514,7 @@ def convert_deepseek_checkpoint(
         else:
             tensor = source.get(name)
         if paper_complete:
-            tensor = tensor.to(source.get(name).dtype)
+            tensor = tensor.to(source.decoded_dtype(name))
         save(name, tensor)
         handled.add(name)
 
@@ -1202,8 +1538,8 @@ def convert_deepseek_checkpoint(
         source.root,
         output_partial,
         tau=tau,
-        model_id=output_root.name,
-        key_id=(online_key_root.name if online_key_root is not None else key_root.name),
+        model_id=resolved_model_id,
+        key_id=resolved_key_id,
         paper_complete=(
             {
                 "plain_hidden_size": int(config["hidden_size"]),
@@ -1216,28 +1552,43 @@ def convert_deepseek_checkpoint(
             if paper_complete
             else None
         ),
+        config_overrides={
+            key: config[key]
+            for key in (
+                "num_nextn_predict_layers",
+                "aloepri_source_declared_mtp_layers",
+                "aloepri_effective_mtp_layers",
+                "aloepri_mtp_override_basis",
+            )
+            if key in config
+        },
     )
-    progress_path.unlink()
-
     architecture_key_path = key_partial / "offline_master_key.safetensors"
-    offline_tensors = _key_tensors(keys)
+    offline_tensors: dict[str, Tensor] = {}
+    layer_key_paths = sorted(key_partial.glob("layer-*-key.safetensors"))
+    # Preserve the legacy single-file key package for small models.  Large MoE
+    # checkpoints remain layer-sharded so their full expert keys never coexist in RAM.
+    if sum(path.stat().st_size for path in layer_key_paths) <= 512 * 1024 * 1024:
+        for path in layer_key_paths:
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                for tensor_name in handle.keys():
+                    offline_tensors[str(tensor_name)] = handle.get_tensor(tensor_name)
     if paper_complete:
         assert paper_key is not None and inverse_family is not None
         offline_tensors["p.residual"] = paper_key.p
         offline_tensors["q.base"] = paper_key.q
         offline_tensors.update(inverse_family.tensors())
-        if paper_key.algorithm1_base is not None:
-            offline_tensors.update(paper_key.algorithm1_base.tensors())
+        offline_tensors.update(algorithm1_storage)
     if tau is not None and inverse_tau is not None:
         offline_tensors["tau"] = tau
         offline_tensors["inverse_tau"] = inverse_tau
     save_file(offline_tensors, architecture_key_path)
     key_metadata = {
         "schema_version": 1,
-        "model_id": output_root.name,
-        "offline_key_id": key_root.name,
+        "model_id": resolved_model_id,
+        "offline_key_id": f"{resolved_key_id}-offline",
         "online_key_id": (
-            online_key_root.name if online_key_root is not None else None
+            resolved_key_id if online_key_root is not None else None
         ),
         "model_type": config["model_type"],
         "transform": (
@@ -1286,8 +1637,8 @@ def convert_deepseek_checkpoint(
         online_metadata = {
             "schema_version": 1,
             "package_type": "online_key",
-            "model_id": output_root.name,
-            "key_id": online_key_root.name if online_key_root is not None else "",
+            "model_id": resolved_model_id,
+            "key_id": resolved_key_id if online_key_root is not None else "",
             "source_revision": source_revision,
             "transform_version": specification["transform_version"],
             "vocab_size": int(config["vocab_size"]),
@@ -1306,18 +1657,16 @@ def convert_deepseek_checkpoint(
 
     files = []
     for path in sorted(output_partial.iterdir()):
-        if path.is_file():
+        if path.is_file() and path != progress_path:
             files.append(
                 {"path": path.name, "bytes": path.stat().st_size, "sha256": _sha256(path)}
             )
     manifest = {
         "metadata": {
             "schema_version": 1,
-            "model_id": output_root.name,
-            "key_id": (
-                online_key_root.name if online_key_root is not None else key_root.name
-            ),
-            "offline_key_id": key_root.name,
+            "model_id": resolved_model_id,
+            "key_id": resolved_key_id,
+            "offline_key_id": f"{resolved_key_id}-offline",
             "transform_mode": (
                 "deepseek_paper_complete"
                 if paper_complete
@@ -1341,10 +1690,22 @@ def convert_deepseek_checkpoint(
             "qk_scale_min": qk_scale_min if paper_complete else 1.0,
             "qk_scale_max": qk_scale_max if paper_complete else 1.0,
             "value_condition_max": value_condition_max if paper_complete else None,
+            "source_declared_mtp_layers": config.get(
+                "aloepri_source_declared_mtp_layers",
+                config.get("num_nextn_predict_layers", 0),
+            ),
+            "effective_mtp_layers": config.get("num_nextn_predict_layers", 0),
+            "mtp_override_basis": config.get("aloepri_mtp_override_basis"),
+            "fp8": {
+                "enabled": source.fp8_block,
+                "block_size": [128, 128] if source.fp8_block else None,
+                "tensors": fp8_reports,
+            },
         },
         "files": files,
     }
     _atomic_json(output_partial / "aloepri_manifest.json", manifest)
+    progress_path.unlink()
     os.replace(output_partial, output_root)
     os.replace(key_partial, key_root)
     if online_partial is not None and online_key_root is not None:
