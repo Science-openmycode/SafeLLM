@@ -22,7 +22,12 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert "隐变智模部署" in page.text
         assert 'id="wizard-family"' in page.text
         assert 'id="wizard-model"' in page.text
+        assert 'id="model-grid" class="model-browser"' in page.text
         assert 'id="ssh-command"' in page.text
+        script = client.get("/app.js")
+        assert script.status_code == 200
+        assert 'data-catalog-family="${escapeHtml(family)}"' in script.text
+        assert '<details class="model-family"' not in script.text
         models = client.get("/api/models")
         assert models.status_code == 200
         assert models.json()[0]["catalog_id"]

@@ -9,6 +9,7 @@ const pages = {
 const sessionServerSecrets = new Map();
 let catalogModels = [];
 let modelCatalogRendered = false;
+let activeCatalogFamily = "";
 let refreshing = false;
 
 function escapeHtml(value) {
@@ -126,22 +127,38 @@ function renderModelOptions(models, family, selectedModel = "") {
   }
 }
 
-function renderModelCatalog(models) {
-  return [...groupedModels(models).entries()].map(([family, entries], index) => {
-    const runnable = entries.filter(modelCanRun).length;
-    const cards = entries.map((model) => `
-      <article class="card model-card">
-        <div class="model-card-head"><div><small>${escapeHtml(model.parameter_summary)}</small><h3>${escapeHtml(model.display_name)}</h3></div><strong>${formatBytes(model.expected_bytes)}</strong></div>
-        <p>${escapeHtml(model.adapter_id)} · ${escapeHtml(model.license)}<br>${escapeHtml(model.support_note)}</p>
-        <span class="badge ${escapeHtml(model.status)}">${model.deployment_ready ? "可转换、可部署" : model.conversion_ready ? "可转换" : "结构已识别"}</span>
-        ${modelCanRun(model) ? `<button class="primary model-deploy" data-family="${escapeHtml(family)}" data-model="${escapeHtml(model.catalog_id)}">选择这个型号</button>` : ""}
-      </article>`).join("");
+function renderModelCatalog(models, requestedFamily = activeCatalogFamily) {
+  const families = groupedModels(models);
+  const familyNames = [...families.keys()];
+  if (!familyNames.length) return '<div class="empty">暂无可展示的模型</div>';
+
+  activeCatalogFamily = families.has(requestedFamily) ? requestedFamily : familyNames[0];
+  const entries = families.get(activeCatalogFamily) || [];
+  const runnable = entries.filter(modelCanRun).length;
+  const familyTabs = [...families.entries()].map(([family, familyEntries]) => {
+    const selected = family === activeCatalogFamily;
     return `
-      <details class="model-family" ${index === 0 ? "open" : ""}>
-        <summary><span><b>${escapeHtml(family)}</b><small>${entries.length} 种参数量或版本</small></span><em>${runnable} 个可用</em></summary>
-        <div class="family-model-grid">${cards}</div>
-      </details>`;
+      <button class="family-tab${selected ? " active" : ""}" type="button" role="tab"
+        aria-selected="${selected}" data-catalog-family="${escapeHtml(family)}">
+        <span>${escapeHtml(family)}</span><small>${familyEntries.length} 个型号</small>
+      </button>`;
   }).join("");
+  const cards = entries.map((model) => `
+    <article class="card model-card">
+      <div class="model-card-head"><div><small>${escapeHtml(model.parameter_summary)}</small><h3>${escapeHtml(model.display_name)}</h3></div><strong>${formatBytes(model.expected_bytes)}</strong></div>
+      <p>${escapeHtml(model.adapter_id)} · ${escapeHtml(model.license)}<br>${escapeHtml(model.support_note)}</p>
+      <div class="model-card-actions">
+        <span class="badge ${escapeHtml(model.status)}">${model.deployment_ready ? "可转换、可部署" : model.conversion_ready ? "可转换" : "结构已识别"}</span>
+        ${modelCanRun(model) ? `<button class="primary model-deploy" data-family="${escapeHtml(activeCatalogFamily)}" data-model="${escapeHtml(model.catalog_id)}">选择这个型号</button>` : ""}
+      </div>
+    </article>`).join("");
+  return `
+    <div class="family-tabs" role="tablist" aria-label="模型族">${familyTabs}</div>
+    <div class="family-catalog-head">
+      <div><small>当前模型族</small><h3>${escapeHtml(activeCatalogFamily)}</h3></div>
+      <span>${entries.length} 个型号 · ${runnable} 个可用</span>
+    </div>
+    <div class="family-model-grid" role="tabpanel">${cards}</div>`;
 }
 
 function updateModelNote() {
@@ -301,6 +318,14 @@ document.querySelector("#ssh-command").addEventListener("change", (event) => {
 });
 
 document.addEventListener("click", async (event) => {
+  const familyTab = event.target.closest("[data-catalog-family]");
+  if (familyTab) {
+    document.querySelector("#model-grid").innerHTML = renderModelCatalog(
+      catalogModels,
+      familyTab.dataset.catalogFamily,
+    );
+    return;
+  }
   const chat = event.target.closest("[data-launch-chat]");
   if (chat) {
     if (chat.disabled) return;
@@ -528,7 +553,7 @@ document.querySelector("#key-restore-form").addEventListener("submit", async (ev
 function autoRefresh() {
   const userIsChoosing = document.querySelector("form:not([hidden])")
     || document.querySelector(".card:hover")
-    || document.querySelector(".model-family:hover");
+    || document.querySelector(".family-tabs:hover");
   if (!userIsChoosing) refresh();
 }
 
