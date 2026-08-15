@@ -28,7 +28,8 @@
       <section id="jobs" class="page">
         <form id="deploy-wizard" class="panel form" hidden>
           <h2>新建改造任务</h2>
-          <label class="field full"><span>选择模型</span><select name="model" id="wizard-model" required><option value="">正在加载模型目录…</option></select></label>
+          <label class="field"><span>模型族</span><select id="wizard-family" required><option value="">正在加载模型族…</option></select></label>
+          <label class="field"><span>参数量与版本</span><select name="model" id="wizard-model" required disabled><option value="">请先选择模型族</option></select></label>
           <div id="wizard-model-note" class="model-note full">请选择模型。已实测与同架构可执行模型会分别标识。</div>
           <input name="destination" value="data/private/yinbian-model" placeholder="本地私有模型目录" required>
           <select name="mode"><option value="direct-deploy">改造、上传并自动部署</option><option value="local-only">仅在本地改造</option></select>

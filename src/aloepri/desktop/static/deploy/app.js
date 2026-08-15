@@ -76,25 +76,71 @@ function modelCanRun(model) {
   return model.conversion_ready === true;
 }
 
-function renderModelOptions(models) {
-  const options = ['<option value="">请选择要改造和部署的模型</option>'];
+function groupedModels(models) {
   const families = new Map();
   [...models]
-    .sort((left, right) => Number(left.expected_bytes || Number.MAX_SAFE_INTEGER) - Number(right.expected_bytes || Number.MAX_SAFE_INTEGER))
+    .sort((left, right) => {
+      const familyOrder = String(left.family_name || left.family_id || "其他模型")
+        .localeCompare(String(right.family_name || right.family_id || "其他模型"), "zh-CN");
+      if (familyOrder !== 0) return familyOrder;
+      return Number(left.expected_bytes || Number.MAX_SAFE_INTEGER) - Number(right.expected_bytes || Number.MAX_SAFE_INTEGER);
+    })
     .forEach((model) => {
       const family = model.family_name || model.family_id || "其他模型";
       if (!families.has(family)) families.set(family, []);
       families.get(family).push(model);
     });
+  return families;
+}
+
+function renderFamilyOptions(models, selectedFamily = "") {
+  const families = groupedModels(models);
+  const options = ['<option value="">请选择模型族</option>'];
   for (const [family, entries] of families.entries()) {
-    const rows = entries.map((model) => {
-      const ready = modelCanRun(model);
-      const state = model.deployment_ready ? "可转换、可部署" : ready ? "可转换，部署待验收" : "结构已识别，转换器开发中";
-      return `<option value="${escapeHtml(model.catalog_id)}" ${ready ? "" : "disabled"}>${escapeHtml(model.display_name)} · ${state} · ${formatBytes(model.expected_bytes)}</option>`;
-    }).join("");
-    options.push(`<optgroup label="${escapeHtml(family)}">${rows}</optgroup>`);
+    const runnable = entries.filter(modelCanRun).length;
+    options.push(`<option value="${escapeHtml(family)}">${escapeHtml(family)} · ${entries.length} 个型号 · ${runnable} 个可用</option>`);
   }
-  document.querySelector("#wizard-model").innerHTML = options.join("");
+  const select = document.querySelector("#wizard-family");
+  select.innerHTML = options.join("");
+  if (families.has(selectedFamily)) select.value = selectedFamily;
+}
+
+function renderModelOptions(models, family, selectedModel = "") {
+  const select = document.querySelector("#wizard-model");
+  const entries = groupedModels(models).get(family) || [];
+  if (!family) {
+    select.innerHTML = '<option value="">请先选择模型族</option>';
+    select.disabled = true;
+    return;
+  }
+  const rows = entries.map((model) => {
+    const ready = modelCanRun(model);
+    const state = model.deployment_ready ? "可部署" : ready ? "可转换" : "开发中";
+    return `<option value="${escapeHtml(model.catalog_id)}" ${ready ? "" : "disabled"}>${escapeHtml(model.display_name)} · ${escapeHtml(model.parameter_summary)} · ${formatBytes(model.expected_bytes)} · ${state}</option>`;
+  });
+  select.innerHTML = ['<option value="">请选择参数量与版本</option>', ...rows].join("");
+  select.disabled = false;
+  if (entries.some((model) => model.catalog_id === selectedModel && modelCanRun(model))) {
+    select.value = selectedModel;
+  }
+}
+
+function renderModelCatalog(models) {
+  return [...groupedModels(models).entries()].map(([family, entries], index) => {
+    const runnable = entries.filter(modelCanRun).length;
+    const cards = entries.map((model) => `
+      <article class="card model-card">
+        <div class="model-card-head"><div><small>${escapeHtml(model.parameter_summary)}</small><h3>${escapeHtml(model.display_name)}</h3></div><strong>${formatBytes(model.expected_bytes)}</strong></div>
+        <p>${escapeHtml(model.adapter_id)} · ${escapeHtml(model.license)}<br>${escapeHtml(model.support_note)}</p>
+        <span class="badge ${escapeHtml(model.status)}">${model.deployment_ready ? "可转换、可部署" : model.conversion_ready ? "可转换" : "结构已识别"}</span>
+        ${modelCanRun(model) ? `<button class="primary model-deploy" data-family="${escapeHtml(family)}" data-model="${escapeHtml(model.catalog_id)}">选择这个型号</button>` : ""}
+      </article>`).join("");
+    return `
+      <details class="model-family" ${index === 0 ? "open" : ""}>
+        <summary><span><b>${escapeHtml(family)}</b><small>${entries.length} 种参数量或版本</small></span><em>${runnable} 个可用</em></summary>
+        <div class="family-model-grid">${cards}</div>
+      </details>`;
+  }).join("");
 }
 
 function updateModelNote() {
@@ -162,11 +208,10 @@ async function refresh() {
     catalogModels = models;
     const activeJobs = dashboard.jobs.filter((job) => !["CANCELLED", "COMPLETED"].includes(job.status));
     const terminalJobs = dashboard.jobs.filter((job) => ["CANCELLED", "COMPLETED"].includes(job.status));
+    const selectedFamily = document.querySelector("#wizard-family").value;
     const selectedModel = document.querySelector("#wizard-model").value;
-    renderModelOptions(models);
-    if (models.some((item) => item.catalog_id === selectedModel)) {
-      document.querySelector("#wizard-model").value = selectedModel;
-    }
+    renderFamilyOptions(models, selectedFamily);
+    renderModelOptions(models, document.querySelector("#wizard-family").value, selectedModel);
     updateModelNote();
     const metrics = [
       ["可用模型", dashboard.models],
@@ -178,13 +223,7 @@ async function refresh() {
     document.querySelector("#recent-jobs").innerHTML = activeJobs.length ? jobRows(activeJobs.slice(0, 4)) : '<div class="empty">暂无需要处理的任务，请点击“新建任务”开始</div>';
     document.querySelector("#job-list").innerHTML = activeJobs.length ? jobRows(activeJobs) : '<div class="empty">暂无进行中的任务</div>';
     document.querySelector("#terminal-job-list").innerHTML = terminalJobs.length ? jobRows(terminalJobs) : '<div class="empty">暂无已结束任务</div>';
-    document.querySelector("#model-grid").innerHTML = models.map((model) => `
-      <article class="card">
-        <h3>${escapeHtml(model.display_name)}</h3>
-        <p>${escapeHtml(model.family_name)} · ${escapeHtml(model.parameter_summary)} · ${formatBytes(model.expected_bytes)}<br>${escapeHtml(model.adapter_id)} · ${escapeHtml(model.license)}<br>${escapeHtml(model.support_note)}</p>
-        <span class="badge ${escapeHtml(model.status)}">${model.deployment_ready ? "可转换、可部署" : model.conversion_ready ? "可转换" : "结构已识别"}</span>
-        ${modelCanRun(model) ? `<button class="primary model-deploy" data-model="${escapeHtml(model.catalog_id)}">选择并改造</button>` : ""}
-      </article>`).join("");
+    document.querySelector("#model-grid").innerHTML = renderModelCatalog(models);
     document.querySelector("#wizard-server").innerHTML = '<option value="">请选择服务器</option>' + dashboard.servers.map((server) => `<option value="${escapeHtml(server.server_id)}">${escapeHtml(server.display_name)} · ${escapeHtml(server.username)}@${escapeHtml(server.host)}:${server.port}</option>`).join("");
     document.querySelector("#server-list").innerHTML = dashboard.servers.length ? dashboard.servers.map((server) => {
       const operation = latestServerOperation(server.server_id);
@@ -236,6 +275,10 @@ document.querySelector("#show-server-form").addEventListener("click", () => { do
 document.querySelector("#cancel-server-form").addEventListener("click", () => { document.querySelector("#server-form").hidden = true; });
 document.querySelector("#new-job").addEventListener("click", () => { document.querySelector("#deploy-wizard").hidden = false; });
 document.querySelector("#cancel-wizard").addEventListener("click", () => { document.querySelector("#deploy-wizard").hidden = true; });
+document.querySelector("#wizard-family").addEventListener("change", (event) => {
+  renderModelOptions(catalogModels, event.target.value);
+  updateModelNote();
+});
 document.querySelector("#wizard-model").addEventListener("change", updateModelNote);
 document.querySelector("#server-auth").addEventListener("change", (event) => {
   const password = event.target.value === "password";
@@ -272,6 +315,8 @@ document.addEventListener("click", async (event) => {
   }
   const model = event.target.closest(".model-deploy");
   if (model) {
+    document.querySelector("#wizard-family").value = model.dataset.family;
+    renderModelOptions(catalogModels, model.dataset.family, model.dataset.model);
     document.querySelector("#wizard-model").value = model.dataset.model;
     updateModelNote();
     document.querySelector("#deploy-wizard").hidden = false;

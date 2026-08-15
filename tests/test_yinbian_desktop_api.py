@@ -20,6 +20,7 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         page = client.get("/")
         assert page.status_code == 200
         assert "隐变智模部署" in page.text
+        assert 'id="wizard-family"' in page.text
         assert 'id="wizard-model"' in page.text
         assert 'id="ssh-command"' in page.text
         models = client.get("/api/models")

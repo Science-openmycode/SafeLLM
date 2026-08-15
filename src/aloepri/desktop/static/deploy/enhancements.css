@@ -69,6 +69,99 @@
   color: #9a3412;
 }
 
+.model-family {
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.model-family > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.model-family > summary::-webkit-details-marker {
+  display: none;
+}
+
+.model-family > summary::after {
+  content: "⌄";
+  color: #6b7280;
+  font-size: 20px;
+  transition: transform .2s ease;
+}
+
+.model-family[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.model-family > summary span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-family > summary b {
+  color: #202123;
+  font-size: 16px;
+}
+
+.model-family > summary small,
+.model-family > summary em {
+  color: #6b7280;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.model-family > summary em {
+  margin-left: auto;
+  padding: 5px 9px;
+  border-radius: 99px;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.family-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--line);
+  background: #fafafa;
+}
+
+.family-model-grid .card {
+  margin-top: 14px;
+}
+
+.model-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.model-card-head small {
+  display: block;
+  margin-bottom: 5px;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.model-card-head strong {
+  flex: none;
+  color: #6b7280;
+  font-size: 12px;
+}
+
 .badge.family-compatible {
   background: #fff7ed;
   color: #c2410c;
