@@ -20,6 +20,7 @@ from aloepri.catalog.download import (
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.cloud.ssh import SSHProfile, SSHSession
 from aloepri.conversion.executor import convert_model_checkpoint
+from aloepri.conversion.openseek import normalize_openseek_checkpoint
 from aloepri.keys.directory_vault import (
     online_key_credential_id,
     seal_online_key_directory,
@@ -208,7 +209,22 @@ class ProgressiveConversionPipeline:
                         source_bytes=receipt["bytes"],
                         source_sha256=receipt["sha256"],
                     )
-            config, inventory = inspect_local_checkpoint(source_root)
+            conversion_source = source_root
+            if entry.catalog_id == "openseek-small-v1-sft":
+                normalized = output_root.parent / f".{output_root.name}-openseek-canonical"
+                if not normalized.exists():
+                    self._phase(
+                        plan.job_id,
+                        ProductPhase.SOURCE_VERIFY,
+                        "OpenSeek checkpoint normalization",
+                        progress,
+                    )
+                    normalize_openseek_checkpoint(
+                        source_root=source_root,
+                        output_root=normalized,
+                    )
+                conversion_source = normalized
+            config, inventory = inspect_local_checkpoint(conversion_source)
             registry = default_adapter_registry()
             match = registry.detect(config, inventory)
             if match.adapter_id != plan.adapter or match.status.value != "SUPPORTED":
@@ -226,7 +242,7 @@ class ProgressiveConversionPipeline:
                 convert_model_checkpoint(
                     plan,
                     output_root,
-                    source_root,
+                    conversion_source,
                     offline_key_password=offline_key_password,
                 )
             key_id = str(plan.output.get("key_id", f"key-{plan.job_id[:8]}"))

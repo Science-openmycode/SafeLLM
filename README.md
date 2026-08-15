@@ -2,20 +2,24 @@
 
 ## 多架构与一键部署
 
-当前统一转换入口覆盖以下架构族：
+当前统一检查/转换入口覆盖以下架构族：
 
 - Qwen2/Qwen2.5：0.5B、1.5B、3B、7B、14B、32B、72B；
 - Qwen3 Dense：0.6B、1.7B、4B、8B、14B、32B，包含 Q/K Norm；
 - DeepSeek-V2/V2.5 与 DeepSeek-V3：MLA、MoE、FP8、MTP；
-- GLM Dense 与 GLM4-MoE：融合 SwiGLU、Q/K Norm、部分 RoPE、专家路由、FP8、MTP；
+- GLM Dense 与 GLM4-MoE：融合 SwiGLU、Q/K Norm、部分 RoPE、专家路由、FP8、MTP；GLM 0414/Z1 的分支后置 RMSNorm 已识别但暂不转换；
 - Kimi-K2 与 Kimi-K2.6 文本骨干：MLA、384 专家、FP8 或官方 group-wise INT4。
 
-桌面端按模型族分组显示。选择“改造、上传并自动部署”后，系统会先检查 SSH
+桌面端按模型族分组显示。架构兼容不等于检查点已经完成部署验收：当前只有
+`Qwen2.5-0.5B-Instruct@7ae5576` 开放“改造、上传并自动部署”，其他固定版本只开放
+其已验证到的检查或转换阶段。选择直接部署后，系统会先检查 SSH
 主机、Host Key、Ubuntu、驱动、磁盘、内存和全部 GPU，再按需安装基础运行环境；
 通过后才下载、转换和上传。部署服务只监听远端 `127.0.0.1`，对话程序通过 SSH
-隧道访问。
+隧道访问。候选服务只有在认证的私有生成接口实际完成一次 Token decode 后才会标记
+健康，不再仅凭 HTTP 进程存活判定成功；`/readyz` 也提供同等的进程内生成探针。
 
-Kimi-K2.6 当前完成的是完整文本骨干私有化，不开放图片输入。未知结构、缺失权重、
+Kimi-K2 Thinking 的官方固定版本使用 packed INT4 专家权重，转换器会使用对应 scale
+和 shape 解码；Kimi-K2.6 当前完成的是完整文本骨干私有化，不开放图片输入。未知结构、缺失权重、
 缺失 FP8 scale、缺失 INT4 scale/shape 或资源不足都会在执行阶段拒绝，不能以“同族”
 名义跳过检查。详细边界见
 [模型族与一键部署说明](docs/YINBIAN_1.1_MODEL_FAMILIES_AND_ONE_CLICK.md)。
@@ -40,9 +44,17 @@ yinbian chat stream --deployment <deployment-id> --prompt "介绍一下隐变智
 
 `aloepri` 命令和内部 `src/aloepri` 包名保留一个兼容周期。旧模型、旧密钥和科研证据无需改名。
 
+模型缓存可单独放到非系统盘：
+
+```powershell
+[Environment]::SetEnvironmentVariable("YINBIAN_CACHE_DIR", "E:\YinbianCache", "User")
+```
+
+该设置不移动状态库、密钥或聊天记录，只改变以后下载的可再生成缓存位置。
+
 ## 1.1 发布状态
 
-当前仓库包含 1.1 代码与未签名 Windows 开发安装包。默认自动化结果为 324 通过、1 个真实模型集成测试按环境门禁跳过；该真实 Qwen2.5-0.5B 私有 API 往返测试已另行在 CPU 上通过。正式外发仍需要完成干净 Windows 10/11 安装、受控 Ubuntu GPU 部署、固定 digest 运行镜像、代码签名和发布证据归档。未签名构建只能内部测试。
+当前仓库包含 1.1 代码与未签名 Windows 开发安装包。自动化测试、固定版本目录审计和真实 Qwen2.5-0.5B GPU 私有 API 往返结果见[2026-08-15模型与部署审计](docs/MODEL_SUPPORT_AUDIT_2026-08-15.md)。正式外发仍需要完成干净 Windows 10/11 安装、固定 digest 运行镜像、代码签名和发布证据归档。未签名构建只能内部测试。
 
 ---
 

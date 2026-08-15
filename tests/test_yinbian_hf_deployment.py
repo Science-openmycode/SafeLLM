@@ -15,6 +15,7 @@ from aloepri.cloud.hf_deployment import (
     _find_available_port,
     _native_start_script,
     _native_stop_script,
+    _private_generation_probe,
     _validated_model_root,
     _validated_preuploaded_root,
     _wait_health,
@@ -47,6 +48,17 @@ class ExitedRuntimeSession:
                 "stderr": "",
             }
         raise AssertionError(arguments)
+
+
+class ReadyRuntimeSession:
+    async def run(self, arguments: list[str], *, sudo: bool = False) -> dict[str, Any]:
+        assert not sudo
+        assert arguments[-1].endswith("/healthz")
+        return {
+            "exit_code": 0,
+            "stdout": '{"status":"ready","generated_tokens":1}',
+            "stderr": "",
+        }
 
 
 def test_compose_project_and_port_are_version_isolated(tmp_path: Path) -> None:
@@ -187,3 +199,46 @@ def test_health_check_stops_early_and_redacts_log_after_process_exit() -> None:
     assert "secret-value" not in result["log"]
     assert "<redacted>" in result["log"]
     assert "model failed" in result["log"]
+
+
+def test_health_check_requires_private_generation_readiness() -> None:
+    result = asyncio.run(_wait_health(ReadyRuntimeSession(), 18000, attempts=1))  # type: ignore[arg-type]
+    assert result["pass"] is True
+    assert result["payload"]["generated_tokens"] == 1
+
+
+class PrivateGenerationSession:
+    def __init__(self) -> None:
+        self.arguments: list[str] = []
+
+    async def run(
+        self,
+        arguments: list[str],
+        *,
+        sudo: bool = False,
+        timeout_seconds: float = 300,
+    ) -> dict[str, Any]:
+        assert not sudo
+        assert timeout_seconds == 240
+        self.arguments = arguments
+        return {
+            "exit_code": 0,
+            "stdout": '{"status":"ready","generated_tokens":1}',
+            "stderr": "",
+        }
+
+
+def test_private_generation_probe_sources_remote_secret_without_exposing_it() -> None:
+    session = PrivateGenerationSession()
+    result = asyncio.run(
+        _private_generation_probe(
+            session, 18000,  # type: ignore[arg-type]
+            runtime_env=PurePosixPath("/opt/yinbian/runtime.env"),
+            model_config=PurePosixPath("/opt/yinbian/model/config.json"),
+        )
+    )
+    assert result == {"pass": True, "generated_tokens": 1}
+    command = " ".join(session.arguments)
+    assert "YINBIAN_BEARER_TOKEN" in command
+    assert "Bearer " in command
+    assert "secret" not in command

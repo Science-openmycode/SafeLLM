@@ -48,8 +48,12 @@ def normalize_glm_dense_checkpoint(
 
     source = IndexedSafeTensorSource(source_root)
     config = json.loads((source.root / "config.json").read_text(encoding="utf-8"))
-    if str(config.get("model_type")) != "glm":
-        raise ValueError("GLM dense normalization requires model_type=glm")
+    source_model_type = str(config.get("model_type"))
+    if source_model_type != "glm":
+        raise ValueError(
+            "GLM dense normalization requires model_type=glm; glm4 branch RMSNorm "
+            "needs a dedicated private runtime"
+        )
     if int(config.get("n_routed_experts") or 0):
         raise ValueError("GLM MoE cannot use the dense GLM normalizer")
 
@@ -149,7 +153,7 @@ def normalize_glm_dense_checkpoint(
             "architectures": ["Qwen2ForCausalLM"],
             "model_type": "qwen2",
             "aloepri_source_family": "glm_dense",
-            "aloepri_source_model_type": "glm",
+            "aloepri_source_model_type": source_model_type,
             "aloepri_normalization": "glm_dense_to_qwen2_canonical_v1",
             "partial_rotary_factor": float(config.get("partial_rotary_factor", 0.5)),
         }

@@ -208,9 +208,37 @@ class IndexedSafeTensorSource:
             self._raw_weight_map = raw_weight_map
         else:
             self.config = raw_config
-            self.weight_map = raw_weight_map
             self._raw_weight_map = raw_weight_map
-            self._physical_names = {name: name for name in raw_weight_map}
+            raw_names = set(raw_weight_map)
+            if any(name.endswith(".weight_packed") for name in raw_names):
+                public = {}
+                for physical_name, filename in raw_weight_map.items():
+                    if physical_name.endswith(".weight_packed"):
+                        base = physical_name.removesuffix(".weight_packed")
+                        scale = f"{base}.weight_scale"
+                        shape = f"{base}.weight_shape"
+                        if scale not in raw_names or shape not in raw_names:
+                            raise ValueError(
+                                "packed INT4 tensor is missing scale/shape: "
+                                f"{physical_name}"
+                            )
+                        virtual = f"{base}.weight"
+                        public[virtual] = filename
+                        self._physical_names[virtual] = physical_name
+                        self._packed_int4[virtual] = (physical_name, scale, shape)
+                    elif physical_name.endswith((".weight_scale", ".weight_shape")):
+                        packed = f"{physical_name.rsplit('.', 1)[0]}.weight_packed"
+                        if packed in raw_names:
+                            continue
+                        public[physical_name] = filename
+                        self._physical_names[physical_name] = physical_name
+                    else:
+                        public[physical_name] = filename
+                        self._physical_names[physical_name] = physical_name
+                self.weight_map = public
+            else:
+                self.weight_map = raw_weight_map
+                self._physical_names = {name: name for name in raw_weight_map}
         quantization = self.config.get("quantization_config") or {}
         self.fp8_block = (
             str(quantization.get("quant_method", "")).lower() == "fp8"

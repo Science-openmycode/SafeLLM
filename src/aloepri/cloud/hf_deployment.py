@@ -325,6 +325,14 @@ class HFDeploymentManager:
                         version_root / "server.log" if runtime_mode == "native" else None
                     ),
                 )
+                if health["pass"]:
+                    health["private_generation"] = await _private_generation_probe(
+                        session,
+                        candidate_port,
+                        runtime_env=version_root / "runtime.env",
+                        model_config=version_root / "model" / "config.json",
+                    )
+                    health["pass"] = bool(health["private_generation"]["pass"])
                 self.store.record_health(request.deployment_id, bool(health["pass"]), health)
                 if not health["pass"]:
                     detail = str(health.get("log", "")).strip()
@@ -393,6 +401,14 @@ class HFDeploymentManager:
                 pid_file=version_root / "server.pid" if native else None,
                 log_file=version_root / "server.log" if native else None,
             )
+            if health["pass"]:
+                health["private_generation"] = await _private_generation_probe(
+                    session,
+                    int(deployment["remote_port"]),
+                    runtime_env=version_root / "runtime.env",
+                    model_config=version_root / "model" / "config.json",
+                )
+                health["pass"] = bool(health["private_generation"]["pass"])
         self.store.record_health(deployment_id, bool(health["pass"]), health)
         return self.store.set_deployment_status(
             deployment_id,
@@ -516,6 +532,14 @@ class HFDeploymentManager:
                 pid_file=(previous_root / "server.pid" if runtime_mode == "native" else None),
                 log_file=(previous_root / "server.log" if runtime_mode == "native" else None),
             )
+            if health["pass"]:
+                health["private_generation"] = await _private_generation_probe(
+                    session,
+                    previous_port,
+                    runtime_env=previous_root / "runtime.env",
+                    model_config=previous_root / "model" / "config.json",
+                )
+                health["pass"] = bool(health["private_generation"]["pass"])
             if not health["pass"]:
                 self.store.set_deployment_status(deployment_id, DeploymentStatus.FAILED)
                 raise RuntimeError("previous deployment failed health check")
@@ -875,6 +899,64 @@ async def _wait_health(
         "process_exited": False if pid_file is not None else None,
         "last": last,
         "log": await _remote_log_tail(session, log_file),
+    }
+
+
+async def _private_generation_probe(
+    session: SSHSession,
+    port: int,
+    *,
+    runtime_env: PurePosixPath,
+    model_config: PurePosixPath,
+) -> dict[str, Any]:
+    """Call the authenticated private API without putting secrets in argv/logs."""
+
+    python = r'''import json, os, sys, urllib.request
+config = json.load(open(sys.argv[1], encoding="utf-8"))
+input_id = config.get("bos_token_id", 0)
+if isinstance(input_id, list):
+    input_id = input_id[0] if input_id else 0
+body = json.dumps({
+    "model_id": os.environ["YINBIAN_MODEL_ID"],
+    "key_id": os.environ["YINBIAN_KEY_ID"],
+    "input_ids": [int(input_id)],
+    "max_new_tokens": 1,
+    "temperature": 0.0,
+}).encode()
+request = urllib.request.Request(
+    sys.argv[2],
+    data=body,
+    headers={
+        "Authorization": "Bearer " + os.environ["YINBIAN_BEARER_TOKEN"],
+        "Content-Type": "application/json",
+    },
+)
+response = json.load(urllib.request.urlopen(request, timeout=180))
+if len(response.get("output_ids", [])) != 1:
+    raise RuntimeError("private generation returned no token")
+print(json.dumps({"status": "ready", "generated_tokens": 1}))
+'''
+    script = (
+        "set -a; . "
+        + shlex.quote(str(runtime_env))
+        + "; set +a; python3 -c "
+        + shlex.quote(python)
+        + " "
+        + shlex.quote(str(model_config))
+        + " "
+        + shlex.quote(f"http://127.0.0.1:{port}/v1/private/generate")
+    )
+    result = await session.run(["sh", "-c", script], timeout_seconds=240)
+    if result["exit_code"] != 0:
+        return {"pass": False, "error": "private generation request failed"}
+    try:
+        payload = json.loads(str(result["stdout"]))
+    except json.JSONDecodeError:
+        return {"pass": False, "error": "private generation returned invalid receipt"}
+    return {
+        "pass": payload.get("status") == "ready"
+        and payload.get("generated_tokens") == 1,
+        "generated_tokens": payload.get("generated_tokens"),
     }
 
 

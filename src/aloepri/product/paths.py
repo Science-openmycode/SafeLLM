@@ -62,13 +62,14 @@ def product_paths() -> ProductPaths:
         root = local / "YinbianZhimo"
     else:
         root = Path.home() / ".local" / "share" / "yinbian"
+    cache = _configured_path("YINBIAN_CACHE_DIR", "ALOEPRI_CACHE_DIR") or root / "cache"
     return ProductPaths(
         root=root,
         state=root / "state",
         chat=root / "chat",
         credentials=root / "credentials",
         logs=root / "logs",
-        cache=root / "cache",
+        cache=cache,
     )
 
 

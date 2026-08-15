@@ -112,3 +112,39 @@ def test_kimi_k25_source_exposes_text_prefix_and_int4_as_canonical_weight(
     expected = values.float() * scale.float()
     torch.testing.assert_close(source.get(canonical), expected, rtol=0, atol=0)
     assert source.decoded_dtype(canonical) == torch.bfloat16
+
+
+def test_normalized_pure_kimi_source_exposes_packed_int4_as_logical_weight(
+    tmp_path,
+) -> None:
+    root = tmp_path / "kimi-k2-normalized"
+    root.mkdir()
+    values = torch.arange(64, dtype=torch.int16).remainder(16).sub(8).reshape(2, 32).to(torch.int8)
+    packed = _official_pack_reference(values)
+    scale = torch.tensor([[0.25], [0.5]], dtype=torch.bfloat16)
+    base = "model.layers.1.mlp.experts.0.gate_proj"
+    save_file(
+        {
+            f"{base}.weight_packed": packed,
+            f"{base}.weight_scale": scale,
+            f"{base}.weight_shape": torch.tensor(values.shape, dtype=torch.int32),
+        },
+        root / "model.safetensors",
+    )
+    (root / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "deepseek_v3",
+                "aloepri_source_family": "kimi_k2",
+                "quantization_config": {"format": "pack-quantized"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    source = IndexedSafeTensorSource(root)
+    logical = f"{base}.weight"
+    assert logical in source.weight_map
+    assert f"{base}.weight_packed" not in source.weight_map
+    torch.testing.assert_close(
+        source.get(logical), values.float() * scale.float(), rtol=0, atol=0
+    )

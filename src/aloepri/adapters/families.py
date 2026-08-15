@@ -9,15 +9,58 @@ from aloepri.catalog.models import AdapterMatch, ArchitectureFingerprint, MatchS
 _GLOBAL_OPTIONAL = frozenset({"model.rotary_emb.inv_freq"})
 
 
+def _is_optional_tensor(name: str, optional: set[str]) -> bool:
+    """Return whether a serialized, functionally derived tensor is optional.
+
+    Recent Transformers checkpoints may persist RoPE frequencies globally or
+    once per layer.  Both forms are rebuilt from config by the private runtime,
+    so neither is a weight that the converter must transform.
+    """
+
+    return name in optional or name.endswith(".self_attn.rotary_emb.inv_freq")
+
+
 def _coverage(inventory: TensorInventory, expected: set[str], optional: set[str]) -> CoverageReport:
     names = set(inventory.names)
-    recognized = names.intersection(expected | optional)
+    recognized = {
+        name
+        for name in names
+        if name in expected or _is_optional_tensor(name, optional)
+    }
     return CoverageReport(
         frozenset(expected),
         frozenset(recognized),
         tuple(sorted(expected - names)),
         tuple(sorted(names - recognized)),
     )
+
+
+def _canonical_packed_int4_inventory(
+    inventory: TensorInventory, *, prefix: str = ""
+) -> TensorInventory:
+    """Expose compressed-tensors INT4 weights as canonical logical weights."""
+
+    names: set[str] = set()
+    shapes: dict[str, tuple[int, ...]] = {}
+    dtypes: dict[str, str] = {}
+    for physical in inventory.names:
+        if prefix and not physical.startswith(prefix):
+            continue
+        canonical = physical.removeprefix(prefix)
+        if canonical.endswith(".weight_packed"):
+            logical = f"{canonical.removesuffix('.weight_packed')}.weight"
+            names.add(logical)
+            shapes[logical] = inventory.shapes[physical]
+            dtypes[logical] = "BF16"
+            continue
+        if canonical.endswith((".weight_scale", ".weight_shape")):
+            packed = f"{physical.rsplit('.', 1)[0]}.weight_packed"
+            if packed in inventory.names:
+                continue
+        names.add(canonical)
+        shapes[canonical] = inventory.shapes[physical]
+        dtypes[canonical] = inventory.dtypes[physical]
+    return TensorInventory(frozenset(names), shapes, dtypes)
 
 
 def _add_fp8_scales(
@@ -100,6 +143,16 @@ class GLMDenseFamilyAdapter(ModelFamilyAdapter):
         inventory: TensorInventory | None,
         fingerprint: ArchitectureFingerprint,
     ) -> AdapterMatch:
+        if fingerprint.model_type == "glm4" and fingerprint.ffn == "dense":
+            return AdapterMatch(
+                MatchStatus.EXPERIMENTAL,
+                self.adapter_id,
+                fingerprint,
+                (
+                    "GLM4 dense adds post-attention and post-MLP branch RMSNorm; "
+                    "the current GLM-to-Qwen transform cannot remove those operators",
+                ),
+            )
         matches = fingerprint.model_type == "glm" and fingerprint.ffn == "dense"
         return AdapterMatch(
             MatchStatus.SUPPORTED if matches else MatchStatus.INCOMPATIBLE,
@@ -154,6 +207,9 @@ class Qwen3DenseFamilyAdapter(ModelFamilyAdapter):
     ) -> CoverageReport:
         expected = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
         optional = set(_GLOBAL_OPTIONAL)
+        if bool(config.get("tie_word_embeddings", False)):
+            expected.remove("lm_head.weight")
+            optional.add("lm_head.weight")
         for layer in range(int(config["num_hidden_layers"])):
             prefix = f"model.layers.{layer}"
             expected.update(
@@ -255,12 +311,19 @@ class GLM4MoEFamilyAdapter(ModelFamilyAdapter):
             if layer >= main_layers:
                 expected.update(
                     {
-                        f"{prefix}.embed_tokens.weight",
                         f"{prefix}.enorm.weight",
                         f"{prefix}.hnorm.weight",
                         f"{prefix}.eh_proj.weight",
-                        f"{prefix}.shared_head.head.weight",
                         f"{prefix}.shared_head.norm.weight",
+                    }
+                )
+                # Some official GLM releases share the global embedding and LM
+                # head with MTP instead of serializing duplicate layer-local
+                # copies.  Both layouts are valid and handled by the converter.
+                optional.update(
+                    {
+                        f"{prefix}.embed_tokens.weight",
+                        f"{prefix}.shared_head.head.weight",
                     }
                 )
         for name in tuple(expected):
@@ -271,6 +334,9 @@ class GLM4MoEFamilyAdapter(ModelFamilyAdapter):
                 expected.add(scale_name)
             else:
                 optional.add(scale_name)
+        for name in tuple(optional):
+            if name.endswith(".weight"):
+                optional.add(f"{name.removesuffix('.weight')}.weight_scale")
         return _coverage(inventory, expected, optional)
 
 
@@ -307,41 +373,18 @@ class KimiK2FamilyAdapter(ModelFamilyAdapter):
         ):
             normalized = dict(config)
             normalized["model_type"] = "deepseek_v3"
-            return DeepSeekV3FamilyAdapter().validate_inventory(normalized, inventory)
+            logical = _canonical_packed_int4_inventory(inventory)
+            return DeepSeekV3FamilyAdapter().validate_inventory(normalized, logical)
         text = config.get("text_config")
         if not isinstance(text, Mapping):
             return CoverageReport(frozenset(), frozenset(), ("text_config",), ())
-        normalized_names: set[str] = set()
-        normalized_shapes: dict[str, tuple[int, ...]] = {}
-        normalized_dtypes: dict[str, str] = {}
-        for name in inventory.names:
-            if not name.startswith("language_model."):
-                continue
-            canonical = name.removeprefix("language_model.")
-            if canonical.endswith(".weight_packed"):
-                virtual = f"{canonical.removesuffix('.weight_packed')}.weight"
-                normalized_names.add(virtual)
-                normalized_shapes[virtual] = inventory.shapes[name]
-                scale_name = f"{name.removesuffix('.weight_packed')}.weight_scale"
-                normalized_dtypes[virtual] = inventory.dtypes.get(scale_name, "BF16")
-            elif canonical.endswith((".weight_scale", ".weight_shape")):
-                packed_name = f"{name.rsplit('.', 1)[0]}.weight_packed"
-                if packed_name in inventory.names:
-                    continue
-                normalized_names.add(canonical)
-                normalized_shapes[canonical] = inventory.shapes[name]
-                normalized_dtypes[canonical] = inventory.dtypes[name]
-            else:
-                normalized_names.add(canonical)
-                normalized_shapes[canonical] = inventory.shapes[name]
-                normalized_dtypes[canonical] = inventory.dtypes[name]
+        logical = _canonical_packed_int4_inventory(
+            inventory, prefix="language_model."
+        )
         normalized_config = dict(text)
         normalized_config["model_type"] = "deepseek_v3"
-        normalized_inventory = TensorInventory(
-            frozenset(normalized_names), normalized_shapes, normalized_dtypes
-        )
         text_coverage = DeepSeekV3FamilyAdapter().validate_inventory(
-            normalized_config, normalized_inventory
+            normalized_config, logical
         )
         allowed_non_text = {
             name

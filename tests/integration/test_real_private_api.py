@@ -48,6 +48,9 @@ def test_real_private_api_round_trip() -> None:
     device = requested_device or ("cuda" if torch.cuda.is_available() else "cpu")
     runtime = PrivateHFRuntime(private, device=device)
     client = TestClient(create_app(runtime))
+    readiness = client.get("/readyz")
+    assert readiness.status_code == 200
+    assert readiness.json()["generated_tokens"] == 1
     request = {
         "model_id": key.model_id,
         "key_id": key.key_id,

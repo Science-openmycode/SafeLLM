@@ -37,6 +37,7 @@ from aloepri.keys.directory_vault import online_key_credential_id
 from aloepri.keys.portable import export_portable_key, restore_portable_key
 from aloepri.keys.vault import CredentialVault
 from aloepri.planning import ConversionPlan, build_catalog_plan, build_local_plan
+from aloepri.product.deployment_policy import require_validated_hf_deployment
 from aloepri.product.paths import product_paths
 from aloepri.product.pipeline import ProgressiveConversionPipeline, SSHDirectorySink
 from aloepri.product.resources import inspect_local_resources
@@ -234,6 +235,7 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
         if job["status"] != ProductJobStatus.COMPLETED.value:
             raise ValueError("only a completed conversion/upload job can be deployed")
         plan_payload = job["plan"].get("conversion", job["plan"])
+        require_validated_hf_deployment(plan_payload)
         plan = ConversionPlan.from_dict(plan_payload)
         server_id = str(plan.output.get("server_id") or "")
         if not server_id:
@@ -919,6 +921,7 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             job = store.get_job(request.job_id)
             server = store.get_server(request.server_id)
             plan = job["plan"].get("conversion", job["plan"])
+            require_validated_hf_deployment(plan)
             output = plan.get("output", {})
             source = plan.get("source", {})
             deployment_id = request.deployment_id or str(uuid.uuid4())
@@ -972,6 +975,7 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             if request.target_server_id == current["server_id"]:
                 raise ValueError("target server must differ from the current server")
             plan_payload = job["plan"].get("conversion", job["plan"])
+            require_validated_hf_deployment(plan_payload)
             plan = ConversionPlan.from_dict(plan_payload)
             package = Path(str(job.get("progress", {}).get("output", "")))
             if not package.is_dir():

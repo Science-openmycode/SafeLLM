@@ -877,10 +877,12 @@ def deploy_create(
     ] = None,
 ) -> None:
     from aloepri.cloud.hf_deployment import HFDeploymentManager, HFDeploymentRequest
+    from aloepri.product.deployment_policy import require_validated_hf_deployment
 
     store = _product_store()
     job = store.get_job(job_id)
     plan = job["plan"].get("conversion", job["plan"])
+    require_validated_hf_deployment(plan)
     server = store.get_server(server_id)
     profile = _ssh_profile(
         server, password=password, private_key_passphrase=private_key_passphrase

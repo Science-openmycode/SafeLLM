@@ -10,8 +10,13 @@
 - 直接部署会自动预检并补齐服务器基础环境。
 - 部署前按私有包大小检查远端磁盘和全部 GPU 总空闲显存。
 - 原生 HF 服务自动使用多 GPU，禁止静默 CPU/磁盘卸载。
+- 部署成功门禁从进程健康检查升级为真实私有 Token 单步生成；不能生成的候选版本不会切换为 active。
+- 区分“架构可转换”和“检查点已部署验收”：仅 Qwen2.5-0.5B 固定版本开放一键部署，其他模型不得绕过目录门禁调用 HF 部署器。
+- 修复 Qwen3 tied embedding、逐层 RoPE buffer、GLM4-MoE 全局共享 MTP embedding/head、OpenSeek 缺失 MTP 声明、Kimi packed INT4 等权重清单问题。
+- GLM 0414/Z1 因额外的 Attention/MLP 分支后置 RMSNorm 与当前轻量变换不等价，改为明确拒绝转换，防止生成错误模型。
+- 新增 `YINBIAN_CACHE_DIR`，允许把模型下载缓存独立放到非系统盘。
 - 修正 Ubuntu 22.04 Python 3.10 环境的 NumPy 版本兼容问题。
-- 默认自动化结果：324 passed，1 skipped；真实 Qwen2.5-0.5B 私有 API 往返另行 1 passed；Ruff 和 Mypy 通过。
+- 当前测试与目录审计结果见 `docs/MODEL_SUPPORT_AUDIT_2026-08-15.md`。
 
 限制：Kimi-K2.6 当前只开放文本问答；真实超大模型转换与多 GPU 物理加载仍需在具备
 相应磁盘、内存和显存的机器上执行，代码不会把静态覆盖结果写成物理验收通过。

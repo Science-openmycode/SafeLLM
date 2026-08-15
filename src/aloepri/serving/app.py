@@ -5,7 +5,7 @@ import logging
 import secrets
 import uuid
 from collections.abc import Iterator
-from typing import Protocol
+from typing import Protocol, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -29,6 +29,7 @@ class Runtime(Protocol):
     def validate(self, request: GenerateRequest) -> None: ...
     def generate(self, request: GenerateRequest) -> GenerateResponse: ...
     def iter_token_ids(self, request: GenerateRequest) -> Iterator[tuple[int, float]]: ...
+    def readiness(self) -> dict[str, object]: ...
 
 
 def create_app(
@@ -79,6 +80,19 @@ def create_app(
     @app.get("/healthz")
     def health() -> dict[str, str]:
         return {"status": "ok", "model_id": runtime.model_id, "key_id": runtime.key_id}
+
+    @app.get("/readyz")
+    def ready() -> dict[str, object]:
+        """Prove that the loaded private checkpoint can execute one decode step."""
+
+        readiness = getattr(runtime, "readiness", None)
+        if readiness is None:
+            raise HTTPException(status_code=503, detail="runtime has no readiness probe")
+        try:
+            return cast(dict[str, object], readiness())
+        except Exception as error:
+            LOGGER.exception("private runtime readiness probe failed")
+            raise HTTPException(status_code=503, detail="private generation failed") from error
 
     @app.post("/v1/private/generate", response_model=GenerateResponse)
     def generate(request: GenerateRequest) -> GenerateResponse:

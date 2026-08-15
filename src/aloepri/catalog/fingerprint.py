@@ -21,7 +21,7 @@ def architecture_fingerprint(
     text_model_type = str(text.get("model_type", model_type)).lower()
     is_deepseek = model_type in {"deepseek_v2", "deepseek_v3", "aloepri_deepseek_v3"}
     is_qwen = model_type in {"qwen2", "qwen2_5", "aloepri_qwen2"}
-    is_glm = model_type in {"glm", "glm4_moe", "glm_moe_dsa"}
+    is_glm = model_type in {"glm", "glm4", "glm4_moe", "glm_moe_dsa"}
     is_qwen3 = model_type in {"qwen3", "qwen3_moe"}
     is_kimi = model_type in {"kimi_k25", "kimi_k2", "kimi_k3"}
     is_mla = is_deepseek or text_model_type in {"kimi_k2", "deepseek_v3", "glm_moe_dsa"}

@@ -84,6 +84,35 @@ class PrivateHFRuntime:
         self.key_id = str(metadata["key_id"])
         eos = self.model.generation_config.eos_token_id
         self.eos_ids = {eos} if isinstance(eos, int) else set(eos or [])
+        self._readiness_result: dict[str, object] | None = None
+
+    def readiness(self) -> dict[str, object]:
+        """Run one real private-token decode step and cache the successful result."""
+
+        if self._readiness_result is not None:
+            return self._readiness_result
+        candidate = getattr(self.model.config, "bos_token_id", None)
+        if isinstance(candidate, list):
+            candidate = candidate[0] if candidate else None
+        input_id = int(candidate) if isinstance(candidate, int) else 0
+        response = self.generate(
+            GenerateRequest(
+                model_id=self.model_id,
+                key_id=self.key_id,
+                input_ids=[input_id],
+                max_new_tokens=1,
+                temperature=0.0,
+            )
+        )
+        if len(response.output_ids) != 1 or response.usage.output_tokens != 1:
+            raise RuntimeError("private runtime readiness generation returned no token")
+        self._readiness_result = {
+            "status": "ready",
+            "model_id": self.model_id,
+            "key_id": self.key_id,
+            "generated_tokens": 1,
+        }
+        return self._readiness_result
 
     def validate(self, request: GenerateRequest) -> None:
         if request.model_id != self.model_id:

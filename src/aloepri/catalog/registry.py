@@ -9,7 +9,7 @@ def _qwen25_instruct_entry(
     *,
     size: str,
     revision: str,
-    expected_bytes: int,
+    expected_bytes: int | None,
     license_id: str,
     validated: bool = False,
 ) -> ModelCatalogEntry:
@@ -55,13 +55,13 @@ def _qwen25_instruct_entry(
         family_id="qwen2",
         family_name="Qwen2 / Qwen2.5",
         conversion_ready=True,
-        deployment_ready=True,
+        deployment_ready=validated,
         support_note=(
             "已完成转换、部署和问答验收"
             if validated
             else "同族转换器可执行；部署前必须完成该参数规模的冒烟验收"
         ),
-        max_stage="chat" if validated else "chat-after-smoke",
+        max_stage="chat" if validated else "convert",
         visibility="recommended" if validated else "family",
         source_url=f"https://huggingface.co/Qwen/{repo_name}",
         last_validated_revision=revision if validated else None,
@@ -108,12 +108,12 @@ def _qwen3_dense_entry(
         family_id="qwen3",
         family_name="Qwen3",
         conversion_ready=True,
-        deployment_ready=True,
+        deployment_ready=False,
         support_note=(
             "Qwen3 Q/K Norm 已由专用坐标变换同步处理；部署前会按当前服务器资源"
             "执行完整 checkpoint 检查和加载冒烟。"
         ),
-        max_stage="chat-after-smoke",
+        max_stage="convert",
         visibility="family",
         source_url=f"https://huggingface.co/Qwen/{repo_name}",
     )
@@ -156,16 +156,16 @@ def _deepseek_entry(
             "tile_mib": 256,
             "minimum_host_ram_gib": 32,
         },
-        runtime={"preferred": "hf", "fallback": "sglang"},
+        runtime={"preferred": "sglang", "fallback": "hf"},
         license="DeepSeek Model License",
         family_id=adapter_id,
         family_name="DeepSeek MLA / MoE",
         conversion_ready=True,
-        deployment_ready=True,
+        deployment_ready=False,
         support_note=(
             "官方同架构版本已接入统一MLA/MoE转换器；下载后仍会逐张量检查并在目标服务器强制加载冒烟"
         ),
-        max_stage="chat-after-smoke",
+        max_stage="convert",
         visibility="family",
         source_url=f"https://huggingface.co/deepseek-ai/{repo_name}",
     )
@@ -174,13 +174,14 @@ def _deepseek_entry(
 def _glm_dense_entry(
     *, repo_name: str, revision: str, parameter_summary: str, expected_bytes: int
 ) -> ModelCatalogEntry:
+    branch_norm = "0414" in repo_name.upper()
     return ModelCatalogEntry(
         catalog_id=repo_name.lower(),
         display_name=repo_name,
         repo_id=f"zai-org/{repo_name}",
         revision=revision,
         adapter_id="glm_dense",
-        status="family-compatible",
+        status="operator-gap" if branch_norm else "family-compatible",
         parameter_summary=parameter_summary,
         expected_bytes=expected_bytes,
         capabilities={"gqa": True, "mla": False, "moe": False, "mtp": False},
@@ -195,10 +196,14 @@ def _glm_dense_entry(
         license="GLM-4 License",
         family_id="glm_dense",
         family_name="GLM",
-        conversion_ready=True,
-        deployment_ready=True,
-        support_note="GLM Dense同族转换路径已接入；下载后严格校验融合FFN、GQA和Partial RoPE布局",
-        max_stage="chat-after-smoke",
+        conversion_ready=not branch_norm,
+        deployment_ready=False,
+        support_note=(
+            "该检查点含Attention/MLP分支后置RMSNorm；当前轻量变换无法在不引入逐层D×D矩阵的情况下忠实消除，已禁止转换"
+            if branch_norm
+            else "GLM Dense同族转换路径已接入；下载后严格校验融合FFN、GQA和Partial RoPE布局"
+        ),
+        max_stage="inspect" if branch_norm else "convert",
         visibility="family",
         source_url=f"https://huggingface.co/zai-org/{repo_name}",
     )
@@ -230,14 +235,14 @@ def _glm_moe_entry(
             "minimum_host_ram_gib": 64,
             "estimated_output_ratio": 2.2 if fp8 else 1.15,
         },
-        runtime={"preferred": "hf", "fallback": "sglang"},
+        runtime={"preferred": "sglang", "fallback": "hf"},
         license="MIT",
         family_id="glm4_moe",
         family_name="GLM",
         conversion_ready=True,
-        deployment_ready=True,
+        deployment_ready=False,
         support_note="GLM4-MoE同族权重已接入FP8/BF16、专家路由、Partial RoPE和MTP转换路径",
-        max_stage="chat-after-smoke",
+        max_stage="convert",
         visibility="family",
         source_url=f"https://huggingface.co/zai-org/{repo_name}",
     )
@@ -248,16 +253,18 @@ def _kimi_text_entry(
     repo_name: str,
     revision: str,
     parameter_summary: str,
-    expected_bytes: int,
+    expected_bytes: int | None,
     multimodal_int4: bool = False,
+    packed_int4: bool = False,
 ) -> ModelCatalogEntry:
+    uses_int4 = multimodal_int4 or packed_int4
     return ModelCatalogEntry(
         catalog_id=repo_name.lower(),
         display_name=repo_name,
         repo_id=f"moonshotai/{repo_name}",
         revision=revision,
         adapter_id="kimi_k2",
-        status="text-private-supported" if multimodal_int4 else "family-compatible",
+        status="text-private-supported" if uses_int4 else "family-compatible",
         parameter_summary=parameter_summary,
         expected_bytes=expected_bytes,
         capabilities={
@@ -265,34 +272,38 @@ def _kimi_text_entry(
             "mla": True,
             "moe": True,
             "mtp": False,
-            "fp8": not multimodal_int4,
-            "int4": multimodal_int4,
+            "fp8": not uses_int4,
+            "int4": uses_int4,
             "multimodal": multimodal_int4,
         },
         source={
             "format": "safetensors",
-            "dtype": "mixed_int4_bfloat16" if multimodal_int4 else "fp8_e4m3fn",
+            "dtype": "mixed_int4_bfloat16" if uses_int4 else "fp8_e4m3fn",
         },
         conversion={
-            "output_dtype": "bfloat16" if multimodal_int4 else "fp8_e4m3fn",
+            "output_dtype": "bfloat16" if uses_int4 else "fp8_e4m3fn",
             "expansion_h": 128,
-            "tile_mib": 64 if multimodal_int4 else 256,
+            "tile_mib": 64 if uses_int4 else 256,
             "minimum_host_ram_gib": 32,
             "mode": "text-backbone" if multimodal_int4 else "text",
-            "estimated_output_ratio": 4.2 if multimodal_int4 else 1.15,
+            "estimated_output_ratio": 4.2 if uses_int4 else 1.15,
         },
-        runtime={"preferred": "hf", "fallback": "sglang" if not multimodal_int4 else None},
+        runtime={"preferred": "sglang" if not uses_int4 else "hf", "fallback": None},
         license="Modified MIT",
         family_id="kimi_k2",
         family_name="Kimi",
         conversion_ready=True,
-        deployment_ready=True,
+        deployment_ready=False,
         support_note=(
             "多模态外壳中的完整文本骨干已接入INT4解码；当前私有协议只开放文本问答"
             if multimodal_int4
-            else "Kimi-K2同族MLA、384专家与FP8权重已接入统一转换路径"
+            else (
+                "Kimi-K2 Thinking的packed INT4专家权重会先按scale解码，再进入统一转换路径"
+                if packed_int4
+                else "Kimi-K2同族MLA、384专家与FP8权重已接入统一转换路径"
+            )
         ),
-        max_stage="chat-after-smoke",
+        max_stage="convert",
         visibility="family",
         source_url=f"https://huggingface.co/moonshotai/{repo_name}",
     )
@@ -313,14 +324,14 @@ def _moonlight_entry(
         capabilities={"gqa": False, "mla": True, "moe": True, "mtp": False, "fp8": False},
         source={"format": "safetensors", "dtype": "bfloat16"},
         conversion={"output_dtype": "bfloat16", "expansion_h": 0, "tile_mib": 256},
-        runtime={"preferred": "hf", "fallback": "sglang"},
+        runtime={"preferred": "sglang", "fallback": "hf"},
         license="MIT",
         family_id="kimi_moonlight",
         family_name="Kimi",
         conversion_ready=True,
-        deployment_ready=True,
+        deployment_ready=False,
         support_note="官方配置为DeepSeek-V3式MLA/MoE文本模型，复用统一DeepSeek转换器并执行严格张量门禁",
-        max_stage="chat-after-smoke",
+        max_stage="convert",
         visibility="family",
         source_url=f"https://huggingface.co/moonshotai/{repo_name}",
     )
@@ -511,9 +522,9 @@ def builtin_catalog() -> ModelCatalog:
                 family_id="deepseek_v3",
                 family_name="DeepSeek MLA / MoE",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note="真实检查点已完成MLA/MoE转换；目标服务器加载仍执行强制冒烟",
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="advanced",
                 source_url="https://huggingface.co/BAAI/OpenSeek-Small-v1-SFT",
                 last_validated_revision="1515c184e6fe4a91e6061be513a79d607e8787cb",
@@ -535,9 +546,9 @@ def builtin_catalog() -> ModelCatalog:
                 family_id="deepseek_v2",
                 family_name="DeepSeek MLA / MoE",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note="DeepSeek-V2统一转换与HF部署路径已接入；目标服务器加载仍执行强制冒烟",
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="advanced",
                 source_url="https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite-Chat",
             ),
@@ -557,14 +568,14 @@ def builtin_catalog() -> ModelCatalog:
                     "weight_block_size": [128, 128],
                 },
                 conversion={"output_dtype": "fp8_e4m3fn", "expansion_h": 128, "tile_mib": 256},
-                runtime={"preferred": "hf", "fallback": "sglang"},
+                runtime={"preferred": "sglang", "fallback": None},
                 license="DeepSeek Model License",
                 family_id="deepseek_v3",
                 family_name="DeepSeek MLA / MoE",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note="MLA/MoE/FP8/MTP转换器和部署入口已接入；671B物理转换尚未执行",
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="developer",
                 source_url="https://huggingface.co/deepseek-ai/DeepSeek-V3",
             ),
@@ -683,12 +694,12 @@ def builtin_catalog() -> ModelCatalog:
                 family_id="glm_dense",
                 family_name="GLM",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note=(
                     "融合Gate/Up会先规范化为等价Dense GQA图，再进入私有Qwen运行时；"
                     "正式9B检查点仍需目标机器冒烟"
                 ),
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="family",
                 source_url="https://huggingface.co/zai-org/glm-4-9b-chat-hf",
             ),
@@ -710,17 +721,17 @@ def builtin_catalog() -> ModelCatalog:
                     "minimum_host_ram_gib": 16,
                     "estimated_output_ratio": 2.2,
                 },
-                runtime={"preferred": "hf", "fallback": "sglang"},
+                runtime={"preferred": "sglang", "fallback": None},
                 license="MIT",
                 family_id="glm4_moe",
                 family_name="GLM",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note=(
                     "已实现GLM MoE专用FP8解码、Q/K Norm、部分RoPE、"
                     "路由器、逐专家与MTP权重转换；HF主模型问答不启用MTP加速"
                 ),
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="developer",
                 source_url="https://huggingface.co/zai-org/GLM-4.7-FP8",
             ),
@@ -747,12 +758,12 @@ def builtin_catalog() -> ModelCatalog:
                 family_id="qwen3",
                 family_name="Qwen3",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note=(
                     "Qwen3 Q/K Norm 已由专用坐标变换同步处理；"
                     "正式 8B 部署前仍需在目标 GPU 完成检查点冒烟测试"
                 ),
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="family",
                 source_url="https://huggingface.co/Qwen/Qwen3-8B",
             ),
@@ -806,8 +817,9 @@ def builtin_catalog() -> ModelCatalog:
             _kimi_text_entry(
                 repo_name="Kimi-K2-Thinking",
                 revision="a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55",
-                parameter_summary="1T total / 32B activated · Thinking FP8",
-                expected_bytes=1_026_408_235_864,
+                parameter_summary="1T total / 32B activated · Thinking packed INT4",
+                expected_bytes=None,
+                packed_int4=True,
             ),
             _kimi_text_entry(
                 repo_name="Kimi-K2.5",
@@ -843,17 +855,17 @@ def builtin_catalog() -> ModelCatalog:
                     "tile_mib": 256,
                     "minimum_host_ram_gib": 16,
                 },
-                runtime={"preferred": "hf", "fallback": "sglang"},
+                runtime={"preferred": "sglang", "fallback": None},
                 license="Modified MIT",
                 family_id="kimi_k2",
                 family_name="Kimi",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note=(
                     "纯文本Kimi-K2通过零拷贝结构规范化复用已验证的"
                     "DeepSeek-V3 MLA/MoE/FP8私有转换器"
                 ),
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="family",
                 source_url="https://huggingface.co/moonshotai/Kimi-K2-Instruct",
             ),
@@ -891,12 +903,12 @@ def builtin_catalog() -> ModelCatalog:
                 family_id="kimi_k2",
                 family_name="Kimi",
                 conversion_ready=True,
-                deployment_ready=True,
+                deployment_ready=False,
                 support_note=(
                     "完整转换61层MLA/MoE文本骨干，并按官方compressed-tensors规则"
                     "解码384专家INT4权重；当前私有协议只开放文本问答。"
                 ),
-                max_stage="chat-after-smoke",
+                max_stage="convert",
                 visibility="family",
                 source_url="https://huggingface.co/moonshotai/Kimi-K2.6",
             ),

@@ -61,11 +61,11 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert by_id["glm-4-9b-chat-hf"]["family_name"] == "GLM"
         assert by_id["glm-4-9b-chat-hf"]["conversion_ready"] is True
         assert by_id["qwen3-8b"]["conversion_ready"] is True
-        assert by_id["qwen3-8b"]["deployment_ready"] is True
+        assert by_id["qwen3-8b"]["deployment_ready"] is False
         assert by_id["glm-4.7-fp8"]["conversion_ready"] is True
-        assert by_id["glm-4.7-fp8"]["deployment_ready"] is True
+        assert by_id["glm-4.7-fp8"]["deployment_ready"] is False
         assert by_id["kimi-k2-instruct"]["conversion_ready"] is True
-        assert by_id["kimi-k2-instruct"]["deployment_ready"] is True
+        assert by_id["kimi-k2-instruct"]["deployment_ready"] is False
         assert by_id["kimi-k2.6"]["family_name"] == "Kimi"
         assert by_id["deepseek-v3-1-terminus"]["adapter_id"] == "deepseek_v3"
         assert by_id["glm-4.5-air-fp8"]["adapter_id"] == "glm4_moe"

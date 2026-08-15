@@ -68,16 +68,20 @@ def test_catalog_groups_multiple_architecture_families_without_overclaiming() ->
     assert entries["deepseek-v2-lite-chat"].conversion_ready is True
     assert entries["glm-4-9b-chat-hf"].family_name == "GLM"
     assert entries["glm-4-9b-chat-hf"].conversion_ready is True
-    assert entries["glm-4-9b-chat-hf"].deployment_ready is True
+    assert entries["glm-4-9b-chat-hf"].deployment_ready is False
     assert entries["qwen3-8b"].conversion_ready is True
-    assert entries["qwen3-8b"].deployment_ready is True
+    assert entries["qwen3-8b"].deployment_ready is False
     assert entries["glm-4.7-fp8"].conversion_ready is True
-    assert entries["glm-4.7-fp8"].deployment_ready is True
+    assert entries["glm-4.7-fp8"].deployment_ready is False
     assert entries["kimi-k2-instruct"].conversion_ready is True
-    assert entries["kimi-k2-instruct"].deployment_ready is True
+    assert entries["kimi-k2-instruct"].deployment_ready is False
     assert entries["kimi-k2.6"].family_name == "Kimi"
     assert entries["kimi-k2.6"].conversion_ready is True
-    assert entries["kimi-k2.6"].deployment_ready is True
+    assert entries["kimi-k2.6"].deployment_ready is False
+    assert entries["qwen2.5-0.5b-instruct"].deployment_ready is True
+    assert entries["glm-4-9b-0414"].conversion_ready is False
+    assert entries["glm-4-9b-0414"].max_stage == "inspect"
+    assert entries["qwen3-4b"].max_stage == "convert"
 
 
 def test_new_families_have_explicit_conversion_readiness() -> None:
@@ -91,6 +95,15 @@ def test_new_families_have_explicit_conversion_readiness() -> None:
     )
     assert glm.status == MatchStatus.SUPPORTED
     assert glm.adapter_id == "glm_dense"
+    glm4 = registry.detect(
+        {
+            "model_type": "glm4",
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 2,
+        }
+    )
+    assert glm4.status == MatchStatus.EXPERIMENTAL
+    assert glm4.adapter_id == "glm_dense"
     kimi = registry.detect(
         {
             "model_type": "kimi_k25",

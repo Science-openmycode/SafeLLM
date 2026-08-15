@@ -13,6 +13,14 @@ class FakeRuntime:
     model_id = "model"
     key_id = "key"
 
+    def readiness(self) -> dict[str, object]:
+        return {
+            "status": "ready",
+            "model_id": self.model_id,
+            "key_id": self.key_id,
+            "generated_tokens": 1,
+        }
+
     def validate(self, request: GenerateRequest) -> None:
         if request.model_id != self.model_id or request.key_id != self.key_id:
             raise ValueError("model/key mismatch")
@@ -43,6 +51,12 @@ def test_generate_and_reject_wrong_key() -> None:
     assert response.json()["output_ids"] == [7, 9]
     body["key_id"] = "wrong"
     assert client.post("/v1/private/generate", json=body).status_code == 400
+
+
+def test_readiness_runs_private_generation_probe() -> None:
+    response = TestClient(create_app(FakeRuntime())).get("/readyz")
+    assert response.status_code == 200
+    assert response.json()["generated_tokens"] == 1
 
 
 def test_stream_is_sse() -> None:
