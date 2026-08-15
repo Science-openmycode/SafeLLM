@@ -22,11 +22,18 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert "隐变智模部署" in page.text
         assert 'id="wizard-family"' in page.text
         assert 'id="wizard-model"' in page.text
+        assert 'id="wizard-server" hidden disabled' in page.text
+        assert 'id="wizard-password"' in page.text
         assert 'id="model-grid" class="model-browser"' in page.text
         assert 'id="ssh-command"' in page.text
         script = client.get("/app.js")
         assert script.status_code == 200
         assert 'data-catalog-family="${escapeHtml(family)}"' in script.text
+        assert "function updateDeploymentMode()" in script.text
+        assert "function jobProgress(job)" in script.text
+        assert "下载已完成，正在改造模型权重" in script.text
+        assert 'activeElement.closest(".page.active")' in script.text
+        assert 'document.querySelector("form:not([hidden])")' not in script.text
         assert '<details class="model-family"' not in script.text
         models = client.get("/api/models")
         assert models.status_code == 200
@@ -62,6 +69,7 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert by_id["glm-4-9b-chat-hf"]["conversion_ready"] is True
         assert by_id["qwen3-8b"]["conversion_ready"] is True
         assert by_id["qwen3-8b"]["deployment_ready"] is False
+        assert by_id["qwen3-8b"]["conversion"]["minimum_host_ram_gib"] == 64
         assert by_id["glm-4.7-fp8"]["conversion_ready"] is True
         assert by_id["glm-4.7-fp8"]["deployment_ready"] is False
         assert by_id["kimi-k2-instruct"]["conversion_ready"] is True
@@ -103,6 +111,47 @@ def test_deploy_desktop_builds_kimi_k26_text_backbone_plan(tmp_path: Path) -> No
         payload = planned.json()
         assert payload["adapter"] == "kimi_k2"
         assert payload["output"]["deployment_mode"] == "local-only"
+
+
+def test_deploy_desktop_defaults_offline_preparation_to_product_cache(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    cache = tmp_path / "large-model-cache"
+    monkeypatch.setenv("YINBIAN_CACHE_DIR", str(cache))  # type: ignore[attr-defined]
+    with TestClient(create_deploy_desktop_app(state_path=tmp_path / "state.db")) as client:
+        assert client.get("/").status_code == 200
+        dashboard = client.get("/api/dashboard").json()
+        assert dashboard["paths"]["cache"] == str(cache.resolve())
+        assert dashboard["paths"]["local_private"] == str(
+            (cache / "private").resolve()
+        )
+        planned = client.post(
+            "/api/plans",
+            json={
+                "model": "qwen2.5-0.5b-instruct",
+                "mode": "local-only",
+            },
+        )
+        assert planned.status_code == 200, planned.text
+        payload = planned.json()
+        assert Path(payload["output"]["uri"]) == cache / "private" / "qwen2.5-0.5b-instruct"
+        assert Path(payload["source"]["cache_path"]) == cache / "models" / "qwen2.5-0.5b-instruct"
+        assert Path(payload["path"]).parent == tmp_path / "plans"
+        assert Path(payload["path"]).name == f"{payload['job_id']}.yaml"
+        script = client.get("/app.js").text
+        assert "data-local-job-deploy" in script
+        assert "/deploy-local" in script
+        assert "const password = serverId" in script
+
+
+def test_local_package_deploy_requires_explicit_confirmation(tmp_path: Path) -> None:
+    with TestClient(create_deploy_desktop_app(state_path=tmp_path / "state.db")) as client:
+        assert client.get("/").status_code == 200
+        rejected = client.post(
+            "/api/jobs/not-started/deploy-local",
+            json={"server_id": "missing", "confirmed": False},
+        )
+        assert rejected.status_code == 409
 
 
 def test_deploy_desktop_accepts_rental_ssh_command_without_storing_password(

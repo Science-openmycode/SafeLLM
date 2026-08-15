@@ -4,9 +4,12 @@ import asyncio
 import hashlib
 import os
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
+
+import psutil
 
 from aloepri.adapters.registry import default_adapter_registry
 from aloepri.catalog.download import (
@@ -122,6 +125,14 @@ class ProgressiveConversionPipeline:
             raise OSError(
                 "insufficient disk for conversion: "
                 f"required={disk.required_bytes}, free={disk.free_bytes}"
+            )
+        required_host_bytes = int(plan.resources.host_memory_budget_gib * 1024**3)
+        available_host_bytes = int(psutil.virtual_memory().total)
+        if available_host_bytes < required_host_bytes:
+            raise MemoryError(
+                "insufficient host memory for the selected checkpoint converter: "
+                f"required={required_host_bytes}, available={available_host_bytes}; "
+                "download and conversion have not started"
             )
         job = self.store.get_job(plan.job_id)
         if job["status"] == ProductJobStatus.CREATED.value:
@@ -239,11 +250,55 @@ class ProgressiveConversionPipeline:
                 )
             self._phase(plan.job_id, ProductPhase.CONVERTING, "checkpoint", progress)
             if not output_root.exists():
+                source_tensor_names = {
+                    name
+                    for name in inventory.names
+                    if not name.endswith(".weight_scale_inv")
+                }
+                conversion_total = len(source_tensor_names) + (
+                    1 if plan.adapter in {"deepseek_v3", "kimi_k2"} else 0
+                )
+                completed_tensors: set[str] = set()
+                last_conversion_update = 0.0
+
+                def on_conversion_progress(
+                    tensor: str, tile: int, state: str
+                ) -> None:
+                    nonlocal last_conversion_update
+                    if state in {"completed", "resumed"}:
+                        completed_tensors.add(tensor)
+                    now = time.monotonic()
+                    if (
+                        now - last_conversion_update < 0.25
+                        and state not in {"starting", "resumed"}
+                    ):
+                        return
+                    last_conversion_update = now
+                    percent = min(
+                        99.0,
+                        100.0 * len(completed_tensors) / max(1, conversion_total),
+                    )
+                    self._phase(
+                        plan.job_id,
+                        ProductPhase.CONVERTING,
+                        tensor,
+                        progress,
+                        conversion={
+                            "tensor": tensor,
+                            "tile": tile,
+                            "state": state,
+                            "completed_tensors": len(completed_tensors),
+                            "total_tensors": conversion_total,
+                            "percent": percent,
+                        },
+                    )
+
                 convert_model_checkpoint(
                     plan,
                     output_root,
                     conversion_source,
                     offline_key_password=offline_key_password,
+                    progress_callback=on_conversion_progress,
                 )
             key_id = str(plan.output.get("key_id", f"key-{plan.job_id[:8]}"))
             model_id = str(plan.output.get("model_id", output_root.name))

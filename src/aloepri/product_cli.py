@@ -43,6 +43,7 @@ from aloepri.planning import ConversionPlan, build_catalog_plan, build_local_pla
 from aloepri.product.paths import product_paths
 from aloepri.product.resources import inspect_local_resources
 from aloepri.product.state import ProductJobStatus, ProductStore
+from aloepri.product.tokenizer_assets import materialize_local_tokenizer
 from aloepri.product.tunnel_worker import tunnel_state_path, tunnel_stop_path
 
 models_app = typer.Typer(no_args_is_help=True)
@@ -866,8 +867,8 @@ def deploy_create(
     job_id: Annotated[str, typer.Option("--job")],
     server_id: Annotated[str, typer.Option("--server")],
     server_package: Annotated[
-        Path, typer.Option("--server-package", exists=True, file_okay=False)
-    ],
+        Path | None, typer.Option("--server-package", file_okay=False)
+    ] = None,
     deployment_id: Annotated[str | None, typer.Option("--deployment-id")] = None,
     version_id: Annotated[str | None, typer.Option("--version-id")] = None,
     remote_port: Annotated[int, typer.Option("--remote-port")] = 18000,
@@ -883,6 +884,14 @@ def deploy_create(
     job = store.get_job(job_id)
     plan = job["plan"].get("conversion", job["plan"])
     require_validated_hf_deployment(plan)
+    package = server_package
+    if package is None:
+        package = Path(str(job.get("progress", {}).get("output", "")))
+    if not package.is_dir():
+        raise typer.BadParameter(
+            "the verified local private package is unavailable; pass --server-package "
+            "or restore the completed job output"
+        )
     server = store.get_server(server_id)
     profile = _ssh_profile(
         server, password=password, private_key_passphrase=private_key_passphrase
@@ -897,7 +906,7 @@ def deploy_create(
         model_id=str(output.get("model_id", "private-model")),
         model_version=str(source.get("revision", job_id)),
         key_id=str(output.get("key_id", f"key-{job_id[:8]}")),
-        server_package=server_package,
+        server_package=package,
         remote_port=remote_port,
     )
     bearer_token = secrets.token_urlsafe(32)
@@ -914,8 +923,11 @@ def deploy_create(
         result = asyncio.run(HFDeploymentManager(store).deploy(request, profile))
     except (OSError, RuntimeError, ValueError) as error:
         raise typer.BadParameter(str(error)) from error
-    source_root = source.get("cache_path") or source.get("path")
     output_root = Path(str(output.get("uri", server_package)))
+    tokenizer_root = materialize_local_tokenizer(
+        ConversionPlan.from_dict(plan),
+        destination_root=product_paths().state / "tokenizers",
+    )
     default_online = output_root.parent / f"{output_root.name}-keys" / "online"
     online_credential_id = online_key_credential_id(
         str(output.get("model_id", output_root.name)),
@@ -926,7 +938,7 @@ def deploy_create(
     )
     metadata = {
         **result.get("metadata", {}),
-        "tokenizer_dir": None if source_root is None else str(Path(str(source_root)).resolve()),
+        "tokenizer_dir": str(tokenizer_root),
         "online_key_dir": (
             None
             if online_credential_path.is_file()

@@ -208,6 +208,7 @@ def test_generic_converter_dispatches_deepseek_to_deepseek_path(
         source: Path,
         *,
         offline_key_password: str | None = None,
+        progress_callback: object = None,
     ) -> dict[str, str]:
         called.update(
             plan=current,
@@ -215,6 +216,7 @@ def test_generic_converter_dispatches_deepseek_to_deepseek_path(
             store=store,
             source=source,
             password=offline_key_password,
+            progress_callback=progress_callback,
         )
         return {"adapter": current.adapter}
 

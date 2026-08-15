@@ -178,6 +178,7 @@ class SSHSession:
         destination: str,
         *,
         expected_sha256: str | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
         destination = _safe_remote_path(destination)
         partial = destination + ".partial"
@@ -197,10 +198,14 @@ class SSHSession:
                 committed_digest["exit_code"] == 0
                 and str(committed_digest["stdout"]).split()[0] == expected
             ):
+                if progress is not None:
+                    progress(source.stat().st_size, source.stat().st_size)
                 try:
                     await sftp.remove(partial)
                 except (asyncssh.SFTPNoSuchFile, FileNotFoundError):
                     pass
+                sftp.exit()
+                await sftp.wait_closed()
                 return {
                     "path": destination,
                     "bytes": source.stat().st_size,
@@ -226,11 +231,16 @@ class SSHSession:
             ):
                 await sftp.remove(partial)
                 offset = 0
+        if progress is not None:
+            progress(offset, source_size)
         async with sftp.open(partial, "ab" if offset else "wb") as remote:
             with source.open("rb") as local:
                 local.seek(offset)
                 while block := local.read(8 * 1024 * 1024):
                     await remote.write(block)
+                    offset += len(block)
+                    if progress is not None:
+                        progress(offset, source_size)
             await remote.fsync()
         attributes = await sftp.stat(partial)
         remote_size = 0 if attributes.size is None else int(attributes.size)
@@ -250,6 +260,8 @@ class SSHSession:
             except (asyncssh.SFTPNoSuchFile, FileNotFoundError):
                 pass
             await sftp.rename(partial, destination)
+        sftp.exit()
+        await sftp.wait_closed()
         return {
             "path": destination,
             "bytes": source_size,

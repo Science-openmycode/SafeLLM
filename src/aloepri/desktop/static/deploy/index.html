@@ -31,12 +31,12 @@
           <label class="field"><span>模型族</span><select id="wizard-family" required><option value="">正在加载模型族…</option></select></label>
           <label class="field"><span>参数量与版本</span><select name="model" id="wizard-model" required disabled><option value="">请先选择模型族</option></select></label>
           <div id="wizard-model-note" class="model-note full">请选择模型。已实测与同架构可执行模型会分别标识。</div>
-          <input name="destination" value="data/private/yinbian-model" placeholder="本地私有模型目录" required>
-          <select name="mode"><option value="direct-deploy">改造、上传并自动部署</option><option value="local-only">仅在本地改造</option></select>
+          <input name="destination" id="wizard-destination" value="" placeholder="自动使用隐变智模缓存盘；也可以指定本地目录">
+          <select name="mode" id="wizard-mode"><option value="local-only">先在本地下载并改造，稍后部署</option><option value="direct-deploy">改造、上传并自动部署</option></select>
           <select name="device"><option value="auto">自动选择 CPU/GPU</option><option value="cuda">GPU 优先</option><option value="cpu">仅 CPU</option></select>
           <select name="download_endpoint"><option value="auto">模型下载源：自动（官方不可用时切换镜像）</option><option value="https://huggingface.co">模型下载源：Hugging Face官方</option><option value="https://hf-mirror.com">模型下载源：HF Mirror</option></select>
-          <select name="server_id" id="wizard-server"><option value="">不选择服务器</option></select>
-          <input name="password" type="password" placeholder="SSH 密码（不保存）">
+          <select name="server_id" id="wizard-server" hidden disabled><option value="">请选择服务器</option></select>
+          <input name="password" id="wizard-password" type="password" placeholder="SSH 密码（不保存）" hidden disabled>
           <label class="consent"><input name="accept_license" type="checkbox" required> 我已查看模型许可证，并同意该固定版本的使用条款</label>
           <div class="form-actions"><button type="button" id="cancel-wizard">取消</button><button class="primary">确认并开始</button></div>
         </form>

@@ -51,11 +51,25 @@ async def ensure_deployment_host_ready(
 
 
 def validate_remote_capacity(
-    package_bytes: int, resources: dict[str, Any]
+    package_bytes: int,
+    resources: dict[str, Any],
+    *,
+    additional_upload_bytes: int | None = None,
+    runtime_reserve_bytes: int | None = None,
 ) -> dict[str, int]:
     if package_bytes <= 0:
         raise ValueError("server package is empty")
-    required_disk = package_bytes + max(8 * 1024**3, package_bytes // 10)
+    upload_bytes = (
+        package_bytes if additional_upload_bytes is None else additional_upload_bytes
+    )
+    reserve_bytes = (
+        max(8 * 1024**3, package_bytes // 10)
+        if runtime_reserve_bytes is None
+        else runtime_reserve_bytes
+    )
+    if upload_bytes < 0 or reserve_bytes < 0:
+        raise ValueError("remote disk requirements must not be negative")
+    required_disk = upload_bytes + reserve_bytes
     if int(resources["disk_free_bytes"]) < required_disk:
         raise ValueError(
             "server disk is insufficient before upload: "
@@ -69,6 +83,47 @@ def validate_remote_capacity(
             f"free_mib={resources['gpu_free_total_mib']}"
         )
     return {"required_disk_bytes": required_disk, "required_gpu_mib": required_gpu_mib}
+
+
+async def _remote_file_size(
+    session: SSHSession, path: PurePosixPath
+) -> int | None:
+    result = await session.run(["stat", "-c", "%s", str(path)])
+    if result["exit_code"] != 0:
+        return None
+    try:
+        size = int(str(result["stdout"]).strip())
+    except ValueError:
+        return None
+    return size if size >= 0 else None
+
+
+async def _remaining_upload_bytes(
+    session: SSHSession,
+    package_root: Path,
+    package_files: list[Path],
+    remote_model_root: PurePosixPath,
+) -> int:
+    """Return only the extra remote bytes needed to resume this package."""
+
+    remaining = 0
+    for source in package_files:
+        relative = source.relative_to(package_root).as_posix()
+        destination = remote_model_root / relative
+        source_size = source.stat().st_size
+        committed_size = await _remote_file_size(session, destination)
+        if committed_size == source_size:
+            continue
+        partial_size = await _remote_file_size(
+            session, PurePosixPath(str(destination) + ".partial")
+        )
+        if partial_size is None:
+            remaining += source_size
+        elif partial_size < source_size:
+            remaining += source_size - partial_size
+        # An oversized partial is removed before retry and already occupies
+        # enough disk for the replacement, so it needs no extra allocation.
+    return remaining
 
 
 @dataclass(frozen=True)
@@ -120,6 +175,13 @@ class HFDeploymentManager:
         progress: DeploymentProgress | None = None,
     ) -> dict[str, Any]:
         def report(stage: str, percent: int, message: str) -> None:
+            percent = {
+                "REMOTE_PREFLIGHT": 5,
+                "PREPARING_NATIVE_RUNTIME": 85,
+                "STARTING_MODEL": 93,
+                "HEALTH_CHECK": 97,
+                "HEALTHY": 100,
+            }.get(stage, percent)
             if progress is not None:
                 progress(stage, percent, message)
 
@@ -135,17 +197,23 @@ class HFDeploymentManager:
             auto_install_runtime=request.auto_install_runtime,
             progress=progress,
         )
-        package_bytes = sum(
-            path.stat().st_size
-            for path in request.server_package.rglob("*")
-            if path.is_file()
+        package_files = sorted(
+            path for path in request.server_package.rglob("*") if path.is_file()
         )
+        package_bytes = sum(path.stat().st_size for path in package_files)
         resources = preflight["resources"]
         # The native HF runtime does not permit CPU/disk offload because that
         # silently turns an accepted deployment into an unusably slow service.
         # Weight bytes are a conservative lower bound; KV cache and allocator
         # headroom are added explicitly.
-        capacity = validate_remote_capacity(package_bytes, resources)
+        # Validate GPU capacity immediately. Disk capacity is validated after
+        # opening the remote session so retries count only missing bytes.
+        capacity = validate_remote_capacity(
+            package_bytes,
+            resources,
+            additional_upload_bytes=0,
+            runtime_reserve_bytes=0,
+        )
         runtime_mode = str(preflight.get("runtime_mode", "docker"))
         if runtime_mode not in {"docker", "native"}:
             raise ValueError(f"unsupported remote runtime mode: {runtime_mode}")
@@ -199,17 +267,93 @@ class HFDeploymentManager:
                 )
                 if created["exit_code"] != 0:
                     raise RuntimeError(str(created["stderr"]))
-                for source in sorted(request.server_package.rglob("*")):
-                    if not source.is_file():
-                        continue
+                remaining_upload_bytes = await _remaining_upload_bytes(
+                    session,
+                    request.server_package,
+                    package_files,
+                    version_root / "model",
+                )
+                if runtime_mode == "native":
+                    runtime_ready = await session.run(
+                        [
+                            "test",
+                            "-f",
+                            str(root / "runtime" / "native-runtime-v6-pinned.ready"),
+                        ]
+                    )
+                    runtime_reserve_bytes = (
+                        512 * 1024**2
+                        if runtime_ready["exit_code"] == 0
+                        else 8 * 1024**3
+                    )
+                else:
+                    runtime_reserve_bytes = 8 * 1024**3
+                capacity = validate_remote_capacity(
+                    package_bytes,
+                    resources,
+                    additional_upload_bytes=remaining_upload_bytes,
+                    runtime_reserve_bytes=runtime_reserve_bytes,
+                )
+                deployment_record = self.store.get_deployment(request.deployment_id)
+                deployment_record["metadata"] = {
+                    **deployment_record.get("metadata", {}),
+                    "remaining_upload_bytes": remaining_upload_bytes,
+                    "runtime_reserve_bytes": runtime_reserve_bytes,
+                    "required_disk_bytes": capacity["required_disk_bytes"],
+                }
+                self.store.put_deployment(deployment_record)
+                uploaded_before_file = 0
+                for source in package_files:
                     relative = source.relative_to(request.server_package).as_posix()
                     expected_sha256 = _sha256(source)
                     destination = version_root / "model" / relative
                     if remote_source_root is None:
+                        committed_size = await _remote_file_size(session, destination)
+                        verifying_committed = committed_size == source.stat().st_size
+                        if verifying_committed:
+                            verify_percent = 5 + int(
+                                77
+                                * (uploaded_before_file + source.stat().st_size)
+                                / max(1, package_bytes)
+                            )
+                            report(
+                                "VERIFYING_REMOTE_MODEL",
+                                verify_percent,
+                                f"正在校验服务器已有文件 {source.name}",
+                            )
+
+                        def upload_progress(
+                            done: int,
+                            _total: int,
+                            *,
+                            current: Path = source,
+                            completed: int = uploaded_before_file,
+                            verify_existing: bool = verifying_committed,
+                        ) -> None:
+                            uploaded = min(package_bytes, completed + done)
+                            upload_percent = 5 + int(
+                                77 * uploaded / max(1, package_bytes)
+                            )
+                            if verify_existing and done == current.stat().st_size:
+                                report(
+                                    "VERIFYING_REMOTE_MODEL",
+                                    upload_percent,
+                                    f"已校验服务器文件 {current.name}",
+                                )
+                                return
+                            report(
+                                "UPLOADING_MODEL",
+                                upload_percent,
+                                f"正在上传 {current.name}："
+                                f"{uploaded / 1024**3:.2f} / "
+                                f"{package_bytes / 1024**3:.2f} GiB",
+                            )
+
                         await session.upload_resumable(
                             source,
                             str(destination),
                             expected_sha256=expected_sha256,
+                            progress=upload_progress,
                         )
                     else:
                         remote_source = remote_source_root / relative
@@ -219,6 +363,7 @@ class HFDeploymentManager:
                             destination,
                             expected_sha256,
                         )
+                    uploaded_before_file += source.stat().st_size
                 env = (
                     f"YINBIAN_MODEL_ID={shlex.quote(request.model_id)}\n"
                     f"YINBIAN_KEY_ID={shlex.quote(request.key_id)}\n"
@@ -656,11 +801,35 @@ async def _prepare_native_runtime(
     runtime_root = root / "runtime"
     python = "python3"
     site_packages = runtime_root / "site-packages-cu121-v1"
-    marker = runtime_root / "native-runtime-v5-pinned.ready"
+    marker = runtime_root / "native-runtime-v7-isolated.ready"
     ready = await session.run(["test", "-f", str(marker)])
     if ready["exit_code"] == 0:
         report("NATIVE_RUNTIME_READY", 92, "Python推理依赖已就绪")
         return
+    legacy_ready = await session.run(
+        ["test", "-f", str(runtime_root / "native-runtime-v6-pinned.ready")]
+    )
+    if legacy_ready["exit_code"] == 0:
+        isolated = await session.run(
+            [
+                python,
+                "-S",
+                "-c",
+                (
+                    "import sys; "
+                    f"sys.path.insert(0, {str(site_packages)!r}); "
+                    "import fastapi, torch, torchvision, transformers, uvicorn; "
+                    "from transformers import DeepseekV3ForCausalLM; "
+                    "assert torch.cuda.is_available()"
+                ),
+            ]
+        )
+        if isolated["exit_code"] == 0:
+            committed = await session.run(["touch", str(marker)], sudo=True)
+            if committed["exit_code"] != 0:
+                raise RuntimeError(str(committed["stderr"]))
+            report("NATIVE_RUNTIME_READY", 92, "隔离的Python推理依赖已就绪")
+            return
     report("CREATING_NATIVE_ENV", 88, "正在创建独立的Python依赖目录")
     created = await session.run(
         ["mkdir", "-p", str(runtime_root), str(site_packages)], sudo=True
@@ -672,47 +841,74 @@ async def _prepare_native_runtime(
         90,
         "正在安装与CUDA 12.1兼容的PyTorch及模型推理依赖",
     )
-    dependencies = await session.run(
-        [
-            python,
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--no-input",
-            "--upgrade",
-            "--extra-index-url",
+    dependencies: dict[str, Any] | None = None
+    indexes = (
+        (
             "https://download.pytorch.org/whl/cu121",
-            "--target",
-            str(site_packages),
-            "torch==2.5.1+cu121",
-            "accelerate==1.14.0",
-            "fastapi==0.141.1",
-            # Ubuntu 22.04 images commonly provide Python 3.10.  NumPy 2.2 is
-            # the newest line with compatible wheels; 2.4 made otherwise
-            # healthy rental hosts fail during bootstrap.
-            "numpy==2.2.6",
-            "orjson==3.11.9",
-            "pydantic==2.13.4",
-            "safetensors==0.8.0",
-            "transformers==5.12.0",
-            "uvicorn==0.52.1",
-        ],
-        timeout_seconds=3600,
+            "https://mirrors.aliyun.com/pypi/simple/",
+            "PyTorch专用源和国内高速镜像",
+        ),
+        (
+            "https://download.pytorch.org/whl/cu121",
+            "https://pypi.org/simple/",
+            "PyTorch专用源和PyPI官方源",
+        ),
     )
-    if dependencies["exit_code"] != 0:
-        raise RuntimeError(
-            f"native runtime dependency installation failed: {dependencies['stderr']}"
+    for attempt, (index_url, extra_index_url, index_name) in enumerate(
+        indexes, start=1
+    ):
+        report(
+            "INSTALLING_INFERENCE_DEPS",
+            89 + attempt,
+            f"正在通过{index_name}安装CUDA 12.1推理依赖",
         )
+        dependencies = await session.run(
+            [
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--upgrade",
+                "--index-url",
+                index_url,
+                "--extra-index-url",
+                extra_index_url,
+                "--target",
+                str(site_packages),
+                "torch==2.5.1+cu121",
+                "torchvision==0.20.1+cu121",
+                "accelerate==1.14.0",
+                "fastapi==0.141.1",
+                # Ubuntu 22.04 images commonly provide Python 3.10.  NumPy 2.2 is
+                # the newest line with compatible wheels; 2.4 made otherwise
+                # healthy rental hosts fail during bootstrap.
+                "numpy==2.2.6",
+                "orjson==3.11.9",
+                "pydantic==2.13.4",
+                "safetensors==0.8.0",
+                "transformers==5.12.0",
+                "uvicorn==0.52.1",
+            ],
+            timeout_seconds=3600,
+        )
+        if dependencies["exit_code"] == 0:
+            break
+    if dependencies is None or dependencies["exit_code"] != 0:
+        stderr = "" if dependencies is None else str(dependencies["stderr"])
+        raise RuntimeError(f"native runtime dependency installation failed: {stderr}")
     report("VERIFYING_GPU_RUNTIME", 91, "正在验证Python、CUDA和GPU可用性")
     verified = await session.run(
         [
             python,
+            "-S",
             "-c",
             (
                 "import sys; "
                 f"sys.path.insert(0, {str(site_packages)!r}); "
-                "import fastapi, torch, transformers, uvicorn; "
+                "import fastapi, torch, torchvision, transformers, uvicorn; "
+                "from transformers import DeepseekV3ForCausalLM; "
                 "assert torch.cuda.is_available()"
             ),
         ]
@@ -746,7 +942,7 @@ def _native_start_script(
         f"{shlex.quote(str(root / 'runtime' / 'site-packages-cu121-v1'))}\n"
         "export PYTHONUNBUFFERED=1\n"
         "export TOKENIZERS_PARALLELISM=false\n"
-        "nohup python3 "
+        "nohup python3 -S "
         "-m aloepri.serving.native_entry "
         f"--model {shlex.quote(str(version_root / 'model'))} "
         f"--host 127.0.0.1 --port {request.remote_port} "

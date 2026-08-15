@@ -158,6 +158,14 @@ def build_catalog_plan(
     }:
         raise ValueError("unsupported model download endpoint")
     entry = find_catalog_entry(model)
+    expansion_h = int(entry.conversion["expansion_h"])
+    if entry.adapter_id in {"deepseek_v3", "kimi_k2", "glm4_moe"} and (
+        expansion_h <= 1 or expansion_h % 2
+    ):
+        raise ValueError(
+            f"catalog entry {entry.catalog_id} requires a positive even expansion_h "
+            f"for adapter {entry.adapter_id}"
+        )
     output: dict[str, Any] = {
         "type": "local" if not output_uri.startswith("s3://") else "s3",
         "uri": output_uri,
@@ -209,7 +217,7 @@ def build_catalog_plan(
             "pass": True,
         },
     )
-    conversion.conversion["expansion_h"] = int(entry.conversion["expansion_h"])
+    conversion.conversion["expansion_h"] = expansion_h
     conversion.conversion["dtype"] = str(entry.conversion["output_dtype"])
     conversion.conversion["estimated_output_ratio"] = float(
         entry.conversion.get("estimated_output_ratio", 1.15)

@@ -27,8 +27,27 @@ function formatBytes(value) {
   return `${gib.toFixed(gib >= 10 ? 1 : 2)} GiB`;
 }
 
+function estimateLocalPreparationBytes(model) {
+  const source = Number(model?.expected_bytes || 0);
+  if (!source) return 0;
+  const ratio = Number(model?.conversion?.estimated_output_ratio || 1.15);
+  const tile = Number(model?.conversion?.tile_mib || 256) * 1024 ** 2;
+  return Math.ceil((source + source * ratio + tile) * 1.2);
+}
+
 function explainDeploymentError(message) {
   const text = String(message || "");
+  if (text.includes("server disk is insufficient before upload")) {
+    const required = Number(text.match(/required=(\d+)/)?.[1] || 0);
+    const free = Number(text.match(/free=(\d+)/)?.[1] || 0);
+    return `部署器错误地按全新部署重复计算了已上传文件。当前服务器可用 ${formatBytes(free)}，旧预检要求 ${formatBytes(required)}；新版会只计算尚未上传的字节和未安装的运行环境。请重启部署程序后点击“继续部署”。`;
+  }
+  if (text.includes("libtorchaudio") || text.includes("import torchaudio")) {
+    return "服务器预装的torchaudio与独立PyTorch环境冲突。新版模型服务使用隔离Python模式，只加载隐变智模自己的依赖，不再读取服务器预装的视觉或音频组件。请重启部署程序后点击“继续部署”。";
+  }
+  if (text.includes("torchvision::nms") || text.includes("DeepseekV3ForCausalLM")) {
+    return "服务器预装的torchvision与独立PyTorch运行环境冲突。新版已固定兼容的torchvision 0.20.1 + CUDA 12.1，并会在启动模型前完成一致性检查。请重启部署程序后点击“继续部署”。";
+  }
   if (text.includes("System has not been booted with systemd")) {
     return "该GPU租赁环境是容器，不提供systemd。部署器将改用Python原生运行方式，请再次点击“安装运行环境并继续部署”。";
   }
@@ -54,7 +73,7 @@ function operationProgress(operation) {
   if (!operation) return "";
   const percent = Math.max(0, Math.min(100, Number(operation.percent || 0)));
   const statusText = operation.status === "FAILED"
-    ? `失败：${escapeHtml(operation.error || operation.message)}`
+    ? `失败：${escapeHtml(explainDeploymentError(operation.error || operation.message))}`
     : escapeHtml(operation.message || "正在处理");
   return `
     <div class="server-operation ${operation.status.toLowerCase()}">
@@ -63,6 +82,49 @@ function operationProgress(operation) {
         <div class="progress-fill" style="width:${percent}%"></div>
       </div>
       <small>${escapeHtml(operation.stage)}</small>
+    </div>`;
+}
+
+function jobProgress(job) {
+  const progress = job.progress || {};
+  const completed = job.status === "COMPLETED";
+  const byteTotal = Number(progress.bytes_total || 0);
+  const byteDone = Number(progress.bytes_completed || 0);
+  const conversion = progress.conversion || {};
+  let percent = null;
+  let label = "";
+
+  if (completed) {
+    percent = 100;
+    label = "本地下载、改造和校验已完成";
+  } else if (byteTotal > 0) {
+    percent = Math.max(0, Math.min(100, 100 * byteDone / byteTotal));
+    label = `正在下载 ${escapeHtml(progress.item || "模型权重")} · ${formatBytes(byteDone)} / ${formatBytes(byteTotal)}`;
+  } else if (job.phase === "CONVERTING") {
+    const measured = Number(conversion.percent);
+    if (Number.isFinite(measured)) percent = Math.max(0, Math.min(99, measured));
+    const tensor = conversion.tensor || progress.item;
+    const tile = Number.isFinite(Number(conversion.tile)) ? ` · tile ${conversion.tile}` : "";
+    label = `下载已完成，正在改造模型权重${tensor ? ` · ${escapeHtml(tensor)}` : ""}${tile}`;
+  } else {
+    const labels = {
+      METADATA: "正在读取模型元数据",
+      SOURCE_VERIFY: "下载完成，正在校验并规范化源模型",
+      PRIVATE_VERIFY: "改造完成，正在校验私有模型",
+      UPLOADING: "正在上传私有模型",
+      REMOTE_VERIFY: "正在校验远端文件",
+      FINALIZING: "正在生成最终清单",
+    };
+    label = labels[job.phase] || progress.item || "正在处理";
+  }
+
+  const determinate = percent !== null;
+  return `
+    <div class="job-progress">
+      <div class="operation-head"><strong>${label}</strong><span>${determinate ? `${percent.toFixed(1)}%` : "处理中"}</span></div>
+      <div class="progress-track${determinate ? "" : " indeterminate"}" role="progressbar" aria-valuemin="0" aria-valuemax="100" ${determinate ? `aria-valuenow="${percent}"` : `aria-valuetext="${escapeHtml(label)}"`}>
+        <div class="progress-fill" ${determinate ? `style="width:${percent}%"` : ""}></div>
+      </div>
     </div>`;
 }
 
@@ -171,8 +233,28 @@ function updateModelNote() {
   }
   const ram = selected.conversion?.minimum_host_ram_gib;
   const verified = selected.status === "supported";
+  const requiredDisk = estimateLocalPreparationBytes(selected);
+  const freeDisk = Number(window.dashboard?.resources?.disk_free_bytes || 0);
+  const diskText = requiredDisk
+    ? `；本地准备峰值约 ${formatBytes(requiredDisk)}${freeDisk ? `，当前目录可用 ${formatBytes(freeDisk)}` : ""}`
+    : "";
   note.className = `model-note full${verified ? "" : " warning"}`;
-  note.textContent = `${selected.display_name}：${selected.support_note || "执行前会重新检查checkpoint"}${ram ? `；建议主机内存至少 ${ram} GiB` : ""}。`;
+  note.textContent = `${selected.display_name}：${selected.support_note || "执行前会重新检查checkpoint"}${ram ? `；建议主机内存至少 ${ram} GiB` : ""}${diskText}。`;
+}
+
+function updateDeploymentMode() {
+  const direct = document.querySelector("#wizard-mode").value === "direct-deploy";
+  const server = document.querySelector("#wizard-server");
+  const password = document.querySelector("#wizard-password");
+  server.hidden = !direct;
+  server.disabled = !direct;
+  password.hidden = !direct;
+  password.disabled = !direct;
+  if (!direct) {
+    server.value = "";
+    password.value = "";
+  }
+  updateModelNote();
 }
 
 function toast(message) {
@@ -208,11 +290,13 @@ function jobRows(jobs) {
       <h3>${job.job_id}</h3>
       <p>${job.status} · ${job.phase}</p>
       ${job.error?.message ? `<div class="job-error"><b>失败原因</b><br>${escapeHtml(job.error.message)}</div>` : `<span class="badge ${["CANCELLED", "COMPLETED"].includes(job.status) ? "terminal" : ""}">${escapeHtml(job.status === "CANCELLED" ? "已取消" : job.status === "COMPLETED" ? "已完成" : job.status === "PAUSED" ? "已暂停" : job.progress?.bytes_total ? `${job.progress.item} · ${(100 * job.progress.bytes_completed / job.progress.bytes_total).toFixed(1)}% · ${formatBytes(job.progress.bytes_completed)} / ${formatBytes(job.progress.bytes_total)}` : job.progress?.item || "正在初始化")}</span>`}
+      ${job.status === "CANCELLED" || job.status === "FAILED" ? "" : jobProgress(job)}
       <div class="card-actions">
         ${job.status === "RUNNING" ? `<button data-job-action="pause" data-id="${job.job_id}">暂停</button>` : ""}
         ${["PAUSED", "FAILED"].includes(job.status) ? `<button data-job-action="resume" data-id="${job.job_id}">恢复</button>` : ""}
         ${!["COMPLETED", "CANCELLED"].includes(job.status) ? `<button data-job-action="cancel" data-id="${job.job_id}">取消</button>` : ""}
         ${job.status === "COMPLETED" && job.plan?.conversion?.output?.deployment_mode === "direct-deploy" ? `<button class="primary" data-job-deploy="${job.job_id}">继续部署</button>` : ""}
+        ${job.status === "COMPLETED" && job.plan?.conversion?.output?.deployment_mode === "local-only" ? `<button class="primary" data-local-job-deploy="${job.job_id}">选择服务器部署</button>` : ""}
       </div>
     </article>`).join("");
 }
@@ -225,6 +309,10 @@ async function refresh() {
     const models = catalogModels.length ? catalogModels : await api("/api/models");
     window.dashboard = dashboard;
     catalogModels = models;
+    const destination = document.querySelector("#wizard-destination");
+    if (destination && !destination.value) {
+      destination.placeholder = `自动保存到 ${dashboard.paths.local_private}`;
+    }
     const activeJobs = dashboard.jobs.filter((job) => !["CANCELLED", "COMPLETED"].includes(job.status));
     const terminalJobs = dashboard.jobs.filter((job) => ["CANCELLED", "COMPLETED"].includes(job.status));
     if (!modelCatalogRendered) {
@@ -241,6 +329,7 @@ async function refresh() {
       ["当前任务", activeJobs.length],
       ["服务器", dashboard.servers.length],
       ["健康部署", dashboard.deployments.filter((item) => item.status === "HEALTHY").length],
+      ["本地可用空间", formatBytes(dashboard.resources.disk_free_bytes)],
     ];
     document.querySelector("#metrics").innerHTML = metrics.map((item) => `<div class="metric"><small>${item[0]}</small><strong>${item[1]}</strong></div>`).join("");
     document.querySelector("#recent-jobs").innerHTML = activeJobs.length ? jobRows(activeJobs.slice(0, 4)) : '<div class="empty">暂无需要处理的任务，请点击“新建任务”开始</div>';
@@ -261,9 +350,15 @@ async function refresh() {
     }).join("") : '<div class="empty">尚未添加服务器</div>';
     const deploymentJobIds = new Set(dashboard.deployments.map((item) => item.job_id));
     const waitingDeployments = dashboard.jobs.filter((job) => job.status === "COMPLETED" && job.plan?.conversion?.output?.deployment_mode === "direct-deploy" && !deploymentJobIds.has(job.job_id));
+    const localPackages = dashboard.jobs.filter((job) => job.status === "COMPLETED" && job.plan?.conversion?.output?.deployment_mode === "local-only" && job.progress?.output && !deploymentJobIds.has(job.job_id));
     const deploymentCards = dashboard.deployments.map((deployment) => {
       const operation = latestServerOperation(deployment.server_id);
       const operationRunning = operation?.status === "RUNNING";
+      const backingJob = dashboard.jobs.find((item) => item.job_id === deployment.job_id);
+      const localOnly = backingJob?.plan?.conversion?.output?.deployment_mode === "local-only";
+      const resumeButton = localOnly
+        ? `<button class="primary" data-local-job-deploy="${deployment.job_id}" data-server-id="${deployment.server_id}" ${operationRunning ? "disabled" : ""}>${operationRunning ? "正在继续部署…" : "继续部署"}</button>`
+        : `<button class="primary" data-job-deploy="${deployment.job_id}" ${operationRunning ? "disabled" : ""}>${operationRunning ? "正在继续部署…" : "继续部署"}</button>`;
       return `
       <article class="card">
         <h3>${deployment.model_id}</h3>
@@ -272,10 +367,24 @@ async function refresh() {
         ${operationProgress(operation)}
         <span class="badge ${deployment.status === "HEALTHY" ? "" : "experimental"}">${deployment.status}</span>
         <div class="card-actions">
-          ${deployment.status === "FAILED" ? `<button data-server-bootstrap="${deployment.server_id}" data-retry-job="${deployment.job_id}" ${operationRunning ? "disabled" : ""}>${operationRunning ? "安装并部署中…" : "安装运行环境并继续部署"}</button><button class="primary" data-job-deploy="${deployment.job_id}" ${operationRunning ? "disabled" : ""}>仅重试部署</button>` : deployment.status === "HEALTHY" ? `<button class="primary" data-launch-chat="${deployment.deployment_id}">启动对话</button><button data-deploy-migrate="${deployment.deployment_id}">复制到另一台服务器</button><button data-deploy-action="stop" data-id="${deployment.deployment_id}">停止服务</button><button data-deploy-action="rollback" data-id="${deployment.deployment_id}">回滚</button>` : `<button data-deploy-action="start" data-id="${deployment.deployment_id}">启动服务</button><button data-deploy-action="rollback" data-id="${deployment.deployment_id}">回滚</button>`}
+          ${deployment.status === "HEALTHY" ? `<button class="primary" data-launch-chat="${deployment.deployment_id}">启动对话</button><button data-deploy-migrate="${deployment.deployment_id}">复制到另一台服务器</button><button data-deploy-action="stop" data-id="${deployment.deployment_id}">停止服务</button><button data-deploy-action="rollback" data-id="${deployment.deployment_id}">回滚</button>` : deployment.status === "STOPPED" ? `<button class="primary" data-deploy-action="start" data-id="${deployment.deployment_id}">启动服务</button><button data-deploy-action="rollback" data-id="${deployment.deployment_id}">回滚</button>` : `${resumeButton}${deployment.status === "FAILED" ? `<button data-server-bootstrap="${deployment.server_id}" data-retry-job="${deployment.job_id}" ${operationRunning ? "disabled" : ""}>安装运行环境并继续部署</button>` : ""}`}
         </div>
       </article>`;
     });
+    deploymentCards.push(...localPackages.map((job) => {
+      const operation = [...(dashboard.server_operations || [])].reverse().find(
+        (item) => item.job_id === job.job_id && item.kind === "LOCAL_PACKAGE_DEPLOY",
+      );
+      const running = operation?.status === "RUNNING";
+      return `
+      <article class="card">
+        <h3>${escapeHtml(job.plan?.conversion?.output?.model_id || "本地私有模型")}</h3>
+        <p>已在本地完成改造和校验<br>${escapeHtml(job.progress.output)}</p>
+        ${operationProgress(operation)}
+        <span class="badge">LOCAL_READY</span>
+        <div class="card-actions"><button class="primary" data-local-job-deploy="${job.job_id}" ${running ? "disabled" : ""}>${running ? "正在上传部署…" : "选择服务器部署"}</button></div>
+      </article>`;
+    }));
     deploymentCards.push(...waitingDeployments.map((job) => `
       <article class="card">
         <h3>${escapeHtml(job.plan?.conversion?.output?.model_id || "私有模型")}</h3>
@@ -295,13 +404,18 @@ document.querySelectorAll("nav button").forEach((button) => button.addEventListe
 document.querySelector("#refresh").addEventListener("click", refresh);
 document.querySelector("#show-server-form").addEventListener("click", () => { document.querySelector("#server-form").hidden = false; });
 document.querySelector("#cancel-server-form").addEventListener("click", () => { document.querySelector("#server-form").hidden = true; });
-document.querySelector("#new-job").addEventListener("click", () => { document.querySelector("#deploy-wizard").hidden = false; });
+document.querySelector("#new-job").addEventListener("click", () => {
+  document.querySelector("#wizard-mode").value = "local-only";
+  updateDeploymentMode();
+  document.querySelector("#deploy-wizard").hidden = false;
+});
 document.querySelector("#cancel-wizard").addEventListener("click", () => { document.querySelector("#deploy-wizard").hidden = true; });
 document.querySelector("#wizard-family").addEventListener("change", (event) => {
   renderModelOptions(catalogModels, event.target.value);
   updateModelNote();
 });
 document.querySelector("#wizard-model").addEventListener("change", updateModelNote);
+document.querySelector("#wizard-mode").addEventListener("change", updateDeploymentMode);
 document.querySelector("#server-auth").addEventListener("change", (event) => {
   const password = event.target.value === "password";
   document.querySelector("#server-password-field").hidden = !password;
@@ -348,6 +462,8 @@ document.addEventListener("click", async (event) => {
     document.querySelector("#wizard-family").value = model.dataset.family;
     renderModelOptions(catalogModels, model.dataset.family, model.dataset.model);
     document.querySelector("#wizard-model").value = model.dataset.model;
+    document.querySelector("#wizard-mode").value = "local-only";
+    updateDeploymentMode();
     updateModelNote();
     document.querySelector("#deploy-wizard").hidden = false;
     switchPage("jobs");
@@ -365,7 +481,9 @@ document.addEventListener("click", async (event) => {
         const cached = serverId ? sessionServerSecrets.get(serverId) : null;
         const offlineKeyPassword = window.prompt("\u8bf7\u8f93\u5165\u79bb\u7ebf\u5bc6\u94a5\u5907\u4efd\u53e3\u4ee4\uff08\u81f3\u5c1112\u4f4d\uff0c\u4e0d\u4fdd\u5b58\uff09");
         if (!offlineKeyPassword || offlineKeyPassword.length < 12) throw new Error("\u79bb\u7ebf\u5bc6\u94a5\u5907\u4efd\u53e3\u4ee4\u81f3\u5c11\u9700\u898112\u4f4d");
-        const password = saved ? null : (cached ?? window.prompt("请输入SSH密码；验证成功后会加密保存在本机"));
+        const password = serverId
+          ? (saved ? null : (cached ?? window.prompt("请输入SSH密码；验证成功后会加密保存在本机")))
+          : null;
         body = {
           password: password || null,
           offline_key_password: offlineKeyPassword,
@@ -404,6 +522,35 @@ document.addEventListener("click", async (event) => {
       refresh();
     } catch (error) { toast(error.message); refresh(); }
     finally { pendingDeployment.disabled = false; }
+  }
+  const localDeployment = event.target.closest("[data-local-job-deploy]");
+  if (localDeployment) {
+    const targets = window.dashboard.servers;
+    if (!targets.length) {
+      toast("本地私有模型已经保存；添加服务器后即可上传部署");
+      return;
+    }
+    const pinnedServerId = localDeployment.dataset.serverId;
+    let target = pinnedServerId ? targets.find((item) => item.server_id === pinnedServerId) : null;
+    if (!target) {
+      const choices = targets.map((item, index) => `${index + 1}. ${item.display_name} (${item.username}@${item.host}:${item.port})`).join("\n");
+      const selectedIndex = Number(window.prompt(`选择目标服务器编号：\n${choices}`, "1")) - 1;
+      target = targets[selectedIndex];
+    }
+    if (!target) return;
+    if (!window.confirm("将上传已经校验的私有模型并安装或启动远端运行环境，不会重新下载或改造权重。确认继续吗？")) return;
+    const password = target.has_saved_password ? null : (sessionServerSecrets.get(target.server_id) ?? window.prompt("请输入目标服务器SSH密码"));
+    if (!target.has_saved_password && !password) return;
+    localDeployment.disabled = true;
+    try {
+      const operation = await api(`/api/jobs/${encodeURIComponent(localDeployment.dataset.localJobDeploy)}/deploy-local`, {
+        method: "POST",
+        body: JSON.stringify({ server_id: target.server_id, password, confirmed: true }),
+      });
+      toast(`上传部署已开始：${operation.stage}`);
+      refresh();
+    } catch (error) { toast(error.message); refresh(); }
+    finally { localDeployment.disabled = false; }
   }
   const deployment = event.target.closest("[data-deploy-action]");
   if (deployment) {
@@ -551,11 +698,15 @@ document.querySelector("#key-restore-form").addEventListener("submit", async (ev
 });
 
 function autoRefresh() {
-  const userIsChoosing = document.querySelector("form:not([hidden])")
-    || document.querySelector(".card:hover")
-    || document.querySelector(".family-tabs:hover");
-  if (!userIsChoosing) refresh();
+  // Forms on inactive pages remain in the DOM. Only pause polling while the
+  // user is actively editing a control on the page that is currently shown.
+  const activeElement = document.activeElement;
+  const userIsEditing = activeElement
+    && ["INPUT", "SELECT", "TEXTAREA"].includes(activeElement.tagName)
+    && activeElement.closest(".page.active");
+  if (!userIsEditing) refresh();
 }
 
+updateDeploymentMode();
 refresh();
 setInterval(autoRefresh, 2000);

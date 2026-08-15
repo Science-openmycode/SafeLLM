@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -224,6 +225,7 @@ def convert_model_checkpoint(
     *,
     offline_key_password: str | None = None,
     store: JobStore | None = None,
+    progress_callback: Callable[[str, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Dispatch a validated plan to its architecture-family converter.
 
@@ -300,6 +302,7 @@ def convert_model_checkpoint(
             store,
             source,
             offline_key_password=offline_key_password,
+            progress_callback=progress_callback,
         )
     raise ValueError(
         f"adapter {plan.adapter!r} has no executable checkpoint converter; "
@@ -314,6 +317,7 @@ def _run_deepseek(
     source: Path | None = None,
     *,
     offline_key_password: str | None = None,
+    progress_callback: Callable[[str, int, str], None] | None = None,
 ) -> dict[str, Any]:
     source = source or Path(str(plan.source["path"]))
     full_key, online_key, _ = _key_paths(plan, output)
@@ -336,6 +340,8 @@ def _run_deepseek(
         )
 
     def progress(name: str, tile_index: int, phase: str) -> None:
+        if progress_callback is not None:
+            progress_callback(name, tile_index, phase)
         if store is None:
             return
         job = store.get(plan.job_id)

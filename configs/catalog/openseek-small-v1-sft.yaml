@@ -4,15 +4,16 @@ display_name: OpenSeek-Small-v1-SFT
 repo_id: BAAI/OpenSeek-Small-v1-SFT
 revision: 1515c184e6fe4a91e6061be513a79d607e8787cb
 adapter_id: deepseek_v3
-status: validated-conversion
-max_stage: convert
+status: supported
+max_stage: chat
 source:
   format: safetensors
   dtype: bfloat16
   expected_bytes: 3178063824
 conversion:
   output_dtype: bfloat16
-  expansion_h: 0
+  expansion_h: 128
+  estimated_output_ratio: 1.21
   tile_mib: 256
 runtime:
   preferred: hf

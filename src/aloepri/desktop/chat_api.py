@@ -19,8 +19,10 @@ from aloepri.demo.app import DemoGateway, DemoGenerator, DemoRequest, DemoRespon
 from aloepri.desktop.chat_store import ChatHistoryStore
 from aloepri.keys.directory_vault import materialize_online_key_directory
 from aloepri.keys.vault import CredentialVault
+from aloepri.planning import ConversionPlan
 from aloepri.product.paths import product_paths
 from aloepri.product.state import DeploymentStatus, ProductStore
+from aloepri.product.tokenizer_assets import materialize_local_tokenizer
 
 DEMO_STATIC = Path(__file__).parents[1] / "demo" / "static"
 
@@ -284,6 +286,28 @@ def create_chat_desktop_app(
         if deployment["status"] != DeploymentStatus.HEALTHY.value:
             raise HTTPException(status_code=409, detail="deployment is not healthy")
         metadata = deployment["metadata"]
+        # Repair records made by older clients which pointed at an upstream
+        # tokenizer requiring repository code. The local client uses the standard,
+        # self-contained tokenizer emitted by the conversion package.
+        try:
+            job = store.get_job(str(deployment["job_id"]))
+            plan_payload = job["plan"].get("conversion", job["plan"])
+            tokenizer_root = materialize_local_tokenizer(
+                ConversionPlan.from_dict(plan_payload),
+                destination_root=store.path.parent / "tokenizers",
+            )
+            if metadata.get("tokenizer_dir") != str(tokenizer_root):
+                deployment["metadata"] = {
+                    **metadata,
+                    "tokenizer_dir": str(tokenizer_root),
+                }
+                deployment = store.put_deployment(deployment)
+                metadata = deployment["metadata"]
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise HTTPException(
+                status_code=409,
+                detail=f"local tokenizer preparation failed: {error}",
+            ) from error
         local_server = metadata.get("local_server_url")
         if local_server is None:
             tunnel = tunnels.status(request.deployment_id)

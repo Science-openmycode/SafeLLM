@@ -82,6 +82,13 @@ def test_catalog_groups_multiple_architecture_families_without_overclaiming() ->
     assert entries["glm-4-9b-0414"].conversion_ready is False
     assert entries["glm-4-9b-0414"].max_stage == "inspect"
     assert entries["qwen3-4b"].max_stage == "convert"
+    openseek = entries["openseek-small-v1-sft"]
+    assert openseek.adapter_id == "deepseek_v3"
+    assert openseek.conversion["expansion_h"] == 128
+    assert openseek.conversion["estimated_output_ratio"] >= 1.2
+    assert openseek.status == "supported"
+    assert openseek.deployment_ready is True
+    assert openseek.max_stage == "chat"
 
 
 def test_new_families_have_explicit_conversion_readiness() -> None:

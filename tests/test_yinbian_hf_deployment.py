@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import zipfile
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,12 +18,13 @@ from aloepri.cloud.hf_deployment import (
     _native_start_script,
     _native_stop_script,
     _private_generation_probe,
+    _remaining_upload_bytes,
     _validated_model_root,
     _validated_preuploaded_root,
     _wait_health,
     validate_remote_capacity,
 )
-from aloepri.cloud.ssh import SSHProfile
+from aloepri.cloud.ssh import SSHProfile, SSHSession
 
 
 class FakeSession:
@@ -32,6 +35,67 @@ class FakeSession:
         assert arguments[:3] == ["ss", "--listening", "--tcp"]
         assert not sudo
         return {"exit_code": 0, "stdout": self.listeners, "stderr": ""}
+
+
+class ClosingSFTPClient:
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self.exited = False
+        self.closed = False
+
+    async def makedirs(self, _path: str, *, exist_ok: bool) -> None:
+        assert exist_ok
+
+    async def stat(self, _path: str) -> SimpleNamespace:
+        return SimpleNamespace(size=self.size)
+
+    async def remove(self, _path: str) -> None:
+        return None
+
+    def exit(self) -> None:
+        self.exited = True
+
+    async def wait_closed(self) -> None:
+        self.closed = True
+
+
+class ClosingConnection:
+    def __init__(self, sftp: ClosingSFTPClient) -> None:
+        self.sftp = sftp
+
+    async def start_sftp_client(self) -> ClosingSFTPClient:
+        return self.sftp
+
+
+def test_resumable_upload_closes_sftp_channel_for_committed_file(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "weight.safetensors"
+    source.write_bytes(b"private-weight")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    sftp = ClosingSFTPClient(source.stat().st_size)
+    session = SSHSession(SSHProfile(host="gpu.example"))
+    session.connection = ClosingConnection(sftp)  # type: ignore[assignment]
+
+    async def fake_run(
+        arguments: list[str], *, sudo: bool = False, timeout_seconds: float = 300
+    ) -> dict[str, Any]:
+        assert arguments[0] == "sha256sum"
+        assert not sudo
+        assert timeout_seconds == 300
+        return {"exit_code": 0, "stdout": f"{digest}  remote\n", "stderr": ""}
+
+    session.run = fake_run  # type: ignore[method-assign]
+    result = asyncio.run(
+        session.upload_resumable(
+            source,
+            "/opt/yinbian/model/weight.safetensors",
+            expected_sha256=digest,
+        )
+    )
+    assert result["already_committed"] is True
+    assert sftp.exited is True
+    assert sftp.closed is True
 
 
 class ExitedRuntimeSession:
@@ -142,6 +206,7 @@ def test_native_runtime_package_and_scripts_are_private(tmp_path: Path) -> None:
     stop = _native_stop_script(version)
     assert "--host 127.0.0.1 --port 18000" in start
     assert "--device cuda-auto" in start
+    assert "nohup python3 -S" in start
     assert "runtime.env" in start
     assert "YINBIAN_BEARER_TOKEN" not in start
     assert "aloepri-runtime.zip" not in start
@@ -181,6 +246,55 @@ def test_remote_capacity_uses_aggregate_gpu_memory_and_disk_headroom() -> None:
             package_bytes,
             {"disk_free_bytes": 12 * 1024**3, "gpu_free_total_mib": 14_000},
         )
+
+
+def test_remote_capacity_retry_counts_only_missing_bytes() -> None:
+    package_bytes = 4 * 1024**3
+    accepted = validate_remote_capacity(
+        package_bytes,
+        {"disk_free_bytes": 9 * 1024**3, "gpu_free_total_mib": 8_000},
+        additional_upload_bytes=0,
+        runtime_reserve_bytes=8 * 1024**3,
+    )
+    assert accepted["required_disk_bytes"] == 8 * 1024**3
+
+
+class RemoteSizeSession:
+    def __init__(self, sizes: dict[str, int]) -> None:
+        self.sizes = sizes
+
+    async def run(self, arguments: list[str], **_: Any) -> dict[str, Any]:
+        path = arguments[-1]
+        if path not in self.sizes:
+            return {"exit_code": 1, "stdout": "", "stderr": "missing"}
+        return {"exit_code": 0, "stdout": str(self.sizes[path]), "stderr": ""}
+
+
+def test_remaining_upload_bytes_reuses_committed_and_partial_files(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.bin"
+    second = tmp_path / "second.bin"
+    third = tmp_path / "third.bin"
+    first.write_bytes(b"a" * 10)
+    second.write_bytes(b"b" * 20)
+    third.write_bytes(b"c" * 30)
+    remote = PurePosixPath("/opt/yinbian/model")
+    session = RemoteSizeSession(
+        {
+            str(remote / "first.bin"): 10,
+            str(remote / "second.bin.partial"): 7,
+        }
+    )
+    remaining = asyncio.run(
+        _remaining_upload_bytes(
+            session,  # type: ignore[arg-type]
+            tmp_path,
+            [first, second, third],
+            remote,
+        )
+    )
+    assert remaining == 13 + 30
 
 
 def test_health_check_stops_early_and_redacts_log_after_process_exit() -> None:

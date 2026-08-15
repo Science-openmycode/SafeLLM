@@ -259,6 +259,21 @@
   transition: width .35s ease;
 }
 
+.job-progress {
+  margin: 14px 0 4px;
+}
+
+.progress-track.indeterminate .progress-fill {
+  width: 34%;
+  animation: yinbian-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes yinbian-progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  50% { transform: translateX(95%); }
+  100% { transform: translateX(295%); }
+}
+
 .server-operation small {
   display: block;
   margin-top: 7px;

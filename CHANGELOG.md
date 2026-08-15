@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased - 2026-08-13
+## Unreleased - 2026-08-15
+
+- Added the local-first product workflow: a model can be downloaded, converted,
+  verified and retained without a server, then uploaded and deployed later without
+  repeating the download, key generation or conversion.
+- Promoted the pinned OpenSeek-Small-v1-SFT checkpoint through the product
+  conversion and deployment gate, including its normalized fused-expert layout.
+- Hardened Ubuntu native deployment with isolated Python startup, pinned CUDA 12.1
+  PyTorch packages, dependency verification, GPU/disk preflight, progress reporting
+  and retry-safe reuse of already uploaded model files.
+- Fixed resumable SFTP lifecycle handling and remote-capacity accounting so a retry
+  checks only bytes which are still absent on the server.
+- Fixed desktop task recovery, immutable per-job resume plans, local-only deployment
+  selection and duplicate deployment operations.
+- Fixed OpenSeek chat startup by preserving a self-contained tokenizer from the
+  converted package instead of loading repository-specific tokenizer code from the
+  source checkpoint. Existing deployment records are repaired on selection.
+- Verification: Ruff and Mypy pass; 344 tests pass and the opt-in real-model
+  integration test remains skipped unless explicitly enabled.
 
 - Added the OpenSeek paper-complete conversion path for every privacy mechanism
   applicable to the published checkpoint: vocabulary/noise/P-Q expansion,

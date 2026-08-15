@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from aloepri.planning import build_catalog_plan
 from aloepri.product.deployment_policy import require_validated_hf_deployment
 
 
@@ -14,6 +15,14 @@ def test_only_checkpoint_validated_catalog_revision_can_enter_hf_deployer() -> N
             }
         }
     )
+
+
+def test_validated_openseek_revision_can_enter_hf_deployer() -> None:
+    plan = build_catalog_plan(
+        "openseek-small-v1-sft",
+        output_uri="data/private/openseek-small-v1-sft",
+    )
+    require_validated_hf_deployment(plan.to_dict())
 
 
 def test_family_compatibility_does_not_count_as_deployment_acceptance() -> None:

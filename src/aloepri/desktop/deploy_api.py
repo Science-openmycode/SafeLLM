@@ -47,6 +47,7 @@ from aloepri.product.state import (
     ProductPhase,
     ProductStore,
 )
+from aloepri.product.tokenizer_assets import materialize_local_tokenizer
 
 STATIC = Path(__file__).with_name("static") / "deploy"
 
@@ -69,12 +70,12 @@ class DownloadRequest(StrictModel):
 
 class PlanRequest(StrictModel):
     model: str
-    destination: str
-    mode: str = "direct-deploy"
+    destination: str | None = None
+    mode: str = "local-only"
     server_id: str | None = None
     device: str = "auto"
     download_endpoint: str = "auto"
-    output: str = "artifacts/plans/yinbian-desktop.yaml"
+    output: str | None = None
 
 
 class ServerRequest(StrictModel):
@@ -140,6 +141,11 @@ class CompletedJobDeployRequest(StrictModel):
     remote_port: int = Field(default=18000, ge=1024, le=65535)
 
 
+class LocalPackageDeployRequest(CompletedJobDeployRequest):
+    server_id: str
+    confirmed: bool = False
+
+
 class DeploymentRequest(StrictModel):
     job_id: str
     server_id: str
@@ -174,8 +180,10 @@ def _attach_local_runtime_metadata(
     deployment: dict[str, Any],
     plan: ConversionPlan,
 ) -> dict[str, Any]:
-    source_root = plan.source.get("cache_path") or plan.source.get("path")
     output_root = Path(str(plan.output["uri"]))
+    tokenizer_root = materialize_local_tokenizer(
+        plan, destination_root=store.path.parent / "tokenizers"
+    )
     default_online = output_root.parent / f"{output_root.name}-keys" / "online"
     credential_id = online_key_credential_id(
         str(plan.output.get("model_id", output_root.name)),
@@ -184,9 +192,7 @@ def _attach_local_runtime_metadata(
     credential_path = product_paths().credentials / f"{credential_id}.dpapi"
     deployment["metadata"] = {
         **deployment.get("metadata", {}),
-        "tokenizer_dir": (
-            None if source_root is None else str(Path(str(source_root)).resolve())
-        ),
+        "tokenizer_dir": str(tokenizer_root),
         "online_key_dir": str(
             Path(str(plan.keys.get("online", default_online))).resolve()
         ) if not credential_path.is_file() else None,
@@ -306,6 +312,69 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             }
             store.put_deployment(failed)
             raise
+        return _attach_local_runtime_metadata(store, deployed, plan)
+
+    def deploy_local_package_job(
+        job_id: str,
+        request: LocalPackageDeployRequest,
+        progress: Callable[[str, int, str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Upload and deploy a verified local-only package without reconversion."""
+
+        from aloepri.cloud.hf_deployment import HFDeploymentManager, HFDeploymentRequest
+
+        job = store.get_job(job_id)
+        if job["status"] != ProductJobStatus.COMPLETED.value:
+            raise ValueError("only a completed local conversion can be deployed")
+        plan_payload = job["plan"].get("conversion", job["plan"])
+        require_validated_hf_deployment(plan_payload)
+        plan = ConversionPlan.from_dict(plan_payload)
+        package = Path(str(job.get("progress", {}).get("output", "")))
+        if not package.is_dir():
+            raise FileNotFoundError(
+                "verified local private package is unavailable; restore or reconvert it"
+            )
+        artifacts = [
+            shard
+            for shard in store.list_shards(job_id)
+            if shard.get("private_name") is not None
+        ]
+        accepted_states = {"PRIVATE_VERIFIED", "REMOTE_COMMITTED"}
+        if not artifacts or any(
+            str(shard.get("status")) not in accepted_states for shard in artifacts
+        ):
+            raise ValueError("local private package has unverified artifacts")
+        server = store.get_server(request.server_id)
+        suffix = hashlib.sha256(
+            f"{job_id}:{request.server_id}".encode()
+        ).hexdigest()[:8]
+        deployment_id = f"dep-{job_id}-{suffix}"
+        version_id = f"v-{job_id[:12]}-{suffix}"
+        bearer = secrets.token_urlsafe(32)
+        credential_id = f"deployment-{deployment_id}-bearer"
+        CredentialVault(product_paths().credentials).put(
+            credential_id, "deployment_bearer", bearer
+        )
+        deployment_request = HFDeploymentRequest(
+            deployment_id=deployment_id,
+            version_id=version_id,
+            server_id=request.server_id,
+            job_id=job_id,
+            model_id=str(plan.output.get("model_id", package.name)),
+            model_version=str(plan.source.get("revision", job_id)),
+            key_id=str(plan.output.get("key_id", f"key-{job_id[:8]}")),
+            server_package=package,
+            remote_port=request.remote_port,
+            bearer_token=bearer,
+            bearer_credential_id=credential_id,
+        )
+        deployed = asyncio.run(
+            HFDeploymentManager(store).deploy(
+                deployment_request,
+                ssh_profile(server, request),
+                progress=progress,
+            )
+        )
         return _attach_local_runtime_metadata(store, deployed, plan)
 
     def ssh_profile(
@@ -505,6 +574,8 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
     def dashboard() -> dict[str, Any]:
         jobs = store.list_jobs()
         deployments = store.list_deployments()
+        paths = product_paths()
+        paths.create()
         with server_operations_lock:
             operations = [dict(item) for item in server_operations.values()]
         return {
@@ -513,7 +584,11 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             "servers": [_public_server(item) for item in store.list_servers()],
             "deployments": deployments,
             "server_operations": operations,
-            "resources": inspect_local_resources(Path.cwd()),
+            "resources": inspect_local_resources(paths.cache),
+            "paths": {
+                "cache": str(paths.cache.resolve()),
+                "local_private": str((paths.cache / "private").resolve()),
+            },
         }
 
     @app.get("/api/models")
@@ -637,15 +712,28 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
                         "use local-only conversion"
                     ),
                 )
+        destination = request.destination.strip() if request.destination else ""
+        if not destination:
+            model_name = (
+                path.name
+                if path.is_dir()
+                else find_catalog_entry(request.model).catalog_id
+            )
+            destination = str(product_paths().cache / "private" / model_name)
         plan = (
-            build_local_plan(path, output_uri=request.destination)
+            build_local_plan(path, output_uri=destination)
             if path.is_dir()
             else build_catalog_plan(
                 request.model,
-                output_uri=request.destination,
+                output_uri=destination,
                 download_endpoint=request.download_endpoint,
             )
         )
+        if not path.is_dir():
+            catalog_id = find_catalog_entry(request.model).catalog_id
+            plan.source["cache_path"] = str(
+                (product_paths().cache / "models" / catalog_id).resolve()
+            )
         plan.output["deployment_mode"] = request.mode
         plan.output["server_id"] = request.server_id
         plan = replace(
@@ -653,7 +741,12 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             schema_version=2,
             resources=replace(plan.resources, device=request.device),
         )
-        output = Path(request.output)
+        output = (
+            Path(request.output)
+            if request.output
+            else store.path.parent / "plans" / f"{plan.job_id}.yaml"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
         plan.save(output)
         return {"path": str(output.resolve()), **plan.to_dict()}
 
@@ -690,10 +783,49 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
     def resume_job(job_id: str, request: JobResumeRequest) -> dict[str, Any]:
         try:
             job = store.get_job(job_id)
-            desktop = job["plan"].get("desktop", {})
-            plan_path = desktop.get("plan_path")
-            if not plan_path:
-                raise ValueError("job has no resumable desktop plan path")
+            product_plan = json.loads(json.dumps(job["plan"]))
+            conversion_payload = product_plan.get("conversion")
+            if not isinstance(conversion_payload, dict):
+                raise ValueError("job has no resumable conversion plan")
+            if str(conversion_payload.get("job_id")) != job_id:
+                raise ValueError("stored conversion plan belongs to a different job")
+
+            # The database is authoritative. Earlier desktop builds reused one
+            # shared YAML file, so a later task could overwrite a failed task's
+            # resume file. Rebuild an immutable per-job plan before every resume.
+            source = conversion_payload.get("source", {})
+            entry = find_catalog_entry(str(source.get("repo_id", "")))
+            conversion = conversion_payload.get("conversion", {})
+            expansion_h = int(conversion.get("expansion_h", 0))
+            if str(conversion_payload.get("adapter")) in {
+                "deepseek_v3",
+                "kimi_k2",
+                "glm4_moe",
+            } and (expansion_h <= 1 or expansion_h % 2):
+                corrected_h = int(entry.conversion["expansion_h"])
+                if corrected_h <= 1 or corrected_h % 2:
+                    raise ValueError("catalog has no valid expansion_h for this adapter")
+                ratio = float(entry.conversion.get("estimated_output_ratio", 1.15))
+                conversion["expansion_h"] = corrected_h
+                conversion["estimated_output_ratio"] = ratio
+                output = conversion_payload.get("output", {})
+                if entry.expected_bytes is not None:
+                    output["estimated_private_bytes"] = int(
+                        entry.expected_bytes * ratio
+                    )
+
+            plan = ConversionPlan.from_dict(conversion_payload)
+            plan_path = store.path.parent / "plans" / f"{job_id}.yaml"
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan.save(plan_path)
+            desktop = product_plan.setdefault("desktop", {})
+            desktop["plan_path"] = str(plan_path.resolve())
+            product_plan["conversion"] = plan.to_dict()
+            store.update_job_plan(
+                job_id,
+                product_plan,
+                reason="rebuilt immutable per-job resume plan from database",
+            )
             return launch_job(
                 JobRequest(
                     plan_path=str(plan_path),
@@ -726,6 +858,96 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             return deploy_uploaded_job(job_id, request)
         except (OSError, RuntimeError, ValueError, KeyError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/jobs/{job_id}/deploy-local")
+    def deploy_completed_local_job(
+        job_id: str, request: LocalPackageDeployRequest
+    ) -> dict[str, Any]:
+        if not request.confirmed:
+            raise HTTPException(
+                status_code=409,
+                detail="upload and remote deployment must be explicitly confirmed",
+            )
+        try:
+            job = store.get_job(job_id)
+            if job["status"] != ProductJobStatus.COMPLETED.value:
+                raise ValueError("only a completed local conversion can be deployed")
+            package = Path(str(job.get("progress", {}).get("output", "")))
+            if not package.is_dir():
+                raise FileNotFoundError("verified local private package is unavailable")
+            store.get_server(request.server_id)
+        except (OSError, ValueError, KeyError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        with server_operations_lock:
+            for operation in server_operations.values():
+                if (
+                    operation.get("job_id") == job_id
+                    and operation.get("server_id") == request.server_id
+                    and operation.get("kind") == "LOCAL_PACKAGE_DEPLOY"
+                    and operation.get("status") == "RUNNING"
+                ):
+                    return dict(operation)
+            operation_id = f"server-op-{uuid.uuid4()}"
+            server_operations[operation_id] = {
+                "operation_id": operation_id,
+                "server_id": request.server_id,
+                "job_id": job_id,
+                "kind": "LOCAL_PACKAGE_DEPLOY",
+                "status": "RUNNING",
+                "stage": "QUEUED",
+                "percent": 1,
+                "message": "本地私有模型部署任务已创建",
+                "error": None,
+            }
+
+        def run_local_deployment() -> None:
+            try:
+                server = store.get_server(request.server_id)
+
+                def report(stage: str, percent: int, message: str) -> None:
+                    update_server_operation(
+                        operation_id,
+                        stage=stage,
+                        percent=percent,
+                        message=message,
+                    )
+
+                from aloepri.cloud.hf_deployment import ensure_deployment_host_ready
+
+                asyncio.run(
+                    ensure_deployment_host_ready(
+                        ssh_profile(server, request),
+                        auto_install_runtime=True,
+                        progress=report,
+                    )
+                )
+                deploy_local_package_job(job_id, request, progress=report)
+                update_server_operation(
+                    operation_id,
+                    status="COMPLETED",
+                    stage="HEALTHY",
+                    percent=100,
+                    message="本地私有模型已上传并通过远端健康检查",
+                )
+            except Exception as error:
+                update_server_operation(
+                    operation_id,
+                    status="FAILED",
+                    stage="FAILED",
+                    message="本地私有模型部署失败",
+                    error=f"{type(error).__name__}: {error}",
+                )
+
+        worker = threading.Thread(
+            target=run_local_deployment,
+            name=f"yinbian-{operation_id}",
+            daemon=True,
+        )
+        with server_operations_lock:
+            server_operation_workers[operation_id] = worker
+        worker.start()
+        return operation_snapshot(operation_id)
 
     @app.get("/api/servers")
     def servers() -> list[dict[str, Any]]:
