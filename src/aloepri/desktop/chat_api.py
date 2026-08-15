@@ -1,6 +1,8 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import hashlib
+import json
 import secrets
 import tempfile
 import threading
@@ -88,13 +90,16 @@ def _brand_html(path: Path, *, script: str = "") -> str:
     return html
 
 
-def _desktop_bootstrap() -> str:
-    return r"""
+def _desktop_bootstrap(initial_deployment_id: str | None = None) -> str:
+    initial = "null" if initial_deployment_id is None else json.dumps(initial_deployment_id)
+    script = r"""
 (() => {
   const selectedKey = "yinbian-selected-deployment";
+  const initialDeployment = __INITIAL_DEPLOYMENT__;
   const rawGet = Storage.prototype.getItem;
   const rawSet = Storage.prototype.setItem;
   const rawRemove = Storage.prototype.removeItem;
+  if (initialDeployment) rawSet.call(localStorage, selectedKey, initialDeployment);
   const selected = () => rawGet.call(localStorage, selectedKey) || "none";
   const memory = new Map();
   const sensitive = key => key.includes("saved-conversations") || key.includes("active-conversation");
@@ -143,8 +148,12 @@ def _desktop_bootstrap() -> str:
       const activate = async () => {
         let result = await fetch("/api/desktop/select", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deployment_id:select.value})});
         if (result.status === 409) {
-          const password = window.prompt("需要SSH密码才能建立本地安全隧道；密码不会保存。") || null;
-          const opened = await fetch(`/api/desktop/tunnels/${encodeURIComponent(select.value)}/open`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});
+          let opened = await fetch(`/api/desktop/tunnels/${encodeURIComponent(select.value)}/open`, {method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+          if (!opened.ok) {
+            const password = window.prompt("首次连接请输入SSH密码；密码会由Windows当前用户加密保存在本机，以后自动连接。");
+            if (password === null) throw new Error("已取消建立SSH隧道");
+            opened = await fetch(`/api/desktop/tunnels/${encodeURIComponent(select.value)}/open`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});
+          }
           if (!opened.ok) throw new Error((await opened.json()).detail || "隧道建立失败");
           result = await fetch("/api/desktop/select", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deployment_id:select.value})});
         }
@@ -158,9 +167,14 @@ def _desktop_bootstrap() -> str:
   });
 })();
 """
+    return script.replace("__INITIAL_DEPLOYMENT__", initial)
 
 
-def create_chat_desktop_app(*, state_path: Path | None = None) -> FastAPI:
+def create_chat_desktop_app(
+    *,
+    state_path: Path | None = None,
+    initial_deployment_id: str | None = None,
+) -> FastAPI:
     store = ProductStore(state_path)
     history = ChatHistoryStore(
         None if state_path is None else state_path.with_name("chat.db")
@@ -184,7 +198,10 @@ def create_chat_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             return JSONResponse(status_code=403, content={"detail": "invalid desktop origin"})
         if request.method == "GET" and request.url.path == "/":
             response = HTMLResponse(
-                _brand_html(DEMO_STATIC / "index.html", script=_desktop_bootstrap()),
+                _brand_html(
+                    DEMO_STATIC / "index.html",
+                    script=_desktop_bootstrap(initial_deployment_id),
+                ),
                 headers={"Cache-Control": "no-store"},
             )
             response.set_cookie(
@@ -213,11 +230,16 @@ def create_chat_desktop_app(*, state_path: Path | None = None) -> FastAPI:
         if deployment["status"] != DeploymentStatus.HEALTHY.value:
             raise HTTPException(status_code=409, detail="deployment is not healthy")
         server = store.get_server(str(deployment["server_id"]))
+        password = request.password
+        credential_ref = server.get("credential_ref")
+        vault = CredentialVault(product_paths().credentials)
+        if password is None and credential_ref:
+            password = vault.get(str(credential_ref))["secret"]
         profile = SSHProfile(
             host=str(server["host"]),
             port=int(server["port"]),
             username=str(server["username"]),
-            password=request.password,
+            password=password,
             private_key=(
                 None
                 if not server.get("private_key_path")
@@ -234,6 +256,18 @@ def create_chat_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             )
         except (ConnectionError, OSError, TimeoutError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        if request.password and server.get("auth_type") == "password":
+            credential_ref = str(
+                credential_ref
+                or (
+                    "server-ssh-"
+                    + hashlib.sha256(str(server["server_id"]).encode()).hexdigest()[:24]
+                )
+            )
+            vault.put(credential_ref, "ssh_password", request.password)
+            store.update_server(
+                str(server["server_id"]), credential_ref=credential_ref
+            )
         return status.__dict__
 
     @app.get("/api/desktop/tunnels/{deployment_id}")

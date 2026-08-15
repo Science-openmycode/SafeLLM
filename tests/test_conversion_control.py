@@ -79,12 +79,64 @@ def test_qwen_executor_uses_cli_enum_spellings(
         security={"vocab_permutation": True, "offline_key_encrypted": False},
     )
     captured: list[str] = []
+    captured_environment: dict[str, str] = {}
 
-    def fake_run(command: list[str], **_: object) -> None:
+    def fake_run(command: list[str], **kwargs: object) -> None:
         captured.extend(command)
+        captured_environment.update(kwargs["env"])  # type: ignore[arg-type]
 
     monkeypatch.setattr(executor.subprocess, "run", fake_run)
     monkeypatch.setattr(executor, "split_key_package", lambda *_: None)
     executor._run_qwen(plan, tmp_path / "private", source)  # type: ignore[attr-defined]
     assert captured[captured.index("--rms-mode") + 1] == "exact-metric"
     assert captured[captured.index("--rms-representation") + 1] == "stable-factor"
+    assert captured_environment["PYTHONFAULTHANDLER"] == "1"
+    assert captured_environment["OMP_NUM_THREADS"] == "4"
+
+
+def test_qwen_executor_removes_only_empty_stale_partial_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "private"
+    output_partial = tmp_path / "private.partial"
+    key_partial = tmp_path / "private-keys" / "full.partial"
+    output_partial.mkdir()
+    key_partial.mkdir(parents=True)
+    plan = ConversionPlan(
+        schema_version=1,
+        job_id="qwen-empty-partials",
+        source={"type": "local", "path": str(source)},
+        adapter="qwen2",
+        fingerprint={"weight_format": "bfloat16"},
+        output={"type": "local", "uri": str(output)},
+        security={"vocab_permutation": True, "offline_key_encrypted": False},
+    )
+    monkeypatch.setattr(executor.subprocess, "run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(executor, "split_key_package", lambda *_args: None)
+    executor._run_qwen(plan, output, source)  # type: ignore[attr-defined]
+    assert not output_partial.exists()
+    assert not key_partial.exists()
+
+
+def test_qwen_executor_refuses_nonempty_stale_partial_directory(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "private"
+    output_partial = tmp_path / "private.partial"
+    output_partial.mkdir()
+    (output_partial / "unfinished.bin").write_bytes(b"partial")
+    plan = ConversionPlan(
+        schema_version=1,
+        job_id="qwen-nonempty-partial",
+        source={"type": "local", "path": str(source)},
+        adapter="qwen2",
+        fingerprint={"weight_format": "bfloat16"},
+        output={"type": "local", "uri": str(output)},
+        security={"vocab_permutation": True, "offline_key_encrypted": False},
+    )
+    with pytest.raises(FileExistsError, match="requires inspection"):
+        executor._run_qwen(plan, output, source)  # type: ignore[attr-defined]

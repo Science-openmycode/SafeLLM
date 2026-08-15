@@ -65,10 +65,18 @@ class DeploymentStatus(StrEnum):
 
 _JOB_TRANSITIONS: dict[ProductJobStatus, frozenset[ProductJobStatus]] = {
     ProductJobStatus.CREATED: frozenset(
-        {ProductJobStatus.AWAITING_CONFIRMATION, ProductJobStatus.CANCELLED}
+        {
+            ProductJobStatus.AWAITING_CONFIRMATION,
+            ProductJobStatus.FAILED,
+            ProductJobStatus.CANCELLED,
+        }
     ),
     ProductJobStatus.AWAITING_CONFIRMATION: frozenset(
-        {ProductJobStatus.PREFLIGHT, ProductJobStatus.CANCELLED}
+        {
+            ProductJobStatus.PREFLIGHT,
+            ProductJobStatus.FAILED,
+            ProductJobStatus.CANCELLED,
+        }
     ),
     ProductJobStatus.PREFLIGHT: frozenset(
         {ProductJobStatus.RUNNING, ProductJobStatus.FAILED, ProductJobStatus.CANCELLED}
@@ -359,6 +367,66 @@ class ProductStore:
                 ),
             )
             self._event(connection, job_id, status, selected_phase, selected_progress)
+        return self.get_job(job_id)
+
+    def update_job_progress(
+        self,
+        job_id: str,
+        *,
+        phase: ProductPhase,
+        progress: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist live phase/progress without inventing a status transition."""
+
+        current = self.get_job(job_id)
+        status = ProductJobStatus(current["status"])
+        previous_phase = ProductPhase(current["phase"])
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE product_jobs SET phase=?, progress_json=?, updated_at=?
+                   WHERE job_id=?""",
+                (
+                    phase.value,
+                    json.dumps(redact_secrets(progress)),
+                    self._now(),
+                    job_id,
+                ),
+            )
+            if phase != previous_phase:
+                self._event(connection, job_id, status, phase, progress)
+        return self.get_job(job_id)
+
+    def update_job_plan(
+        self,
+        job_id: str,
+        plan: dict[str, Any],
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Replace a resumable plan while retaining an auditable event."""
+
+        current = self.get_job(job_id)
+        status = ProductJobStatus(current["status"])
+        if status not in {
+            ProductJobStatus.CREATED,
+            ProductJobStatus.PAUSED,
+            ProductJobStatus.FAILED,
+        }:
+            raise ValueError(f"job plan cannot change while status is {status.value}")
+        phase = ProductPhase(current["phase"])
+        sanitized = redact_secrets(plan)
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE product_jobs SET plan_json=?, updated_at=? WHERE job_id=?",
+                (json.dumps(sanitized), self._now(), job_id),
+            )
+            self._event(
+                connection,
+                job_id,
+                status,
+                phase,
+                {"plan_updated": True, "reason": reason},
+            )
         return self.get_job(job_id)
 
     def put_shard(

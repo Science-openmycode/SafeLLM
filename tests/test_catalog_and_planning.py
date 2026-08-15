@@ -10,6 +10,7 @@ from safetensors.torch import save_file
 from aloepri.adapters.base import TensorInventory
 from aloepri.adapters.registry import default_adapter_registry
 from aloepri.catalog.models import MatchStatus
+from aloepri.catalog.registry import builtin_catalog
 from aloepri.jobs.store import JobState, JobStore
 from aloepri.planning import ConversionPlan, build_local_plan
 
@@ -58,6 +59,42 @@ def test_unknown_model_never_enters_conversion() -> None:
     match = default_adapter_registry().detect({"model_type": "untrusted_remote_code"})
     assert match.status == MatchStatus.INCOMPATIBLE
     assert match.adapter_id is None
+
+
+def test_catalog_groups_multiple_architecture_families_without_overclaiming() -> None:
+    entries = {entry.catalog_id: entry for entry in builtin_catalog().list()}
+    assert entries["qwen2.5-0.5b-instruct"].family_name == "Qwen2 / Qwen2.5"
+    assert entries["deepseek-v2-lite-chat"].family_name == "DeepSeek MLA / MoE"
+    assert entries["deepseek-v2-lite-chat"].conversion_ready is True
+    assert entries["glm-4-9b-chat-hf"].family_name == "GLM"
+    assert entries["glm-4-9b-chat-hf"].conversion_ready is False
+    assert entries["kimi-k2.6"].family_name == "Kimi"
+    assert entries["kimi-k2.6"].conversion_ready is False
+
+
+def test_new_families_are_structurally_recognized_but_not_conversion_ready() -> None:
+    registry = default_adapter_registry()
+    glm = registry.detect(
+        {
+            "model_type": "glm",
+            "num_hidden_layers": 1,
+            "num_key_value_heads": 2,
+        }
+    )
+    assert glm.status == MatchStatus.EXPERIMENTAL
+    assert glm.adapter_id == "glm_dense"
+    kimi = registry.detect(
+        {
+            "model_type": "kimi_k25",
+            "text_config": {
+                "model_type": "kimi_k2",
+                "n_routed_experts": 384,
+                "num_nextn_predict_layers": 0,
+            },
+        }
+    )
+    assert kimi.status == MatchStatus.EXPERIMENTAL
+    assert kimi.adapter_id == "kimi_k2"
 
 
 def test_local_qwen_plan_reads_headers_without_loading_model(tmp_path: Path) -> None:

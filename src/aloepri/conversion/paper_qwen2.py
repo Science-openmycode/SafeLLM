@@ -7,7 +7,11 @@ import torch
 from torch import Tensor, nn
 
 from aloepri.transforms.paper_key_matrix import CompatibleInverseFamily, PaperKeyPair
-from aloepri.transforms.paper_noise import PaperNoiseStats, add_paper_weight_noise
+from aloepri.transforms.paper_noise import (
+    PaperNoiseStats,
+    add_paper_weight_noise,
+    add_paper_weight_noise_bounded,
+)
 from aloepri.transforms.vocab import permute_vocab_rows
 
 
@@ -88,12 +92,13 @@ def convert_qwen2_modules(
     )
     kappa = analytic_rms_kappa(p)
     source_embedding = source.get_input_embeddings().weight.detach()
-    source_head = source.get_output_embeddings().weight.detach()
-    noisy_embedding, embedding_stats = add_paper_weight_noise(
-        source_embedding, alpha=alpha_e, seed=embedding_noise_seed
+    embedding_noise = (
+        add_paper_weight_noise_bounded
+        if alpha_e == 0.0
+        else add_paper_weight_noise
     )
-    noisy_head, head_stats = add_paper_weight_noise(
-        source_head, alpha=alpha_h, seed=head_noise_seed
+    noisy_embedding, embedding_stats = embedding_noise(
+        source_embedding, alpha=alpha_e, seed=embedding_noise_seed
     )
     target_dtype = target.get_input_embeddings().weight.dtype
     rms_mode = str(getattr(target.config, "aloepri_rms_mode", "paper_kappa"))
@@ -115,6 +120,7 @@ def convert_qwen2_modules(
         target.get_input_embeddings().weight.copy_(
             transform_embedding(noisy_embedding, p, tau).to(target_dtype)
         )
+        del noisy_embedding, source_embedding
         for layer_index, (source_layer, target_layer) in enumerate(
             zip(source.model.layers, target.model.layers, strict=True)
         ):
@@ -177,7 +183,17 @@ def convert_qwen2_modules(
             if rms_mode == "exact_metric"
             else (rms_kappas or {}).get("model.norm", kappa)
         )
+        source_head = source.get_output_embeddings().weight.detach()
+        head_noise = (
+            add_paper_weight_noise_bounded
+            if alpha_h == 0.0
+            else add_paper_weight_noise
+        )
+        noisy_head, head_stats = head_noise(
+            source_head, alpha=alpha_h, seed=head_noise_seed
+        )
         target.get_output_embeddings().weight.copy_(
             transform_head(noisy_head, source.model.norm.weight, inverse_family.head, tau)
         )
+        del noisy_head, source_head
     return PaperConversionStats(kappa, embedding_stats, head_stats, rms_mode)

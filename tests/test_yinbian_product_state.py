@@ -21,6 +21,18 @@ def test_product_state_separates_job_phase_shard_and_deployment(tmp_path: Path) 
     store.transition_job(
         "job-1", ProductJobStatus.RUNNING, phase=ProductPhase.DOWNLOADING
     )
+    live = store.update_job_progress(
+        "job-1",
+        phase=ProductPhase.DOWNLOADING,
+        progress={
+            "item": "model.safetensors",
+            "bytes_completed": 25,
+            "bytes_total": 100,
+        },
+    )
+    assert live["status"] == "RUNNING"
+    assert live["phase"] == "DOWNLOADING"
+    assert live["progress"]["bytes_completed"] == 25
     shard = store.put_shard(
         "job-1",
         "source-00000",
@@ -76,3 +88,22 @@ def test_product_state_rejects_illegal_transition_and_linked_server_delete(
     )
     with pytest.raises(ValueError, match="deployment"):
         store.remove_server("server-1")
+
+
+def test_failed_product_job_plan_update_is_audited(tmp_path: Path) -> None:
+    store = ProductStore(tmp_path / "state.db")
+    store.create_job("job-plan", {"conversion": {"dtype": "float32"}})
+    store.transition_job("job-plan", ProductJobStatus.AWAITING_CONFIRMATION)
+    store.transition_job("job-plan", ProductJobStatus.PREFLIGHT)
+    store.transition_job("job-plan", ProductJobStatus.RUNNING)
+    store.transition_job("job-plan", ProductJobStatus.FAILED)
+    updated = store.update_job_plan(
+        "job-plan",
+        {"conversion": {"dtype": "bfloat16"}},
+        reason="recover from host-memory failure",
+    )
+    assert updated["plan"]["conversion"]["dtype"] == "bfloat16"
+    assert store.events("job-plan")[-1]["payload"] == {
+        "plan_updated": True,
+        "reason": "recover from host-memory failure",
+    }

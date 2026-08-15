@@ -14,8 +14,11 @@ DefaultGroupName={#AppName}
 PrivilegesRequired=lowest
 OutputDir=..\..\dist\installer
 OutputBaseFilename=YinbianZhimo-{#AppVersion}-Windows-x64-Offline
-Compression=lzma2/fast
-SolidCompression=yes
+; LZ4 and non-solid archives trade a larger installer for much faster local
+; installation and repair.  The Python runtime contains thousands of already
+; compressed binary files which gain little from LZMA solid compression.
+Compression=lz4
+SolidCompression=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#AppName} {#AppVersion}

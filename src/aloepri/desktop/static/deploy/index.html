@@ -16,7 +16,7 @@
         <button data-page="models">模型</button>
         <button data-page="jobs">转换任务</button>
         <button data-page="servers">服务器</button>
-        <button data-page="deployments">云端部署</button>
+        <button data-page="deployments">已部署模型</button>
         <button data-page="keys">密钥与备份</button>
       </nav>
       <div class="boundary"><i></i><div><b>本地控制端</b><small>密钥不会上传到模型服务器</small></div></div>
@@ -28,19 +28,40 @@
       <section id="jobs" class="page">
         <form id="deploy-wizard" class="panel form" hidden>
           <h2>新建改造任务</h2>
-          <input name="model" id="wizard-model" placeholder="模型目录 ID" required>
+          <label class="field full"><span>选择模型</span><select name="model" id="wizard-model" required><option value="">正在加载模型目录…</option></select></label>
+          <div id="wizard-model-note" class="model-note full">请选择模型。已实测与同架构可执行模型会分别标识。</div>
           <input name="destination" value="data/private/yinbian-model" placeholder="本地私有模型目录" required>
           <select name="mode"><option value="direct-deploy">改造、上传并自动部署</option><option value="local-only">仅在本地改造</option></select>
           <select name="device"><option value="auto">自动选择 CPU/GPU</option><option value="cuda">GPU 优先</option><option value="cpu">仅 CPU</option></select>
+          <select name="download_endpoint"><option value="auto">模型下载源：自动（官方不可用时切换镜像）</option><option value="https://huggingface.co">模型下载源：Hugging Face官方</option><option value="https://hf-mirror.com">模型下载源：HF Mirror</option></select>
           <select name="server_id" id="wizard-server"><option value="">不选择服务器</option></select>
           <input name="password" type="password" placeholder="SSH 密码（不保存）">
           <label class="consent"><input name="accept_license" type="checkbox" required> 我已查看模型许可证，并同意该固定版本的使用条款</label>
           <div class="form-actions"><button type="button" id="cancel-wizard">取消</button><button class="primary">确认并开始</button></div>
         </form>
-        <div class="panel"><div class="section-head"><h2>转换任务</h2><button class="primary" id="new-job">新建任务</button></div><div id="job-list" class="empty">暂无任务</div></div>
+        <div class="panel"><div class="section-head"><h2>当前任务</h2><button class="primary" id="new-job">新建任务</button></div><div id="job-list" class="empty">暂无进行中的任务</div></div>
+        <details class="panel terminal-history"><summary>已结束任务</summary><div id="terminal-job-list" class="empty">暂无已结束任务</div></details>
       </section>
-      <section id="servers" class="page"><div class="section-head"><div><h2>服务器</h2><p>支持Ubuntu 22.04、NVIDIA 525+和SSH。</p></div><button class="primary" id="show-server-form">添加服务器</button></div><form id="server-form" class="panel form" hidden><input name="display_name" placeholder="显示名称" required><input name="host" placeholder="主机地址" required><input name="port" type="number" value="22"><input name="username" value="root"><input name="private_key_path" placeholder="SSH私钥路径"><button class="primary">保存</button></form><div id="server-list" class="grid"></div></section>
-      <section id="deployments" class="page"><div class="panel"><h2>云端部署</h2><p>转换完成后，可通过命令行或这里管理服务器中的版本。只有健康部署会进入对话程序。</p><div id="deployment-list" class="empty">只有健康部署会进入对话程序</div></div></section>
+      <section id="servers" class="page">
+        <div class="section-head"><div><h2>服务器</h2><p>支持直接粘贴SSH命令，也可以分别填写主机、端口和用户名。</p></div><button class="primary" id="show-server-form">添加服务器</button></div>
+        <form id="server-form" class="panel form" hidden autocomplete="off">
+          <h2>添加Ubuntu GPU服务器</h2>
+          <label class="field full"><span>服务器名称</span><input name="display_name" placeholder="例如：4090云服务器" required></label>
+          <label class="field full"><span>SSH登录命令（推荐直接粘贴）</span><input name="ssh_command" id="ssh-command" placeholder="ssh -p 51838 root@gpu.example.com"></label>
+          <label class="field"><span>主机地址</span><input name="host" id="server-host" placeholder="gpu.example.com"></label>
+          <label class="field"><span>端口</span><input name="port" id="server-port" type="number" min="1" max="65535" value="22"></label>
+          <label class="field"><span>用户名</span><input name="username" id="server-username" value="root"></label>
+          <label class="field"><span>认证方式</span><select name="auth_type" id="server-auth"><option value="password">密码</option><option value="private_key">SSH私钥</option></select></label>
+          <label class="field" id="server-password-field"><span>SSH密码</span><input name="password" type="password" autocomplete="new-password"></label>
+          <label class="field" id="server-key-field" hidden><span>SSH私钥路径</span><input name="private_key_path" placeholder="C:\Users\用户名\.ssh\id_ed25519"></label>
+          <label class="field"><span>远端模型目录</span><input name="model_root" value="/opt/yinbian"></label>
+          <label class="consent"><input name="remember_password" type="checkbox" checked> 在本机加密记住密码，以后自动部署和连接</label>
+          <label class="consent"><input name="check_now" type="checkbox" checked> 保存后立即连接检查并显示服务器指纹</label>
+          <div class="form-actions"><button type="button" id="cancel-server-form">取消</button><button class="primary">保存并检查</button></div>
+        </form>
+        <div id="server-list" class="grid"></div>
+      </section>
+      <section id="deployments" class="page"><div class="panel"><h2>已部署模型</h2><p>部署成功的模型会出现在这里。选择一个健康模型即可启动对话，也可以停止、重新启动或回滚模型服务。</p><div id="deployment-list" class="empty">完成部署后，模型会出现在这里</div></div></section>
       <section id="keys" class="page">
         <div class="panel"><h2>密钥与备份</h2><p>在线密钥由 Windows 当前用户保护；跨电脑迁移请使用独立备份口令导出。</p><div class="notice">忘记备份口令后无法绕过或找回。</div></div>
         <form id="key-backup-form" class="panel form"><h2>创建便携备份</h2><input name="source" placeholder="待备份密钥目录" required><input name="output" placeholder="输出文件，例如 D:\backup.ybkey" required><input name="password" type="password" minlength="12" placeholder="备份口令（至少12位）" required><input name="password_confirmation" type="password" minlength="12" placeholder="再次输入备份口令" required><button class="primary">创建备份</button></form>

@@ -149,7 +149,14 @@ def build_catalog_plan(
     *,
     output_uri: str,
     staging_path: Path | None = None,
+    download_endpoint: str = "auto",
 ) -> ConversionPlan:
+    if download_endpoint not in {
+        "auto",
+        "https://huggingface.co",
+        "https://hf-mirror.com",
+    }:
+        raise ValueError("unsupported model download endpoint")
     entry = find_catalog_entry(model)
     output: dict[str, Any] = {
         "type": "local" if not output_uri.startswith("s3://") else "s3",
@@ -169,6 +176,7 @@ def build_catalog_plan(
             "repo_id": entry.repo_id,
             "revision": entry.revision,
             "cache_path": str((Path("data/models") / entry.catalog_id).resolve()),
+            "download_endpoint": download_endpoint,
         },
         adapter=entry.adapter_id,
         fingerprint={
@@ -194,6 +202,7 @@ def build_catalog_plan(
         },
     )
     conversion.conversion["expansion_h"] = int(entry.conversion["expansion_h"])
+    conversion.conversion["dtype"] = str(entry.conversion["output_dtype"])
     return conversion
 
 

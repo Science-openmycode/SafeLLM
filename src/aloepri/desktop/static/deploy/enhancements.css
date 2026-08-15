@@ -34,3 +34,132 @@
 .consent input {
   width: auto;
 }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.field.full,
+.full {
+  grid-column: 1 / -1;
+}
+
+.field input,
+.field select {
+  width: 100%;
+}
+
+.model-note {
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e40af;
+  padding: 11px 13px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.model-note.warning {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.badge.family-compatible {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.job-error {
+  margin-top: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.badge.terminal {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.server-operation {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #a7f3d0;
+  border-radius: 10px;
+  background: #f0fdf9;
+  color: #065f46;
+}
+
+.server-operation.failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.operation-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #d1fae5;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #10a37f;
+  transition: width .35s ease;
+}
+
+.server-operation small {
+  display: block;
+  margin-top: 7px;
+  opacity: .75;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.terminal-history summary {
+  cursor: pointer;
+  color: #6b7280;
+  font-weight: 600;
+  user-select: none;
+}
+
+.terminal-history[open] summary {
+  margin-bottom: 16px;
+}
+
+@media (max-width: 720px) {
+  .form {
+    grid-template-columns: 1fr;
+  }
+
+  .field.full,
+  .full,
+  .form h2,
+  .form-actions,
+  .consent {
+    grid-column: 1;
+  }
+}

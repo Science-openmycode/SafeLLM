@@ -4,8 +4,11 @@ import asyncio
 import hashlib
 import json
 import secrets
+import subprocess
+import sys
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +31,7 @@ from aloepri.cloud.ssh import (
     SSHProfile,
     inspect_ubuntu_server,
     install_runtime_dependencies,
+    parse_ssh_command,
 )
 from aloepri.keys.directory_vault import online_key_credential_id
 from aloepri.keys.portable import export_portable_key, restore_portable_key
@@ -36,7 +40,7 @@ from aloepri.planning import ConversionPlan, build_catalog_plan, build_local_pla
 from aloepri.product.paths import product_paths
 from aloepri.product.pipeline import ProgressiveConversionPipeline, SSHDirectorySink
 from aloepri.product.resources import inspect_local_resources
-from aloepri.product.state import ProductJobStatus, ProductStore
+from aloepri.product.state import DeploymentStatus, ProductJobStatus, ProductStore
 
 STATIC = Path(__file__).with_name("static") / "deploy"
 
@@ -63,16 +67,20 @@ class PlanRequest(StrictModel):
     mode: str = "direct-deploy"
     server_id: str | None = None
     device: str = "auto"
+    download_endpoint: str = "auto"
     output: str = "artifacts/plans/yinbian-desktop.yaml"
 
 
 class ServerRequest(StrictModel):
     server_id: str | None = None
     display_name: str = Field(min_length=1, max_length=80)
-    host: str = Field(min_length=1, max_length=255)
-    port: int = Field(default=22, ge=1, le=65535)
-    username: str = "root"
+    ssh_command: str | None = None
+    host: str | None = Field(default=None, min_length=1, max_length=255)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = None
     auth_type: str = "private_key"
+    password: str | None = None
+    remember_password: bool = True
     private_key_path: str | None = None
     sudo_mode: str = "root"
     model_root: str = "/opt/yinbian"
@@ -86,6 +94,8 @@ class ServerCheckRequest(StrictModel):
 
 class ServerBootstrapRequest(ServerCheckRequest):
     confirmed: bool = False
+    retry_job_id: str | None = None
+    remote_port: int = Field(default=18000, ge=1024, le=65535)
 
 
 class KeyBackupRequest(StrictModel):
@@ -105,6 +115,7 @@ class JobRequest(StrictModel):
     plan_path: str
     hf_token: str | None = None
     password: str | None = None
+    offline_key_password: str | None = Field(default=None, min_length=12)
     private_key_passphrase: str | None = None
     clean_source_after_commit: bool = False
     accept_license: bool = False
@@ -112,7 +123,15 @@ class JobRequest(StrictModel):
 
 class JobResumeRequest(StrictModel):
     password: str | None = None
+    offline_key_password: str | None = Field(default=None, min_length=12)
     private_key_passphrase: str | None = None
+    accept_license: bool = False
+
+
+class CompletedJobDeployRequest(StrictModel):
+    password: str | None = None
+    private_key_passphrase: str | None = None
+    remote_port: int = Field(default=18000, ge=1024, le=65535)
 
 
 class DeploymentRequest(StrictModel):
@@ -126,13 +145,22 @@ class DeploymentRequest(StrictModel):
     private_key_passphrase: str | None = None
 
 
+class DeploymentMigrationRequest(StrictModel):
+    target_server_id: str
+    remote_port: int = Field(default=18000, ge=1024, le=65535)
+    password: str | None = None
+    private_key_passphrase: str | None = None
+
+
 class RemoteActionRequest(StrictModel):
     password: str | None = None
     private_key_passphrase: str | None = None
 
 
 def _public_server(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in record.items() if key != "credential_ref"}
+    public = {key: value for key, value in record.items() if key != "credential_ref"}
+    public["has_saved_password"] = bool(record.get("credential_ref"))
+    return public
 
 
 def _attach_local_runtime_metadata(
@@ -169,19 +197,130 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
     store = ProductStore(state_path)
     session_token = secrets.token_urlsafe(32)
     workers: dict[str, threading.Thread] = {}
+    workers_lock = threading.Lock()
+    server_operations: dict[str, dict[str, Any]] = {}
+    server_operation_workers: dict[str, threading.Thread] = {}
+    server_operations_lock = threading.Lock()
+    chat_processes: dict[str, subprocess.Popen[bytes]] = {}
+    chat_processes_lock = threading.Lock()
+
+    def operation_snapshot(operation_id: str) -> dict[str, Any]:
+        with server_operations_lock:
+            try:
+                return dict(server_operations[operation_id])
+            except KeyError as error:
+                raise HTTPException(status_code=404, detail="server operation not found") from error
+
+    def update_server_operation(operation_id: str, **values: Any) -> None:
+        with server_operations_lock:
+            server_operations[operation_id] = {
+                **server_operations[operation_id],
+                **values,
+            }
+
+    def deploy_uploaded_job(
+        job_id: str,
+        request: CompletedJobDeployRequest | JobRequest,
+        progress: Callable[[str, int, str], None] | None = None,
+    ) -> dict[str, Any]:
+        from aloepri.cloud.hf_deployment import HFDeploymentManager, HFDeploymentRequest
+
+        job = store.get_job(job_id)
+        if job["status"] != ProductJobStatus.COMPLETED.value:
+            raise ValueError("only a completed conversion/upload job can be deployed")
+        plan_payload = job["plan"].get("conversion", job["plan"])
+        plan = ConversionPlan.from_dict(plan_payload)
+        server_id = str(plan.output.get("server_id") or "")
+        if not server_id:
+            raise ValueError("completed job has no target server")
+        artifacts = [
+            shard
+            for shard in store.list_shards(job_id)
+            if shard.get("private_name") is not None
+        ]
+        if not artifacts or any(
+            shard["status"] != "REMOTE_COMMITTED" for shard in artifacts
+        ):
+            raise ValueError("private model upload is not completely committed")
+        server = store.get_server(server_id)
+        remote_port = int(getattr(request, "remote_port", 18000))
+        deployment_id = f"dep-{job_id}"
+        version_id = f"v-{job_id[:12]}"
+        bearer = secrets.token_urlsafe(32)
+        credential_id = f"deployment-{deployment_id}-bearer"
+        CredentialVault(product_paths().credentials).put(
+            credential_id, "deployment_bearer", bearer
+        )
+        profile = ssh_profile(server, request)
+        deployment_request = HFDeploymentRequest(
+            deployment_id=deployment_id,
+            version_id=version_id,
+            server_id=server_id,
+            job_id=job_id,
+            model_id=str(plan.output.get("model_id", "private-model")),
+            model_version=str(plan.source.get("revision", job_id)),
+            key_id=str(plan.output.get("key_id", f"key-{job_id[:8]}")),
+            server_package=Path(str(job["progress"]["output"])),
+            remote_port=remote_port,
+            bearer_token=bearer,
+            bearer_credential_id=credential_id,
+            preuploaded_remote_root=f"{profile.model_root}/incoming/{job_id}",
+        )
+        try:
+            deployed = asyncio.run(
+                HFDeploymentManager(store).deploy(
+                    deployment_request, profile, progress=progress
+                )
+            )
+        except Exception as error:
+            try:
+                failed = store.get_deployment(deployment_id)
+            except KeyError:
+                failed = {
+                    "deployment_id": deployment_id,
+                    "server_id": server_id,
+                    "job_id": job_id,
+                    "model_id": deployment_request.model_id,
+                    "model_version": deployment_request.model_version,
+                    "key_id": deployment_request.key_id,
+                    "version_id": version_id,
+                    "remote_port": remote_port,
+                    "status": DeploymentStatus.FAILED.value,
+                    "metadata": {},
+                }
+            failed["status"] = DeploymentStatus.FAILED.value
+            failed["metadata"] = {
+                **failed.get("metadata", {}),
+                "bearer_credential_id": credential_id,
+                "preuploaded_remote_root": str(
+                    deployment_request.preuploaded_remote_root
+                ),
+                "last_error": str(error),
+            }
+            store.put_deployment(failed)
+            raise
+        return _attach_local_runtime_metadata(store, deployed, plan)
 
     def ssh_profile(
         record: dict[str, Any],
         request: RemoteActionRequest
+        | CompletedJobDeployRequest
+        | DeploymentMigrationRequest
         | JobRequest
         | DeploymentRequest
         | ServerCheckRequest,
     ) -> SSHProfile:
+        password = request.password
+        credential_ref = record.get("credential_ref")
+        if password is None and credential_ref:
+            password = CredentialVault(product_paths().credentials).get(
+                str(credential_ref)
+            )["secret"]
         return SSHProfile(
             host=str(record["host"]),
             port=int(record["port"]),
             username=str(record["username"]),
-            password=request.password,
+            password=password,
             private_key=(
                 None
                 if not record.get("private_key_path")
@@ -195,9 +334,13 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
 
     def launch_job(request: JobRequest) -> dict[str, Any]:
         plan = ConversionPlan.load(Path(request.plan_path))
+        with workers_lock:
+            existing_worker = workers.get(plan.job_id)
+            if existing_worker is not None and existing_worker.is_alive():
+                raise ValueError(f"job {plan.job_id} is already running")
         mode = str(plan.output.get("deployment_mode", "local-only"))
         try:
-            store.get_job(plan.job_id)
+            existing_job = store.get_job(plan.job_id)
         except KeyError:
             store.create_job(
                 plan.job_id,
@@ -208,9 +351,21 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
                     "desktop": {
                         "plan_path": str(Path(request.plan_path).resolve()),
                         "clean_source_after_commit": request.clean_source_after_commit,
+                        "accept_license": request.accept_license,
                     },
                 },
             )
+        else:
+            refreshed_plan = {
+                **existing_job["plan"],
+                "conversion": plan.to_dict(),
+            }
+            if refreshed_plan != existing_job["plan"]:
+                store.update_job_plan(
+                    plan.job_id,
+                    refreshed_plan,
+                    reason="desktop resume loaded the current versioned plan",
+                )
         sink = None
         server_id: str | None = None
         server: dict[str, Any] | None = None
@@ -225,56 +380,55 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             )
 
         def work() -> None:
-            result = ProgressiveConversionPipeline(store).run_catalog_qwen(
-                plan,
-                mode=mode,
-                token=request.hf_token,
-                sink=sink,
-                clean_source_after_commit=request.clean_source_after_commit,
-                accept_license=request.accept_license,
-            )
-            if mode == "direct-deploy":
-                from aloepri.cloud.hf_deployment import (
-                    HFDeploymentManager,
-                    HFDeploymentRequest,
+            try:
+                ProgressiveConversionPipeline(store).run_catalog_model(
+                    plan,
+                    mode=mode,
+                    token=request.hf_token,
+                    sink=sink,
+                    clean_source_after_commit=request.clean_source_after_commit,
+                    accept_license=request.accept_license,
+                    offline_key_password=request.offline_key_password,
                 )
-
-                assert server_id is not None and server is not None
-                deployment_id = f"dep-{plan.job_id}"
-                bearer = secrets.token_urlsafe(32)
-                credential_id = f"deployment-{deployment_id}-bearer"
-                CredentialVault(product_paths().credentials).put(
-                    credential_id, "deployment_bearer", bearer
-                )
-                profile = ssh_profile(server, request)
-                deployed = asyncio.run(
-                    HFDeploymentManager(store).deploy(
-                        HFDeploymentRequest(
-                            deployment_id=deployment_id,
-                            version_id=f"v-{plan.job_id[:12]}",
-                            server_id=str(server_id),
-                            job_id=plan.job_id,
-                            model_id=str(plan.output.get("model_id", "private-model")),
-                            model_version=str(plan.source.get("revision", plan.job_id)),
-                            key_id=str(
-                                plan.output.get("key_id", f"key-{plan.job_id[:8]}")
-                            ),
-                            server_package=Path(result["output"]),
-                            remote_port=18000,
-                            bearer_token=bearer,
-                            bearer_credential_id=credential_id,
-                            preuploaded_remote_root=(
-                                f"{profile.model_root}/incoming/{plan.job_id}"
-                            ),
-                        ),
-                        profile,
+                if mode == "direct-deploy":
+                    deploy_uploaded_job(plan.job_id, request)
+            except Exception as error:
+                current = store.get_job(plan.job_id)
+                if current["status"] not in {
+                    ProductJobStatus.PAUSED.value,
+                    ProductJobStatus.CANCELLED.value,
+                    ProductJobStatus.COMPLETED.value,
+                    ProductJobStatus.FAILED.value,
+                }:
+                    message = str(error)
+                    for secret in (
+                        request.password,
+                        request.offline_key_password,
+                        request.private_key_passphrase,
+                        request.hf_token,
+                    ):
+                        if secret:
+                            message = message.replace(secret, "[REDACTED]")
+                    store.transition_job(
+                        plan.job_id,
+                        ProductJobStatus.FAILED,
+                        error={
+                            "type": type(error).__name__,
+                            "message": message or "background job failed",
+                        },
                     )
-                )
-                _attach_local_runtime_metadata(store, deployed, plan)
+            finally:
+                with workers_lock:
+                    if workers.get(plan.job_id) is threading.current_thread():
+                        workers.pop(plan.job_id, None)
 
         thread = threading.Thread(target=work, daemon=True, name=f"yinbian-{plan.job_id}")
-        workers[plan.job_id] = thread
-        thread.start()
+        with workers_lock:
+            existing_worker = workers.get(plan.job_id)
+            if existing_worker is not None and existing_worker.is_alive():
+                raise ValueError(f"job {plan.job_id} is already running")
+            workers[plan.job_id] = thread
+            thread.start()
         return {"job_id": plan.job_id, "started": True}
 
     @app.middleware("http")
@@ -320,11 +474,14 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
     def dashboard() -> dict[str, Any]:
         jobs = store.list_jobs()
         deployments = store.list_deployments()
+        with server_operations_lock:
+            operations = [dict(item) for item in server_operations.values()]
         return {
             "models": len(builtin_catalog().list()),
             "jobs": jobs,
             "servers": [_public_server(item) for item in store.list_servers()],
             "deployments": deployments,
+            "server_operations": operations,
             "resources": inspect_local_resources(Path.cwd()),
         }
 
@@ -431,10 +588,32 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
         if request.server_id is not None:
             store.get_server(request.server_id)
         path = Path(request.model)
+        if not path.is_dir():
+            entry = find_catalog_entry(request.model)
+            if not entry.conversion_ready:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{entry.display_name} currently supports architecture inspection "
+                        "only; its checkpoint converter is not release-ready"
+                    ),
+                )
+            if request.mode == "direct-deploy" and not entry.deployment_ready:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{entry.display_name} has not passed deployment acceptance; "
+                        "use local-only conversion"
+                    ),
+                )
         plan = (
             build_local_plan(path, output_uri=request.destination)
             if path.is_dir()
-            else build_catalog_plan(request.model, output_uri=request.destination)
+            else build_catalog_plan(
+                request.model,
+                output_uri=request.destination,
+                download_endpoint=request.download_endpoint,
+            )
         )
         plan.output["deployment_mode"] = request.mode
         plan.output["server_id"] = request.server_id
@@ -488,11 +667,14 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
                 JobRequest(
                     plan_path=str(plan_path),
                     password=request.password,
+                    offline_key_password=request.offline_key_password,
                     private_key_passphrase=request.private_key_passphrase,
                     clean_source_after_commit=bool(
                         desktop.get("clean_source_after_commit", False)
                     ),
-                    accept_license=False,
+                    accept_license=bool(
+                        desktop.get("accept_license", request.accept_license)
+                    ),
                 )
             )
         except (OSError, ValueError, KeyError) as error:
@@ -505,6 +687,15 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
         except (ValueError, KeyError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @app.post("/api/jobs/{job_id}/deploy")
+    def deploy_completed_job(
+        job_id: str, request: CompletedJobDeployRequest
+    ) -> dict[str, Any]:
+        try:
+            return deploy_uploaded_job(job_id, request)
+        except (OSError, RuntimeError, ValueError, KeyError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
     @app.get("/api/servers")
     def servers() -> list[dict[str, Any]]:
         return [_public_server(item) for item in store.list_servers()]
@@ -512,10 +703,47 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
     @app.post("/api/servers")
     def add_server(request: ServerRequest) -> dict[str, Any]:
         try:
+            if request.auth_type not in {"password", "private_key"}:
+                raise ValueError("auth_type must be password or private_key")
+            if request.auth_type == "private_key" and not request.private_key_path:
+                raise ValueError("private-key authentication requires a private key path")
+            parsed = parse_ssh_command(request.ssh_command) if request.ssh_command else {}
+            host = request.host or parsed.get("host")
+            if not host:
+                raise ValueError("host or ssh_command is required")
+            server_id = request.server_id or secrets.token_hex(16)
+            credential_ref = None
+            if (
+                request.auth_type == "password"
+                and request.password
+                and request.remember_password
+            ):
+                credential_ref = (
+                    "server-ssh-"
+                    + hashlib.sha256(server_id.encode()).hexdigest()[:24]
+                )
+                CredentialVault(product_paths().credentials).put(
+                    credential_ref,
+                    "ssh_password",
+                    request.password,
+                )
             record = store.add_server(
                 {
-                    **request.model_dump(),
-                    "server_id": request.server_id or secrets.token_hex(16),
+                    **request.model_dump(
+                        exclude={
+                            "ssh_command",
+                            "host",
+                            "port",
+                            "username",
+                            "password",
+                            "remember_password",
+                        }
+                    ),
+                    "host": str(host),
+                    "port": int(request.port or parsed.get("port", 22)),
+                    "username": str(request.username or parsed.get("username", "root")),
+                    "server_id": server_id,
+                    "credential_ref": credential_ref,
                 }
             )
         except (ValueError, KeyError) as error:
@@ -525,21 +753,7 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
     @app.post("/api/servers/{server_id}/check")
     def check_server(server_id: str, request: ServerCheckRequest) -> dict[str, Any]:
         record = store.get_server(server_id)
-        profile = SSHProfile(
-            host=str(record["host"]),
-            port=int(record["port"]),
-            username=str(record["username"]),
-            password=request.password,
-            private_key=(
-                None
-                if not record.get("private_key_path")
-                else Path(str(record["private_key_path"]))
-            ),
-            private_key_passphrase=request.private_key_passphrase,
-            host_key_fingerprint=record.get("host_key_fingerprint"),
-            sudo_mode=str(record["sudo_mode"]),
-            model_root=str(record["model_root"]),
-        )
+        profile = ssh_profile(record, request)
         try:
             result = asyncio.run(inspect_ubuntu_server(profile))
         except (OSError, ValueError) as error:
@@ -549,6 +763,21 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
                 server_id, host_key_fingerprint=result["host_key_fingerprint"]
             )
             result["trusted"] = True
+        if request.password and record.get("auth_type") == "password":
+            credential_ref = str(
+                record.get("credential_ref")
+                or (
+                    "server-ssh-"
+                    + hashlib.sha256(server_id.encode()).hexdigest()[:24]
+                )
+            )
+            CredentialVault(product_paths().credentials).put(
+                credential_ref,
+                "ssh_password",
+                request.password,
+            )
+            store.update_server(server_id, credential_ref=credential_ref)
+            result["password_saved"] = True
         return result
 
     @app.post("/api/servers/{server_id}/bootstrap")
@@ -561,12 +790,85 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
                 detail="runtime installation changes the remote server; confirm explicitly",
             )
         record = store.get_server(server_id)
-        try:
-            return asyncio.run(
-                install_runtime_dependencies(ssh_profile(record, request))
-            )
-        except (OSError, RuntimeError, ValueError) as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
+        with server_operations_lock:
+            for operation in server_operations.values():
+                if operation["server_id"] == server_id and operation["status"] == "RUNNING":
+                    return dict(operation)
+            operation_id = f"server-op-{uuid.uuid4()}"
+            server_operations[operation_id] = {
+                "operation_id": operation_id,
+                "server_id": server_id,
+                "job_id": request.retry_job_id,
+                "kind": "BOOTSTRAP_AND_DEPLOY" if request.retry_job_id else "BOOTSTRAP",
+                "status": "RUNNING",
+                "stage": "QUEUED",
+                "percent": 1,
+                "message": "安装任务已创建",
+                "error": None,
+            }
+
+        def run_bootstrap() -> None:
+            try:
+                profile = ssh_profile(record, request)
+
+                def report(stage: str, percent: int, message: str) -> None:
+                    update_server_operation(
+                        operation_id,
+                        stage=stage,
+                        percent=percent,
+                        message=message,
+                    )
+
+                asyncio.run(install_runtime_dependencies(profile, progress=report))
+                if request.retry_job_id:
+                    update_server_operation(
+                        operation_id,
+                        stage="DEPLOYING",
+                        percent=85,
+                        message="运行环境已就绪，正在启动私有模型服务",
+                    )
+                    deploy_uploaded_job(
+                        request.retry_job_id,
+                        CompletedJobDeployRequest(
+                            password=request.password,
+                            private_key_passphrase=request.private_key_passphrase,
+                            remote_port=request.remote_port,
+                        ),
+                        progress=report,
+                    )
+                update_server_operation(
+                    operation_id,
+                    status="COMPLETED",
+                    stage="HEALTHY" if request.retry_job_id else "RUNTIME_READY",
+                    percent=100,
+                    message=(
+                        "模型服务已部署并通过健康检查"
+                        if request.retry_job_id
+                        else "服务器运行环境安装完成"
+                    ),
+                )
+            except Exception as error:
+                update_server_operation(
+                    operation_id,
+                    status="FAILED",
+                    stage="FAILED",
+                    message="服务器操作失败",
+                    error=f"{type(error).__name__}: {error}",
+                )
+
+        worker = threading.Thread(
+            target=run_bootstrap,
+            name=f"yinbian-{operation_id}",
+            daemon=True,
+        )
+        with server_operations_lock:
+            server_operation_workers[operation_id] = worker
+        worker.start()
+        return operation_snapshot(operation_id)
+
+    @app.get("/api/server-operations/{operation_id}")
+    def server_operation(operation_id: str) -> dict[str, Any]:
+        return operation_snapshot(operation_id)
 
     @app.delete("/api/servers/{server_id}")
     def remove_server(server_id: str) -> dict[str, Any]:
@@ -624,6 +926,111 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             return store.get_deployment(deployment_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/api/deployments/{deployment_id}/migrate")
+    def migrate_deployment(
+        deployment_id: str,
+        request: DeploymentMigrationRequest,
+    ) -> dict[str, Any]:
+        """Copy an existing private package to another server without reconversion."""
+
+        from aloepri.cloud.hf_deployment import HFDeploymentManager, HFDeploymentRequest
+
+        try:
+            current = store.get_deployment(deployment_id)
+            job = store.get_job(str(current["job_id"]))
+            server = store.get_server(request.target_server_id)
+            if request.target_server_id == current["server_id"]:
+                raise ValueError("target server must differ from the current server")
+            plan_payload = job["plan"].get("conversion", job["plan"])
+            plan = ConversionPlan.from_dict(plan_payload)
+            package = Path(str(job.get("progress", {}).get("output", "")))
+            if not package.is_dir():
+                raise FileNotFoundError(
+                    "local private package is unavailable; restore the package before migration"
+                )
+            suffix = uuid.uuid4().hex[:8]
+            new_deployment_id = f"{deployment_id}-copy-{suffix}"
+            version_id = f"v-{plan.job_id[:8]}-{suffix}"
+            bearer = secrets.token_urlsafe(32)
+            credential_id = f"deployment-{new_deployment_id}-bearer"
+            CredentialVault(product_paths().credentials).put(
+                credential_id,
+                "deployment_bearer",
+                bearer,
+            )
+            deployment_request = HFDeploymentRequest(
+                deployment_id=new_deployment_id,
+                version_id=version_id,
+                server_id=request.target_server_id,
+                job_id=plan.job_id,
+                model_id=str(plan.output.get("model_id", current["model_id"])),
+                model_version=str(plan.source.get("revision", current["model_version"])),
+                key_id=str(plan.output.get("key_id", current["key_id"])),
+                server_package=package,
+                remote_port=request.remote_port,
+                bearer_token=bearer,
+                bearer_credential_id=credential_id,
+            )
+            migrated = asyncio.run(
+                HFDeploymentManager(store).deploy(
+                    deployment_request,
+                    ssh_profile(server, request),
+                )
+            )
+            migrated["metadata"] = {
+                **migrated.get("metadata", {}),
+                "migrated_from_deployment_id": deployment_id,
+                "reconversion_performed": False,
+            }
+            store.put_deployment(migrated)
+            return _attach_local_runtime_metadata(store, migrated, plan)
+        except (OSError, RuntimeError, ValueError, KeyError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/deployments/{deployment_id}/chat")
+    def launch_chat(deployment_id: str) -> dict[str, Any]:
+        try:
+            current = store.get_deployment(deployment_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if current["status"] != DeploymentStatus.HEALTHY.value:
+            raise HTTPException(
+                status_code=409,
+                detail="only a healthy deployed model can start chat",
+            )
+        with chat_processes_lock:
+            process = chat_processes.get(deployment_id)
+            if process is not None and process.poll() is None:
+                return {
+                    "deployment_id": deployment_id,
+                    "started": False,
+                    "already_running": True,
+                    "pid": process.pid,
+                }
+            executable = Path(sys.executable)
+            if sys.platform == "win32":
+                windowed = executable.with_name("pythonw.exe")
+                if windowed.is_file():
+                    executable = windowed
+            process = subprocess.Popen(
+                [
+                    str(executable),
+                    "-m",
+                    "aloepri.desktop.chat",
+                    "--deployment",
+                    deployment_id,
+                ],
+                cwd=Path.cwd(),
+                close_fds=True,
+            )
+            chat_processes[deployment_id] = process
+        return {
+            "deployment_id": deployment_id,
+            "started": True,
+            "already_running": False,
+            "pid": process.pid,
+        }
 
     def deployment_action(
         deployment_id: str, action: str, request: RemoteActionRequest

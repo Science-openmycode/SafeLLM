@@ -84,6 +84,193 @@ class Qwen2FamilyAdapter(ModelFamilyAdapter):
         return _coverage(inventory, expected, optional)
 
 
+class GLMDenseFamilyAdapter(ModelFamilyAdapter):
+    """Recognize the standard Transformers GLM dense checkpoint layout.
+
+    GLM uses a fused SwiGLU gate/up projection.  It is deliberately a distinct
+    adapter from Qwen2 so the product cannot silently run Qwen's converter over
+    an incompatible tensor layout.
+    """
+
+    adapter_id = "glm_dense"
+
+    def match(
+        self,
+        config: Mapping[str, Any],
+        inventory: TensorInventory | None,
+        fingerprint: ArchitectureFingerprint,
+    ) -> AdapterMatch:
+        matches = fingerprint.model_type == "glm" and fingerprint.ffn == "dense"
+        return AdapterMatch(
+            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            self.adapter_id if matches else None,
+            fingerprint,
+            (
+                "GLM dense structure is recognized; fused gate_up conversion and "
+                "private runtime validation are still required",
+            )
+            if matches
+            else (),
+        )
+
+    def validate_inventory(
+        self, config: Mapping[str, Any], inventory: TensorInventory
+    ) -> CoverageReport:
+        expected = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
+        optional = set(_GLOBAL_OPTIONAL)
+        for layer in range(int(config["num_hidden_layers"])):
+            prefix = f"model.layers.{layer}"
+            expected.update(
+                {
+                    f"{prefix}.input_layernorm.weight",
+                    f"{prefix}.post_attention_layernorm.weight",
+                    f"{prefix}.self_attn.q_proj.weight",
+                    f"{prefix}.self_attn.q_proj.bias",
+                    f"{prefix}.self_attn.k_proj.weight",
+                    f"{prefix}.self_attn.k_proj.bias",
+                    f"{prefix}.self_attn.v_proj.weight",
+                    f"{prefix}.self_attn.v_proj.bias",
+                    f"{prefix}.self_attn.o_proj.weight",
+                    f"{prefix}.mlp.gate_up_proj.weight",
+                    f"{prefix}.mlp.down_proj.weight",
+                }
+            )
+        return _coverage(inventory, expected, optional)
+
+
+class Qwen3DenseFamilyAdapter(ModelFamilyAdapter):
+    adapter_id = "qwen3_dense"
+
+    def match(
+        self,
+        config: Mapping[str, Any],
+        inventory: TensorInventory | None,
+        fingerprint: ArchitectureFingerprint,
+    ) -> AdapterMatch:
+        matches = fingerprint.model_type == "qwen3" and fingerprint.ffn == "dense"
+        return AdapterMatch(
+            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            self.adapter_id if matches else None,
+            fingerprint,
+            ("Qwen3 Q/K normalization requires its own coordinate transform",)
+            if matches
+            else (),
+        )
+
+    def validate_inventory(
+        self, config: Mapping[str, Any], inventory: TensorInventory
+    ) -> CoverageReport:
+        expected = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
+        optional = set(_GLOBAL_OPTIONAL)
+        for layer in range(int(config["num_hidden_layers"])):
+            prefix = f"model.layers.{layer}"
+            expected.update(
+                {
+                    f"{prefix}.input_layernorm.weight",
+                    f"{prefix}.post_attention_layernorm.weight",
+                    f"{prefix}.self_attn.q_norm.weight",
+                    f"{prefix}.self_attn.k_norm.weight",
+                    f"{prefix}.self_attn.q_proj.weight",
+                    f"{prefix}.self_attn.k_proj.weight",
+                    f"{prefix}.self_attn.v_proj.weight",
+                    f"{prefix}.self_attn.o_proj.weight",
+                    f"{prefix}.mlp.gate_proj.weight",
+                    f"{prefix}.mlp.up_proj.weight",
+                    f"{prefix}.mlp.down_proj.weight",
+                }
+            )
+        return _coverage(inventory, expected, optional)
+
+
+class GLM4MoEFamilyAdapter(ModelFamilyAdapter):
+    adapter_id = "glm4_moe"
+
+    def match(
+        self,
+        config: Mapping[str, Any],
+        inventory: TensorInventory | None,
+        fingerprint: ArchitectureFingerprint,
+    ) -> AdapterMatch:
+        matches = fingerprint.model_type in {"glm4_moe", "glm_moe_dsa"}
+        return AdapterMatch(
+            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            self.adapter_id if matches else None,
+            fingerprint,
+            (
+                "GLM MoE is a separate graph: Q/K norm, partial/decoupled RoPE, "
+                "GLM router, FP8 codec and MTP must be validated together",
+            )
+            if matches
+            else (),
+        )
+
+    def validate_inventory(
+        self, config: Mapping[str, Any], inventory: TensorInventory
+    ) -> CoverageReport:
+        roots = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
+        recognized = {
+            name
+            for name in inventory.names
+            if name in roots or name.startswith("model.layers.")
+        }
+        return CoverageReport(
+            frozenset(roots),
+            frozenset(recognized),
+            tuple(sorted(roots - set(inventory.names))),
+            (),
+        )
+
+
+class KimiK2FamilyAdapter(ModelFamilyAdapter):
+    adapter_id = "kimi_k2"
+
+    def match(
+        self,
+        config: Mapping[str, Any],
+        inventory: TensorInventory | None,
+        fingerprint: ArchitectureFingerprint,
+    ) -> AdapterMatch:
+        text = config.get("text_config")
+        text_type = str(text.get("model_type", "")) if isinstance(text, Mapping) else ""
+        matches = fingerprint.model_type in {"kimi_k2", "kimi_k25"} or text_type == "kimi_k2"
+        return AdapterMatch(
+            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            self.adapter_id if matches else None,
+            fingerprint,
+            (
+                "Kimi-K2 text weights are DeepSeek-like, but the multimodal wrapper, "
+                "language_model prefix and packed INT4 experts require a dedicated codec",
+            )
+            if matches
+            else (),
+        )
+
+    def validate_inventory(
+        self, config: Mapping[str, Any], inventory: TensorInventory
+    ) -> CoverageReport:
+        required_prefixes = (
+            "language_model.model.embed_tokens.",
+            "language_model.model.layers.",
+            "language_model.lm_head.",
+        )
+        missing = tuple(
+            prefix
+            for prefix in required_prefixes
+            if not any(name.startswith(prefix) for name in inventory.names)
+        )
+        recognized = {
+            name
+            for name in inventory.names
+            if name.startswith(("language_model.", "vision_tower.", "mm_projector."))
+        }
+        return CoverageReport(
+            frozenset(required_prefixes),
+            frozenset(recognized),
+            missing,
+            (),
+        )
+
+
 def _deepseek_layer_names(
     config: Mapping[str, Any], layer: int, *, force_moe: bool = False
 ) -> set[str]:

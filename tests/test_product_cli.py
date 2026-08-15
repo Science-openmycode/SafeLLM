@@ -140,6 +140,31 @@ def test_yinbian_product_command_surface(tmp_path: Path) -> None:
     assert '"connected": false' in result.output
 
 
+def test_servers_add_accepts_pasted_ssh_command(tmp_path: Path) -> None:
+    environment = {"YINBIAN_STATE_DB": str(tmp_path / "state.db")}
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "servers",
+            "add",
+            "--name",
+            "Rental GPU",
+            "--ssh-command",
+            "ssh -p 51838 root@gpu.example",
+            "--auth-type",
+            "password",
+        ],
+        env=environment,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["host"] == "gpu.example"
+    assert payload["port"] == 51838
+    assert payload["username"] == "root"
+    assert "password" not in payload
+
+
 def test_completed_local_conversion_waits_for_explicit_upload(
     tmp_path: Path, monkeypatch: object
 ) -> None:
@@ -161,3 +186,44 @@ def test_completed_local_conversion_waits_for_explicit_upload(
     store = JobStore(tmp_path / "state.db")
     executor.execute_conversion_plan(plan, store)
     assert store.get(plan.job_id)["state"] == "UPLOADING"
+
+
+def test_generic_converter_dispatches_deepseek_to_deepseek_path(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    plan = ConversionPlan(
+        schema_version=1,
+        job_id="job-deepseek-dispatch",
+        source={"type": "local", "path": str(tmp_path / "source")},
+        adapter="deepseek_v2",
+        fingerprint={"weight_format": "bfloat16"},
+        output={"type": "local", "uri": str(tmp_path / "private")},
+    )
+    called: dict[str, object] = {}
+
+    def fake_deepseek(
+        current: ConversionPlan,
+        output: Path,
+        store: JobStore | None,
+        source: Path,
+        *,
+        offline_key_password: str | None = None,
+    ) -> dict[str, str]:
+        called.update(
+            plan=current,
+            output=output,
+            store=store,
+            source=source,
+            password=offline_key_password,
+        )
+        return {"adapter": current.adapter}
+
+    monkeypatch.setattr(executor, "_run_deepseek", fake_deepseek)  # type: ignore[attr-defined]
+    result = executor.convert_model_checkpoint(
+        plan,
+        tmp_path / "private",
+        tmp_path / "source",
+        offline_key_password="correct horse battery staple",
+    )
+    assert result == {"adapter": "deepseek_v2"}
+    assert called["source"] == tmp_path / "source"

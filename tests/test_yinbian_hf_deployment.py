@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -9,9 +10,14 @@ import pytest
 from aloepri.cloud.hf_deployment import (
     HFDeploymentRequest,
     _compose_yaml,
+    _create_runtime_archive,
+    _deployment_runtime_mode,
     _find_available_port,
+    _native_start_script,
+    _native_stop_script,
     _validated_model_root,
     _validated_preuploaded_root,
+    _wait_health,
 )
 from aloepri.cloud.ssh import SSHProfile
 
@@ -24,6 +30,22 @@ class FakeSession:
         assert arguments[:3] == ["ss", "--listening", "--tcp"]
         assert not sudo
         return {"exit_code": 0, "stdout": self.listeners, "stderr": ""}
+
+
+class ExitedRuntimeSession:
+    async def run(self, arguments: list[str], *, sudo: bool = False) -> dict[str, Any]:
+        assert not sudo
+        if arguments[0] == "curl":
+            return {"exit_code": 7, "stdout": "", "stderr": "connection refused"}
+        if arguments[0] == "sh":
+            return {"exit_code": 1, "stdout": "", "stderr": ""}
+        if arguments[0] == "tail":
+            return {
+                "exit_code": 0,
+                "stdout": "Authorization: secret-value\nTraceback: model failed\n",
+                "stderr": "",
+            }
+        raise AssertionError(arguments)
 
 
 def test_compose_project_and_port_are_version_isolated(tmp_path: Path) -> None:
@@ -87,3 +109,59 @@ def test_preuploaded_package_must_stay_inside_model_root() -> None:
     ) == PurePosixPath("/opt/yinbian/incoming/job")
     with pytest.raises(ValueError, match="inside model_root"):
         _validated_preuploaded_root("/tmp/job", "/opt/yinbian")
+
+
+def test_native_runtime_package_and_scripts_are_private(tmp_path: Path) -> None:
+    request = HFDeploymentRequest(
+        deployment_id="dep-native",
+        version_id="v1",
+        server_id="server",
+        job_id="job",
+        model_id="model",
+        model_version="revision",
+        key_id="key",
+        server_package=tmp_path,
+        remote_port=18000,
+    )
+    root = PurePosixPath("/opt/yinbian")
+    version = root / "deployments/dep-native/versions/v1"
+    start = _native_start_script(request, version, root)
+    stop = _native_stop_script(version)
+    assert "--host 127.0.0.1 --port 18000" in start
+    assert "runtime.env" in start
+    assert "YINBIAN_BEARER_TOKEN" not in start
+    assert "aloepri-runtime.zip" not in start
+    assert "/runtime/current" in start
+    assert "server.pid" in start
+    assert "kill -0" in stop
+
+    archive = _create_runtime_archive()
+    try:
+        with zipfile.ZipFile(archive) as payload:
+            assert "aloepri/serving/native_entry.py" in payload.namelist()
+            assert not any("__pycache__" in name for name in payload.namelist())
+    finally:
+        archive.unlink(missing_ok=True)
+
+
+def test_deployment_runtime_mode_defaults_to_docker() -> None:
+    assert _deployment_runtime_mode({}) == "docker"
+    assert _deployment_runtime_mode({"metadata": {"runtime_mode": "native"}}) == "native"
+
+
+def test_health_check_stops_early_and_redacts_log_after_process_exit() -> None:
+    result = asyncio.run(
+        _wait_health(
+            ExitedRuntimeSession(),  # type: ignore[arg-type]
+            18000,
+            attempts=10,
+            pid_file=PurePosixPath("/opt/yinbian/server.pid"),
+            log_file=PurePosixPath("/opt/yinbian/server.log"),
+        )
+    )
+    assert result["pass"] is False
+    assert result["attempt"] == 1
+    assert result["process_exited"] is True
+    assert "secret-value" not in result["log"]
+    assert "<redacted>" in result["log"]
+    assert "model failed" in result["log"]

@@ -23,12 +23,18 @@ internal static class YinbianLauncher
                 File.ReadAllText(currentFile, Encoding.UTF8));
             if (current == null || !current.ContainsKey("path"))
                 throw new InvalidDataException("current.json has no path field");
+            if (!current.ContainsKey("validated") || !Convert.ToBoolean(current["validated"]))
+                throw new InvalidDataException("current version has not passed installation validation");
 
             string versionDirectory = Path.GetFullPath(Convert.ToString(current["path"]));
-            string versionsRoot = Path.GetFullPath(Path.Combine(productRoot, "versions"))
-                .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!versionDirectory.StartsWith(versionsRoot, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("current version path is outside the versions directory");
+            string root = Path.GetPathRoot(versionDirectory);
+            if (String.Equals(
+                versionDirectory.TrimEnd(Path.DirectorySeparatorChar),
+                root.TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("current version path cannot be a drive root");
+            if (!Directory.Exists(versionDirectory))
+                throw new DirectoryNotFoundException("current version directory is missing");
 
             string target = Path.Combine(versionDirectory, Path.GetFileName(launcherPath));
             if (!File.Exists(target))

@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import httpx
@@ -14,6 +15,8 @@ from huggingface_hub import HfApi, hf_hub_url, snapshot_download
 from aloepri.catalog.models import ModelCatalogEntry
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_OFFICIAL_ENDPOINT = "https://huggingface.co"
+_MIRROR_ENDPOINT = "https://hf-mirror.com"
 _ALLOW_PATTERNS = (
     "*.json",
     "*.jinja",
@@ -41,6 +44,8 @@ class SnapshotPlan:
     metadata: tuple[SnapshotFile, ...]
     weights: tuple[SnapshotFile, ...]
     remote_code_executed: bool = False
+    endpoint: str = _OFFICIAL_ENDPOINT
+    fallback_endpoints: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +54,8 @@ class SnapshotPlan:
             "metadata": [asdict(item) for item in self.metadata],
             "weights": [asdict(item) for item in self.weights],
             "remote_code_executed": self.remote_code_executed,
+            "endpoint": self.endpoint,
+            "fallback_endpoints": list(self.fallback_endpoints),
         }
 
 
@@ -65,23 +72,60 @@ def plan_pinned_snapshot(
     *,
     token: str | None = None,
     api: HfApi | None = None,
+    endpoint: str = "auto",
 ) -> SnapshotPlan:
     """List a pinned snapshot before downloading any model weight bytes."""
 
     if not _COMMIT.fullmatch(entry.revision):
         raise ValueError(f"catalog revision is not a full commit: {entry.revision}")
-    client = api or HfApi(token=token)
-    info = client.model_info(
-        entry.repo_id,
-        revision=entry.revision,
-        files_metadata=True,
-        token=token,
+    info = None
+    if endpoint not in {"auto", _OFFICIAL_ENDPOINT, _MIRROR_ENDPOINT}:
+        raise ValueError("download endpoint must be auto, huggingface.co, or hf-mirror.com")
+    candidates = (
+        (endpoint,)
+        if endpoint != "auto"
+        else (_OFFICIAL_ENDPOINT, _MIRROR_ENDPOINT)
     )
+    selected_endpoint = candidates[0]
+    last_transport_error: httpx.TransportError | None = None
+    for candidate_index, candidate in enumerate(candidates):
+        client = api or HfApi(endpoint=candidate, token=token)
+        attempts = 3 if len(candidates) == 1 or candidate_index == len(candidates) - 1 else 1
+        for attempt in range(attempts):
+            try:
+                info = client.model_info(
+                    entry.repo_id,
+                    revision=entry.revision,
+                    files_metadata=True,
+                    token=token,
+                )
+                selected_endpoint = candidate
+                break
+            except httpx.TransportError as error:
+                last_transport_error = error
+                if attempt + 1 < attempts:
+                    time.sleep(2**attempt)
+        if info is not None:
+            break
+        if api is not None:
+            break
+    if info is None and last_transport_error is not None:
+        raise ConnectionError(
+            "cannot reach the official Hugging Face endpoint or the configured mirror; "
+            "check DNS, proxy, or network access, then resume the job"
+        ) from last_transport_error
+    assert info is not None
     metadata: list[SnapshotFile] = []
     weights: list[SnapshotFile] = []
     for sibling in info.siblings or ():
         name = str(sibling.rfilename)
-        if name.startswith(".") or ".." in Path(name).parts:
+        relative = PurePosixPath(name)
+        if (
+            not name
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or "\\" in name
+        ):
             raise ValueError(f"unsafe Hugging Face repository path: {name}")
         if name.endswith((".bin", ".pt", ".pth", ".ckpt")):
             continue
@@ -111,6 +155,12 @@ def plan_pinned_snapshot(
         revision=entry.revision,
         metadata=tuple(sorted(metadata, key=lambda item: item.path)),
         weights=tuple(sorted(weights, key=lambda item: item.path)),
+        endpoint=selected_endpoint,
+        fallback_endpoints=(
+            tuple(candidates[candidates.index(selected_endpoint) + 1 :])
+            if endpoint == "auto"
+            else ()
+        ),
     )
 
 
@@ -142,52 +192,117 @@ def download_snapshot_file(
             }
         target.unlink()
     partial = target.with_suffix(target.suffix + ".partial")
-    offset = partial.stat().st_size if partial.exists() else 0
-    headers: dict[str, str] = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    if offset:
-        headers["Range"] = f"bytes={offset}-"
-    owned = client is None
-    http = client or httpx.Client(follow_redirects=True, timeout=None)
-    try:
-        url = hf_hub_url(plan.repo_id, record.path, revision=plan.revision)
-        with http.stream("GET", url, headers=headers) as response:
-            if offset and response.status_code == 200:
-                partial.unlink(missing_ok=True)
-                offset = 0
-            elif response.status_code not in {200, 206}:
-                response.raise_for_status()
-            mode = "ab" if offset else "wb"
-            completed = offset
-            with partial.open(mode) as handle:
-                for block in response.iter_bytes(8 * 1024 * 1024):
-                    if not block:
-                        continue
-                    handle.write(block)
-                    completed += len(block)
-                    if progress is not None:
-                        progress(completed, record.bytes)
-                handle.flush()
-        if record.bytes is not None and partial.stat().st_size != record.bytes:
-            raise OSError(
-                f"download size mismatch for {record.path}: "
-                f"{partial.stat().st_size} != {record.bytes}"
-            )
-        digest = _sha256(partial)
-        if record.sha256 is not None and digest != record.sha256:
-            raise OSError(f"download SHA-256 mismatch for {record.path}")
-        partial.replace(target)
-        return {
-            "path": record.path,
-            "bytes": target.stat().st_size,
-            "sha256": digest,
-            "resumed": offset > 0,
-            "reused": False,
-        }
-    finally:
-        if owned:
-            http.close()
+    if (
+        partial.exists()
+        and record.bytes is not None
+        and partial.stat().st_size > record.bytes
+    ):
+        partial.unlink()
+    resumed = partial.exists() and partial.stat().st_size > 0
+    endpoints = (plan.endpoint, *plan.fallback_endpoints)
+    last_network_error: Exception | None = None
+    endpoint_errors: dict[str, str] = {}
+    downloaded = False
+    for retry_round in range(3):
+        for endpoint in endpoints:
+            for _range_attempt in range(2):
+                offset = partial.stat().st_size if partial.exists() else 0
+                headers: dict[str, str] = {}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                if offset:
+                    headers["Range"] = f"bytes={offset}-"
+                owned = client is None
+                http = client or httpx.Client(
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(connect=10, read=60, write=30, pool=10),
+                )
+                try:
+                    url = hf_hub_url(
+                        plan.repo_id,
+                        record.path,
+                        revision=plan.revision,
+                        endpoint=endpoint,
+                    )
+                    with http.stream("GET", url, headers=headers) as response:
+                        if offset and response.status_code == 200:
+                            partial.unlink(missing_ok=True)
+                            offset = 0
+                            resumed = False
+                        elif offset and response.status_code == 206:
+                            content_range = response.headers.get("content-range", "")
+                            match = re.fullmatch(
+                                r"bytes (\d+)-(\d+)/(\d+|\*)", content_range
+                            )
+                            total_matches = (
+                                record.bytes is None
+                                or (
+                                    match is not None
+                                    and match.group(3) == str(record.bytes)
+                                )
+                            )
+                            if (
+                                match is None
+                                or int(match.group(1)) != offset
+                                or not total_matches
+                            ):
+                                partial.unlink(missing_ok=True)
+                                resumed = False
+                                endpoint_errors[endpoint] = "invalid Content-Range"
+                                continue
+                        elif response.status_code not in {200, 206}:
+                            response.raise_for_status()
+                        mode = "ab" if offset else "wb"
+                        completed = offset
+                        with partial.open(mode) as handle:
+                            for block in response.iter_bytes(8 * 1024 * 1024):
+                                if not block:
+                                    continue
+                                handle.write(block)
+                                completed += len(block)
+                                if progress is not None:
+                                    progress(completed, record.bytes)
+                            handle.flush()
+                    downloaded = True
+                    break
+                except (httpx.TransportError, httpx.HTTPStatusError) as error:
+                    last_network_error = error
+                    endpoint_errors[endpoint] = type(error).__name__
+                    break
+                finally:
+                    if owned:
+                        http.close()
+            if downloaded:
+                break
+        if downloaded:
+            break
+        if retry_round < 2:
+            time.sleep(0.25 * (retry_round + 1))
+    if not downloaded:
+        details = ", ".join(
+            f"{endpoint}: {error_type}"
+            for endpoint, error_type in endpoint_errors.items()
+        )
+        raise ConnectionError(
+            f"download failed after 3 attempts for {record.path}"
+            + (f" ({details})" if details else "")
+        ) from last_network_error
+    if record.bytes is not None and partial.stat().st_size != record.bytes:
+        raise OSError(
+            f"download size mismatch for {record.path}: "
+            f"{partial.stat().st_size} != {record.bytes}"
+        )
+    digest = _sha256(partial)
+    if record.sha256 is not None and digest != record.sha256:
+        raise OSError(f"download SHA-256 mismatch for {record.path}")
+    partial.replace(target)
+    return {
+        "path": record.path,
+        "bytes": target.stat().st_size,
+        "sha256": digest,
+        "resumed": resumed,
+        "reused": False,
+    }
 
 
 def download_planned_metadata(

@@ -243,7 +243,7 @@ def convert(
                     profile,
                     f"{profile.model_root}/uploads/{current_plan.job_id}",
                 )
-            result = pipeline.run_catalog_qwen(
+            result = pipeline.run_catalog_model(
                 current_plan,
                 mode=mode,
                 token=os.environ.get("YINBIAN_HF_TOKEN"),

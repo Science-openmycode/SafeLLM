@@ -409,19 +409,33 @@ def plan_create(
     destination: Annotated[str, typer.Option("--destination")] = "artifacts/converted/model",
     mode: Annotated[str, typer.Option("--mode")] = "direct-deploy",
     device: Annotated[str, typer.Option("--device")] = "auto",
+    download_endpoint: Annotated[str, typer.Option("--download-endpoint")] = "auto",
     server: Annotated[str | None, typer.Option("--server")] = None,
 ) -> None:
     if mode not in {"direct-deploy", "local-only"}:
         raise typer.BadParameter("--mode must be direct-deploy or local-only")
     if device not in {"auto", "cpu", "cuda"}:
         raise typer.BadParameter("--device must be auto, cpu, or cuda")
+    if download_endpoint not in {
+        "auto",
+        "https://huggingface.co",
+        "https://hf-mirror.com",
+    }:
+        raise typer.BadParameter(
+            "--download-endpoint must be auto, https://huggingface.co, or "
+            "https://hf-mirror.com"
+        )
     if mode == "direct-deploy" and server is None:
         raise typer.BadParameter("direct-deploy requires --server")
     path = Path(model)
     plan = (
         build_local_plan(path, output_uri=destination)
         if path.is_dir()
-        else build_catalog_plan(model, output_uri=destination)
+        else build_catalog_plan(
+            model,
+            output_uri=destination,
+            download_endpoint=download_endpoint,
+        )
     )
     selected_device = "cuda:0" if device == "cuda" else device
     plan.output["deployment_mode"] = mode
@@ -523,7 +537,7 @@ def jobs_resume(
             sink = SSHDirectorySink(
                 profile, f"{profile.model_root}/uploads/{current_plan.job_id}"
             )
-        result = ProgressiveConversionPipeline(product).run_catalog_qwen(
+        result = ProgressiveConversionPipeline(product).run_catalog_model(
             current_plan,
             mode=mode,
             token=os.environ.get("YINBIAN_HF_TOKEN"),
@@ -667,8 +681,9 @@ def _ssh_profile(
 
 @servers_app.command("add")
 def servers_add(
-    host: Annotated[str, typer.Option("--host")],
     display_name: Annotated[str, typer.Option("--name")],
+    host: Annotated[str | None, typer.Option("--host")] = None,
+    ssh_command: Annotated[str | None, typer.Option("--ssh-command")] = None,
     port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 22,
     username: Annotated[str, typer.Option("--username")] = "root",
     auth_type: Annotated[str, typer.Option("--auth-type")] = "private_key",
@@ -677,19 +692,32 @@ def servers_add(
     model_root: Annotated[str, typer.Option("--model-root")] = "/opt/yinbian",
     server_id: Annotated[str | None, typer.Option("--server-id")] = None,
 ) -> None:
+    from aloepri.cloud.ssh import parse_ssh_command
+
     if auth_type not in {"private_key", "password"}:
         raise typer.BadParameter("--auth-type must be private_key or password")
     if sudo_mode not in {"root", "noninteractive"}:
         raise typer.BadParameter("--sudo-mode must be root or noninteractive")
     if auth_type == "private_key" and private_key is None:
         raise typer.BadParameter("private-key authentication requires --private-key")
+    try:
+        parsed = parse_ssh_command(ssh_command) if ssh_command else {}
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
+    resolved_host = host or parsed.get("host")
+    if not resolved_host:
+        raise typer.BadParameter("one of --host or --ssh-command is required")
+    resolved_port = port if port != 22 or not parsed else int(parsed.get("port", 22))
+    resolved_username = (
+        username if username != "root" or not parsed else str(parsed.get("username", "root"))
+    )
     record = _product_store().add_server(
         {
             "server_id": server_id or str(uuid.uuid4()),
             "display_name": display_name,
-            "host": host,
-            "port": port,
-            "username": username,
+            "host": str(resolved_host),
+            "port": resolved_port,
+            "username": resolved_username,
             "auth_type": auth_type,
             "private_key_path": None if private_key is None else str(private_key.resolve()),
             "sudo_mode": sudo_mode,

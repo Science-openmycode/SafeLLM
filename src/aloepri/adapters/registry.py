@@ -7,7 +7,11 @@ from aloepri.adapters.base import ModelFamilyAdapter, TensorInventory
 from aloepri.adapters.families import (
     DeepSeekV2FamilyAdapter,
     DeepSeekV3FamilyAdapter,
+    GLM4MoEFamilyAdapter,
+    GLMDenseFamilyAdapter,
+    KimiK2FamilyAdapter,
     Qwen2FamilyAdapter,
+    Qwen3DenseFamilyAdapter,
 )
 from aloepri.catalog.fingerprint import architecture_fingerprint
 from aloepri.catalog.models import AdapterMatch, MatchStatus
@@ -24,13 +28,16 @@ class AdapterRegistry:
             config, set(inventory.names) if inventory is not None else None
         )
         incomplete: AdapterMatch | None = None
+        experimental: AdapterMatch | None = None
         for adapter in self.adapters:
             match = adapter.match(config, inventory, fingerprint)
             if match.status == MatchStatus.SUPPORTED:
                 return match
             if match.status == MatchStatus.INCOMPLETE_CHECKPOINT:
                 incomplete = match
-        return incomplete or AdapterMatch(
+            if match.status == MatchStatus.EXPERIMENTAL:
+                experimental = match
+        return incomplete or experimental or AdapterMatch(
             MatchStatus.INCOMPATIBLE,
             None,
             fingerprint,
@@ -46,5 +53,13 @@ class AdapterRegistry:
 
 def default_adapter_registry() -> AdapterRegistry:
     return AdapterRegistry(
-        (Qwen2FamilyAdapter(), DeepSeekV2FamilyAdapter(), DeepSeekV3FamilyAdapter())
+        (
+            Qwen2FamilyAdapter(),
+            DeepSeekV2FamilyAdapter(),
+            DeepSeekV3FamilyAdapter(),
+            GLMDenseFamilyAdapter(),
+            Qwen3DenseFamilyAdapter(),
+            GLM4MoEFamilyAdapter(),
+            KimiK2FamilyAdapter(),
+        )
     )

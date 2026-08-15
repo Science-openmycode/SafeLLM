@@ -19,7 +19,7 @@ from aloepri.catalog.download import (
 )
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.cloud.ssh import SSHProfile, SSHSession
-from aloepri.conversion.executor import convert_qwen_checkpoint
+from aloepri.conversion.executor import convert_model_checkpoint
 from aloepri.keys.directory_vault import (
     online_key_credential_id,
     seal_online_key_directory,
@@ -58,12 +58,11 @@ class ProgressiveConversionPipeline:
         entry = find_catalog_entry(str(plan.source["repo_id"]))
         if str(plan.source["revision"]) != entry.revision:
             raise ValueError("conversion plan revision differs from the catalog pin")
-        snapshot = plan_pinned_snapshot(entry, token=token)
-        if mode == "direct-deploy" and plan.adapter == "qwen2" and len(snapshot.weights) != 1:
-            raise ValueError(
-                "formal direct-deploy currently requires the validated single-shard "
-                "Qwen2.5-0.5B checkpoint"
-            )
+        snapshot = plan_pinned_snapshot(
+            entry,
+            token=token,
+            endpoint=str(plan.source.get("download_endpoint", "auto")),
+        )
         product_plan = {
             "schema_version": 2,
             "mode": mode,
@@ -87,7 +86,7 @@ class ProgressiveConversionPipeline:
                 )
         return snapshot
 
-    def run_catalog_qwen(
+    def run_catalog_model(
         self,
         plan: ConversionPlan,
         *,
@@ -96,6 +95,7 @@ class ProgressiveConversionPipeline:
         sink: ArtifactSink | None = None,
         clean_source_after_commit: bool = False,
         accept_license: bool = False,
+        offline_key_password: str | None = None,
         progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         snapshot = self.prepare_catalog_job(plan, mode=mode, token=token)
@@ -108,6 +108,7 @@ class ProgressiveConversionPipeline:
         expansion_ratio = 1.35
         disk = estimate_disk(
             mode=mode,
+            total_source_bytes=sum(source_bytes),
             total_private_bytes=int(sum(source_bytes) * expansion_ratio),
             largest_source_shard=max(source_bytes),
             largest_private_shard=int(max(source_bytes) * expansion_ratio),
@@ -220,7 +221,12 @@ class ProgressiveConversionPipeline:
                 )
             self._phase(plan.job_id, ProductPhase.CONVERTING, "checkpoint", progress)
             if not output_root.exists():
-                convert_qwen_checkpoint(plan, output_root, source_root)
+                convert_model_checkpoint(
+                    plan,
+                    output_root,
+                    source_root,
+                    offline_key_password=offline_key_password,
+                )
             key_id = str(plan.output.get("key_id", f"key-{plan.job_id[:8]}"))
             model_id = str(plan.output.get("model_id", output_root.name))
             key_credential_id: str | None = None
@@ -356,6 +362,15 @@ class ProgressiveConversionPipeline:
                 )
             raise
 
+    def run_catalog_qwen(
+        self,
+        plan: ConversionPlan,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Compatibility alias for callers from the Qwen-only product build."""
+
+        return self.run_catalog_model(plan, **kwargs)
+
     def request_pause(self, job_id: str) -> dict[str, Any]:
         job = self.store.get_job(job_id)
         if job["status"] != ProductJobStatus.RUNNING.value:
@@ -379,6 +394,7 @@ class ProgressiveConversionPipeline:
         **extra: Any,
     ) -> None:
         payload = {"phase": phase.value, "item": item, **extra}
+        self.store.update_job_progress(job_id, phase=phase, progress=payload)
         if callback is not None:
             callback(payload)
 

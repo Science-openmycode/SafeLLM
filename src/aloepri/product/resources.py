@@ -26,6 +26,7 @@ class DiskEstimate:
 
 def estimate_disk(
     *,
+    total_source_bytes: int | None = None,
     mode: str,
     total_private_bytes: int,
     largest_source_shard: int,
@@ -35,8 +36,15 @@ def estimate_disk(
 ) -> DiskEstimate:
     if mode not in {"direct-deploy", "local-only"}:
         raise ValueError("mode must be direct-deploy or local-only")
+    source_bytes = largest_source_shard if total_source_bytes is None else total_source_bytes
     working = largest_source_shard + largest_private_shard + tile_bytes
-    raw = working if mode == "direct-deploy" else total_private_bytes + working
+    # The current Qwen converter validates every source shard before loading the
+    # checkpoint, and only uploads after the private checkpoint is complete.
+    # Account for both complete checkpoints instead of using the historical
+    # single-shard direct-deploy shortcut.
+    raw = source_bytes + total_private_bytes + tile_bytes
+    if mode == "local-only":
+        raw = max(raw, total_private_bytes + working)
     required = int(raw * 1.2)
     free = shutil.disk_usage(destination).free
     return DiskEstimate(mode, required, free, free >= required)

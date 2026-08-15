@@ -58,6 +58,11 @@ class ModelCatalogEntry:
     conversion: dict[str, Any]
     runtime: dict[str, Any]
     license: str
+    family_id: str = "unknown"
+    family_name: str = "未分类模型"
+    conversion_ready: bool = False
+    deployment_ready: bool = False
+    support_note: str = ""
     max_stage: str = "inspect"
     visibility: str = "advanced"
     source_url: str | None = None
