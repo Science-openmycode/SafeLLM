@@ -13,6 +13,11 @@ from aloepri.catalog.download import download_pinned_snapshot, find_catalog_entr
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.cloud import MockObjectStore
 from aloepri.conversion.deepseek_streaming import convert_deepseek_checkpoint
+from aloepri.conversion.family_normalization import (
+    normalize_glm_dense_checkpoint,
+    normalize_kimi_k2_text_checkpoint,
+)
+from aloepri.conversion.glm4_moe_streaming import convert_glm4_moe_checkpoint
 from aloepri.conversion.resource_estimate import estimate_deepseek_host_memory
 from aloepri.jobs.store import JobState, JobStore
 from aloepri.keys.encryption import encrypt_offline_key_directory
@@ -227,10 +232,67 @@ def convert_model_checkpoint(
     accidentally sent through another family's converter.
     """
 
-    if plan.adapter == "qwen2":
+    if plan.adapter in {"qwen2", "qwen3_dense"}:
         if offline_key_password is None:
             return _run_qwen(plan, output, source)
         return _run_qwen(plan, output, source, offline_key_password=offline_key_password)
+    if plan.adapter == "glm_dense":
+        normalized = output.parent / f".{output.name}-glm-canonical"
+        normalization = normalize_glm_dense_checkpoint(source, normalized, resume=True)
+        result = _run_qwen(
+            plan,
+            output,
+            normalized,
+            offline_key_password=offline_key_password,
+        )
+        result["normalization"] = normalization
+        return result
+    if plan.adapter == "glm4_moe":
+        full_key, online_key, _ = _key_paths(plan, output)
+        conversion = plan.conversion
+        result = convert_glm4_moe_checkpoint(
+            source_root=source,
+            output_root=output,
+            key_root=full_key,
+            online_key_root=online_key,
+            seed=int(conversion["seed"]),
+            expansion_h=int(conversion["expansion_h"]),
+            coefficient_lambda=float(conversion["lambda"]),
+            resume=True,
+            model_id=str(plan.output.get("model_id", output.name)),
+            key_id=str(plan.output.get("key_id", f"key-{plan.job_id[:8]}")),
+        )
+        _encrypt_offline_if_required(
+            plan,
+            full_key,
+            password=offline_key_password,
+        )
+        return {
+            "adapter": plan.adapter,
+            "output": str(output.resolve()),
+            "result": result,
+        }
+    if plan.adapter == "kimi_k2":
+        source_config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+        if source_config.get("model_type") == "kimi_k25":
+            return _run_deepseek(
+                plan,
+                output,
+                store,
+                source,
+                offline_key_password=offline_key_password,
+            )
+        normalized = output.parent / f".{output.name}-kimi-text-canonical"
+        normalization = normalize_kimi_k2_text_checkpoint(source, normalized, resume=True)
+        result = _run_deepseek(
+            plan,
+            output,
+            store,
+            normalized,
+            offline_key_password=offline_key_password,
+        )
+        result["normalization"] = normalization
+        return result
     if plan.adapter in {"deepseek_v2", "deepseek_v3"}:
         return _run_deepseek(
             plan,
@@ -256,7 +318,13 @@ def _run_deepseek(
     source = source or Path(str(plan.source["path"]))
     full_key, online_key, _ = _key_paths(plan, output)
     conversion = plan.conversion
-    config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    raw_config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    config = (
+        dict(raw_config["text_config"])
+        if raw_config.get("model_type") == "kimi_k25"
+        and isinstance(raw_config.get("text_config"), dict)
+        else raw_config
+    )
     estimate = estimate_deepseek_host_memory(
         config,
         expansion_h=int(conversion["expansion_h"]),
@@ -295,7 +363,7 @@ def _run_deepseek(
         ffn_scale_max=float(conversion["ffn_scale_max"]),
         vocab_permutation=True,
         resume=True,
-        paper_complete=plan.adapter == "deepseek_v3",
+        paper_complete=plan.adapter in {"deepseek_v3", "kimi_k2"},
         expansion_h=int(conversion["expansion_h"]),
         coefficient_lambda=float(conversion["lambda"]),
         alpha_e=float(conversion["alpha_e"]),

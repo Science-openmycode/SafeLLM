@@ -24,7 +24,11 @@ from aloepri.transforms.paper_key_matrix import (
     make_compatible_inverse_family,
     make_paper_key_pair,
 )
-from aloepri.transforms.qwen_structural import transform_qwen_layers
+from aloepri.transforms.qwen_structural import (
+    transform_glm_layers,
+    transform_qwen3_layers,
+    transform_qwen_layers,
+)
 
 
 def get_rope_theta(config: object) -> float:
@@ -267,21 +271,48 @@ def main() -> None:
     )
     structural_key: dict[str, torch.Tensor] = {}
     if args.algorithm2:
-        structural_key = transform_qwen_layers(
-            target,
-            seed=args.seed + 10000,
-            coordinate_mode="dense_orthogonal",
-            ffn_scale_min=args.ffn_scale_min,
-            ffn_scale_max=args.ffn_scale_max,
-            block_beta=args.block_beta,
-            sampling_gamma=args.sampling_gamma,
-            blockperm_mode=args.blockperm_mode,
-            rope_frequency_mode=args.rope_frequency_mode,
-            rope_theta=get_rope_theta(source.config),
-            qk_scale_min=args.qk_scale_min,
-            qk_scale_max=args.qk_scale_max,
-            value_condition_max=args.uvo_condition_max,
-        )
+        source_family = getattr(source.config, "aloepri_source_family", None)
+        if source_family is None and getattr(source.config, "model_type", None) == "qwen3":
+            source_family = "qwen3_dense"
+        if source_family == "glm_dense":
+            structural_key = transform_glm_layers(
+                target,
+                seed=args.seed + 10000,
+                partial_rotary_factor=float(
+                    getattr(source.config, "partial_rotary_factor", 0.5)
+                ),
+                ffn_scale_min=args.ffn_scale_min,
+                ffn_scale_max=args.ffn_scale_max,
+                qk_scale_min=args.qk_scale_min,
+                qk_scale_max=args.qk_scale_max,
+                value_condition_max=args.uvo_condition_max,
+            )
+        elif source_family == "qwen3_dense":
+            structural_key = transform_qwen3_layers(
+                target,
+                seed=args.seed + 10000,
+                ffn_scale_min=args.ffn_scale_min,
+                ffn_scale_max=args.ffn_scale_max,
+                qk_scale_min=args.qk_scale_min,
+                qk_scale_max=args.qk_scale_max,
+                value_condition_max=args.uvo_condition_max,
+            )
+        else:
+            structural_key = transform_qwen_layers(
+                target,
+                seed=args.seed + 10000,
+                coordinate_mode="dense_orthogonal",
+                ffn_scale_min=args.ffn_scale_min,
+                ffn_scale_max=args.ffn_scale_max,
+                block_beta=args.block_beta,
+                sampling_gamma=args.sampling_gamma,
+                blockperm_mode=args.blockperm_mode,
+                rope_frequency_mode=args.rope_frequency_mode,
+                rope_theta=get_rope_theta(source.config),
+                qk_scale_min=args.qk_scale_min,
+                qk_scale_max=args.qk_scale_max,
+                value_condition_max=args.uvo_condition_max,
+            )
     model_id = args.model_id or args.output.name
     key_id = args.key_id or args.key_dir.name
     metadata = {
@@ -327,7 +358,27 @@ def main() -> None:
         "inverse_key_maximum_pq_relative_error_fp64": (inverse_family.maximum_relative_error),
         "paper_alignment": paper_alignment_profile(args),
         "git_commit": _git_commit(),
+        "source_family": (
+            getattr(source.config, "aloepri_source_family", None)
+            or (
+                "qwen3_dense"
+                if getattr(source.config, "model_type", None) == "qwen3"
+                else "qwen2"
+            )
+        ),
     }
+    if metadata["source_family"] == "glm_dense":
+        metadata["attention_block_beta"] = 1
+        metadata["attention_blockperm_mode"] = "glm-partial-rope-commuting-map"
+        metadata["paper_alignment"]["blockperm"] = (
+            "glm-partial-rope-commuting-map-without-frequency-block-permutation"
+        )
+    elif metadata["source_family"] == "qwen3_dense":
+        metadata["attention_block_beta"] = 1
+        metadata["attention_blockperm_mode"] = "qwen3-qk-norm-commuting-map"
+        metadata["paper_alignment"]["blockperm"] = (
+            "qwen3-shared-qk-norm-signed-rope-map"
+        )
     server_metadata = public_metadata(metadata)
     target.config.aloepri = server_metadata
     target.generation_config = source.generation_config

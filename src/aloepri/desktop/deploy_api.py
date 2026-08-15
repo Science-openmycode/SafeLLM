@@ -40,7 +40,12 @@ from aloepri.planning import ConversionPlan, build_catalog_plan, build_local_pla
 from aloepri.product.paths import product_paths
 from aloepri.product.pipeline import ProgressiveConversionPipeline, SSHDirectorySink
 from aloepri.product.resources import inspect_local_resources
-from aloepri.product.state import DeploymentStatus, ProductJobStatus, ProductStore
+from aloepri.product.state import (
+    DeploymentStatus,
+    ProductJobStatus,
+    ProductPhase,
+    ProductStore,
+)
 
 STATIC = Path(__file__).with_name("static") / "deploy"
 
@@ -381,6 +386,30 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
 
         def work() -> None:
             try:
+                if mode == "direct-deploy":
+                    assert server is not None
+                    from aloepri.cloud.hf_deployment import ensure_deployment_host_ready
+
+                    def report_server(stage: str, percent: int, message: str) -> None:
+                        store.update_job_progress(
+                            plan.job_id,
+                            phase=ProductPhase.METADATA,
+                            progress={
+                                "phase": ProductPhase.METADATA.value,
+                                "item": "remote-runtime-preflight",
+                                "remote_stage": stage,
+                                "remote_percent": percent,
+                                "message": message,
+                            },
+                        )
+
+                    asyncio.run(
+                        ensure_deployment_host_ready(
+                            ssh_profile(server, request),
+                            auto_install_runtime=True,
+                            progress=report_server,
+                        )
+                    )
                 ProgressiveConversionPipeline(store).run_catalog_model(
                     plan,
                     mode=mode,

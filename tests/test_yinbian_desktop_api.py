@@ -42,7 +42,13 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         by_id = {item["catalog_id"]: item for item in models.json()}
         assert by_id["deepseek-v2-lite-chat"]["conversion_ready"] is True
         assert by_id["glm-4-9b-chat-hf"]["family_name"] == "GLM"
-        assert by_id["glm-4-9b-chat-hf"]["conversion_ready"] is False
+        assert by_id["glm-4-9b-chat-hf"]["conversion_ready"] is True
+        assert by_id["qwen3-8b"]["conversion_ready"] is True
+        assert by_id["qwen3-8b"]["deployment_ready"] is True
+        assert by_id["glm-4.7-fp8"]["conversion_ready"] is True
+        assert by_id["glm-4.7-fp8"]["deployment_ready"] is True
+        assert by_id["kimi-k2-instruct"]["conversion_ready"] is True
+        assert by_id["kimi-k2-instruct"]["deployment_ready"] is True
         assert by_id["kimi-k2.6"]["family_name"] == "Kimi"
         created = client.post(
             "/api/servers",
@@ -62,19 +68,21 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert rejected.status_code == 403
 
 
-def test_deploy_desktop_rejects_inspection_only_model_conversion(tmp_path: Path) -> None:
+def test_deploy_desktop_builds_kimi_k26_text_backbone_plan(tmp_path: Path) -> None:
     with TestClient(create_deploy_desktop_app(state_path=tmp_path / "state.db")) as client:
         assert client.get("/").status_code == 200
-        rejected = client.post(
+        planned = client.post(
             "/api/plans",
             json={
-                "model": "glm-4-9b-chat-hf",
-                "destination": str(tmp_path / "private-glm"),
+                "model": "kimi-k2.6",
+                "destination": str(tmp_path / "private-kimi"),
                 "mode": "local-only",
             },
         )
-        assert rejected.status_code == 400
-        assert "architecture inspection only" in rejected.json()["detail"]
+        assert planned.status_code == 200
+        payload = planned.json()
+        assert payload["adapter"] == "kimi_k2"
+        assert payload["output"]["deployment_mode"] == "local-only"
 
 
 def test_deploy_desktop_accepts_rental_ssh_command_without_storing_password(

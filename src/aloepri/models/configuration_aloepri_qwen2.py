@@ -18,6 +18,7 @@ class AloePriQwen2Config(Qwen2Config):
         aloepri_rms_mode: str = "paper_kappa",
         aloepri_rms_representation: str = "gram",
         aloepri_attention_compute_dtype: str = "float32",
+        aloepri_rope_style: str = "qwen_half_split",
         aloepri_rope_block_orders: list[list[list[int]]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -54,6 +55,13 @@ class AloePriQwen2Config(Qwen2Config):
                 f"{aloepri_attention_compute_dtype}"
             )
         self.aloepri_attention_compute_dtype = aloepri_attention_compute_dtype
+        if aloepri_rope_style not in {
+            "qwen_half_split",
+            "glm_interleaved_partial",
+            "qwen3_qk_norm",
+        }:
+            raise ValueError(f"unsupported AloePri RoPE style: {aloepri_rope_style}")
+        self.aloepri_rope_style = aloepri_rope_style
         self.aloepri_rope_block_orders = aloepri_rope_block_orders
 
     @classmethod
@@ -71,6 +79,7 @@ class AloePriQwen2Config(Qwen2Config):
         values.pop("model_type", None)
         values.pop("architectures", None)
         values.pop("hidden_size", None)
+        values.pop("head_dim", None)
         values.pop("tie_word_embeddings", None)
         plain_hidden_size = base.hidden_size
         head_dim = getattr(base, "head_dim", plain_hidden_size // base.num_attention_heads)
@@ -82,5 +91,17 @@ class AloePriQwen2Config(Qwen2Config):
             aloepri_rms_mode=rms_mode,
             aloepri_rms_representation=rms_representation,
             aloepri_attention_compute_dtype=attention_compute_dtype,
+            aloepri_rope_style=(
+                "glm_interleaved_partial"
+                if getattr(base, "aloepri_source_family", None) == "glm_dense"
+                else (
+                    "qwen3_qk_norm"
+                    if (
+                        getattr(base, "aloepri_source_family", None) == "qwen3_dense"
+                        or getattr(base, "model_type", None) == "qwen3"
+                    )
+                    else "qwen_half_split"
+                )
+            ),
             **values,
         )

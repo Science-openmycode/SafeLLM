@@ -105,7 +105,9 @@ class ProgressiveConversionPipeline:
         source_bytes = [int(size) for size in known_sizes if size is not None]
         output_root = Path(str(plan.output["uri"]))
         disk_root = _nearest_existing_parent(output_root)
-        expansion_ratio = 1.35
+        expansion_ratio = float(plan.conversion.get("estimated_output_ratio", 1.15))
+        if expansion_ratio < 1.0:
+            raise ValueError("estimated output ratio cannot be below 1.0")
         disk = estimate_disk(
             mode=mode,
             total_source_bytes=sum(source_bytes),

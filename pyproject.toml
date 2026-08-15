@@ -1,6 +1,6 @@
 [project]
 name = "yinbian-zhimo"
-version = "1.0.0"
+version = "1.1.0"
 description = "Weight and token-space transformation tooling for private LLM inference"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
@@ -95,11 +95,14 @@ packages = ["aloepri"]
 module = [
   "aloepri.attacks.mapping",
   "aloepri.conversion.paper_qwen2",
+  "aloepri.conversion.paper_glm4_moe",
   "aloepri.conversion.vocab_checkpoint",
   "aloepri.eval.lm_eval_private",
   "aloepri.models.toy",
   "aloepri.models.configuration_aloepri_qwen2",
+  "aloepri.models.configuration_aloepri_glm4_moe",
   "aloepri.models.modeling_aloepri_qwen2",
+  "aloepri.models.modeling_aloepri_glm4_moe",
   "aloepri.serving.hf_runtime",
   "aloepri.serving.sglang_models",
   "aloepri.serving.sglang_models.*",
@@ -108,6 +111,7 @@ module = [
   "aloepri.transforms.pq",
   "aloepri.transforms.paper_key_matrix",
   "aloepri.transforms.qwen_structural",
+  "aloepri.transforms.glm4_moe",
   "aloepri.transforms.rms_calibration",
 ]
 ignore_errors = true

@@ -9,6 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM
 
 from aloepri.models.modeling_aloepri_deepseek_v3 import register_aloepri_deepseek_v3
+from aloepri.models.modeling_aloepri_glm4_moe import register_aloepri_glm4_moe
 from aloepri.models.modeling_aloepri_qwen2 import register_aloepri_qwen2
 from aloepri.serving.protocol import GenerateRequest, GenerateResponse, Usage
 
@@ -26,6 +27,7 @@ class PrivateHFRuntime:
     ) -> None:
         register_aloepri_qwen2()
         register_aloepri_deepseek_v3()
+        register_aloepri_glm4_moe()
         if device not in {"auto", "cpu", "cuda", "cuda-auto"}:
             raise ValueError(f"unsupported device: {device}")
         actual_device = "cuda" if device == "auto" and torch.cuda.is_available() else device

@@ -102,15 +102,9 @@ class GLMDenseFamilyAdapter(ModelFamilyAdapter):
     ) -> AdapterMatch:
         matches = fingerprint.model_type == "glm" and fingerprint.ffn == "dense"
         return AdapterMatch(
-            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            MatchStatus.SUPPORTED if matches else MatchStatus.INCOMPATIBLE,
             self.adapter_id if matches else None,
             fingerprint,
-            (
-                "GLM dense structure is recognized; fused gate_up conversion and "
-                "private runtime validation are still required",
-            )
-            if matches
-            else (),
         )
 
     def validate_inventory(
@@ -149,12 +143,10 @@ class Qwen3DenseFamilyAdapter(ModelFamilyAdapter):
     ) -> AdapterMatch:
         matches = fingerprint.model_type == "qwen3" and fingerprint.ffn == "dense"
         return AdapterMatch(
-            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            MatchStatus.SUPPORTED if matches else MatchStatus.INCOMPATIBLE,
             self.adapter_id if matches else None,
             fingerprint,
-            ("Qwen3 Q/K normalization requires its own coordinate transform",)
-            if matches
-            else (),
+            (),
         )
 
     def validate_inventory(
@@ -193,32 +185,93 @@ class GLM4MoEFamilyAdapter(ModelFamilyAdapter):
     ) -> AdapterMatch:
         matches = fingerprint.model_type in {"glm4_moe", "glm_moe_dsa"}
         return AdapterMatch(
-            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            MatchStatus.SUPPORTED if matches else MatchStatus.INCOMPATIBLE,
             self.adapter_id if matches else None,
             fingerprint,
-            (
-                "GLM MoE is a separate graph: Q/K norm, partial/decoupled RoPE, "
-                "GLM router, FP8 codec and MTP must be validated together",
-            )
-            if matches
-            else (),
+            (),
         )
 
     def validate_inventory(
         self, config: Mapping[str, Any], inventory: TensorInventory
     ) -> CoverageReport:
-        roots = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
-        recognized = {
-            name
-            for name in inventory.names
-            if name in roots or name.startswith("model.layers.")
-        }
-        return CoverageReport(
-            frozenset(roots),
-            frozenset(recognized),
-            tuple(sorted(roots - set(inventory.names))),
-            (),
-        )
+        expected = {"model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"}
+        optional = set(_GLOBAL_OPTIONAL)
+        main_layers = int(config["num_hidden_layers"])
+        mtp_layers = int(config.get("num_nextn_predict_layers") or 0)
+        for layer in range(main_layers + mtp_layers):
+            prefix = f"model.layers.{layer}"
+            expected.update(
+                {
+                    f"{prefix}.input_layernorm.weight",
+                    f"{prefix}.post_attention_layernorm.weight",
+                    f"{prefix}.self_attn.q_proj.weight",
+                    f"{prefix}.self_attn.k_proj.weight",
+                    f"{prefix}.self_attn.v_proj.weight",
+                    f"{prefix}.self_attn.o_proj.weight",
+                }
+            )
+            if bool(config.get("attention_bias", False)):
+                expected.update(
+                    {
+                        f"{prefix}.self_attn.q_proj.bias",
+                        f"{prefix}.self_attn.k_proj.bias",
+                        f"{prefix}.self_attn.v_proj.bias",
+                    }
+                )
+            if bool(config.get("use_qk_norm", False)):
+                expected.update(
+                    {
+                        f"{prefix}.self_attn.q_norm.weight",
+                        f"{prefix}.self_attn.k_norm.weight",
+                    }
+                )
+            if layer < int(config.get("first_k_dense_replace") or 0):
+                expected.update(
+                    {
+                        f"{prefix}.mlp.gate_proj.weight",
+                        f"{prefix}.mlp.up_proj.weight",
+                        f"{prefix}.mlp.down_proj.weight",
+                    }
+                )
+            else:
+                expected.update(
+                    {
+                        f"{prefix}.mlp.gate.weight",
+                        f"{prefix}.mlp.gate.e_score_correction_bias",
+                        f"{prefix}.mlp.shared_experts.gate_proj.weight",
+                        f"{prefix}.mlp.shared_experts.up_proj.weight",
+                        f"{prefix}.mlp.shared_experts.down_proj.weight",
+                    }
+                )
+                for expert in range(int(config["n_routed_experts"])):
+                    expert_prefix = f"{prefix}.mlp.experts.{expert}"
+                    expected.update(
+                        {
+                            f"{expert_prefix}.gate_proj.weight",
+                            f"{expert_prefix}.up_proj.weight",
+                            f"{expert_prefix}.down_proj.weight",
+                        }
+                    )
+            if layer >= main_layers:
+                expected.update(
+                    {
+                        f"{prefix}.embed_tokens.weight",
+                        f"{prefix}.enorm.weight",
+                        f"{prefix}.hnorm.weight",
+                        f"{prefix}.eh_proj.weight",
+                        f"{prefix}.shared_head.head.weight",
+                        f"{prefix}.shared_head.norm.weight",
+                    }
+                )
+        for name in tuple(expected):
+            if not name.endswith(".weight"):
+                continue
+            scale_name = f"{name.removesuffix('.weight')}.weight_scale"
+            if inventory.dtypes.get(name, "").upper().startswith("F8"):
+                expected.add(scale_name)
+            else:
+                optional.add(scale_name)
+        return _coverage(inventory, expected, optional)
 
 
 class KimiK2FamilyAdapter(ModelFamilyAdapter):
@@ -233,41 +286,78 @@ class KimiK2FamilyAdapter(ModelFamilyAdapter):
         text = config.get("text_config")
         text_type = str(text.get("model_type", "")) if isinstance(text, Mapping) else ""
         matches = fingerprint.model_type in {"kimi_k2", "kimi_k25"} or text_type == "kimi_k2"
+        pure_text = fingerprint.model_type == "kimi_k2" and not isinstance(text, Mapping)
         return AdapterMatch(
-            MatchStatus.EXPERIMENTAL if matches else MatchStatus.INCOMPATIBLE,
+            MatchStatus.SUPPORTED if matches else MatchStatus.INCOMPATIBLE,
             self.adapter_id if matches else None,
             fingerprint,
             (
-                "Kimi-K2 text weights are DeepSeek-like, but the multimodal wrapper, "
-                "language_model prefix and packed INT4 experts require a dedicated codec",
+                "Kimi-K2.6 is converted as its complete text backbone; the vision tower "
+                "is retained outside the private token-ID runtime boundary",
             )
-            if matches
+            if matches and not pure_text
             else (),
         )
 
     def validate_inventory(
         self, config: Mapping[str, Any], inventory: TensorInventory
     ) -> CoverageReport:
-        required_prefixes = (
-            "language_model.model.embed_tokens.",
-            "language_model.model.layers.",
-            "language_model.lm_head.",
+        if config.get("model_type") == "kimi_k2" and not isinstance(
+            config.get("text_config"), Mapping
+        ):
+            normalized = dict(config)
+            normalized["model_type"] = "deepseek_v3"
+            return DeepSeekV3FamilyAdapter().validate_inventory(normalized, inventory)
+        text = config.get("text_config")
+        if not isinstance(text, Mapping):
+            return CoverageReport(frozenset(), frozenset(), ("text_config",), ())
+        normalized_names: set[str] = set()
+        normalized_shapes: dict[str, tuple[int, ...]] = {}
+        normalized_dtypes: dict[str, str] = {}
+        for name in inventory.names:
+            if not name.startswith("language_model."):
+                continue
+            canonical = name.removeprefix("language_model.")
+            if canonical.endswith(".weight_packed"):
+                virtual = f"{canonical.removesuffix('.weight_packed')}.weight"
+                normalized_names.add(virtual)
+                normalized_shapes[virtual] = inventory.shapes[name]
+                scale_name = f"{name.removesuffix('.weight_packed')}.weight_scale"
+                normalized_dtypes[virtual] = inventory.dtypes.get(scale_name, "BF16")
+            elif canonical.endswith((".weight_scale", ".weight_shape")):
+                packed_name = f"{name.rsplit('.', 1)[0]}.weight_packed"
+                if packed_name in inventory.names:
+                    continue
+                normalized_names.add(canonical)
+                normalized_shapes[canonical] = inventory.shapes[name]
+                normalized_dtypes[canonical] = inventory.dtypes[name]
+            else:
+                normalized_names.add(canonical)
+                normalized_shapes[canonical] = inventory.shapes[name]
+                normalized_dtypes[canonical] = inventory.dtypes[name]
+        normalized_config = dict(text)
+        normalized_config["model_type"] = "deepseek_v3"
+        normalized_inventory = TensorInventory(
+            frozenset(normalized_names), normalized_shapes, normalized_dtypes
         )
-        missing = tuple(
-            prefix
-            for prefix in required_prefixes
-            if not any(name.startswith(prefix) for name in inventory.names)
+        text_coverage = DeepSeekV3FamilyAdapter().validate_inventory(
+            normalized_config, normalized_inventory
         )
-        recognized = {
+        allowed_non_text = {
             name
             for name in inventory.names
-            if name.startswith(("language_model.", "vision_tower.", "mm_projector."))
+            if name.startswith(("vision_tower.", "mm_projector."))
         }
+        physical_text = {
+            name for name in inventory.names if name.startswith("language_model.")
+        }
+        recognized = physical_text | allowed_non_text
+        unknown = set(inventory.names) - recognized
         return CoverageReport(
-            frozenset(required_prefixes),
+            frozenset(f"language_model.{name}" for name in text_coverage.expected),
             frozenset(recognized),
-            missing,
-            (),
+            text_coverage.missing,
+            tuple(sorted(unknown | set(text_coverage.unknown))),
         )
 
 

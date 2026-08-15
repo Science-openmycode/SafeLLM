@@ -131,6 +131,156 @@ class AloePriFP64ScoreAttention(Qwen2Attention):
         return self.o_proj(attention_output), attention_weights
 
 
+def apply_glm_interleaved_partial_rope(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply the official GLM interleaved RoPE to its leading rotary subspace."""
+
+    cos = cos.unsqueeze(1)
+    sin = sin.unsqueeze(1)
+    cos = cos[..., : cos.shape[-1] // 2].repeat_interleave(2, dim=-1)
+    sin = sin[..., : sin.shape[-1] // 2].repeat_interleave(2, dim=-1)
+    rotary_dim = cos.shape[-1]
+
+    def rotate_interleaved(value: torch.Tensor) -> torch.Tensor:
+        first = value[..., 0::2]
+        second = value[..., 1::2]
+        return torch.stack((-second, first), dim=-1).flatten(-2)
+
+    query_rotary, query_pass = (
+        query_states[..., :rotary_dim],
+        query_states[..., rotary_dim:],
+    )
+    key_rotary, key_pass = (
+        key_states[..., :rotary_dim],
+        key_states[..., rotary_dim:],
+    )
+    query_embed = query_rotary * cos + rotate_interleaved(query_rotary) * sin
+    key_embed = key_rotary * cos + rotate_interleaved(key_rotary) * sin
+    return (
+        torch.cat((query_embed, query_pass), dim=-1),
+        torch.cat((key_embed, key_pass), dim=-1),
+    )
+
+
+class AloePriGLMAttention(Qwen2Attention):
+    """Canonical GQA attention with GLM's interleaved partial RoPE."""
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None,
+        past_key_values: object | None = None,
+        **_kwargs: object,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_states = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states, key_states = apply_glm_interleaved_partial_rope(
+            query_states,
+            key_states,
+            *position_embeddings,
+        )
+        if past_key_values is not None:
+            key_states, value_states = past_key_values.update(  # type: ignore[attr-defined]
+                key_states,
+                value_states,
+                self.layer_idx,
+            )
+        attention_interface = ALL_ATTENTION_FUNCTIONS.get_interface(
+            self.config._attn_implementation,
+            eager_attention_forward,
+        )
+        attention_output, attention_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,
+        )
+        attention_output = attention_output.reshape(*input_shape, -1).contiguous()
+        return self.o_proj(attention_output), attention_weights
+
+
+class AloePriQwen3Attention(Qwen2Attention):
+    """Qwen3 dense attention, including per-head Q/K RMSNorm."""
+
+    def __init__(self, config: AloePriQwen2Config, layer_idx: int) -> None:
+        super().__init__(config, layer_idx)
+        if not config.attention_bias:
+            self.q_proj = nn.Linear(
+                config.hidden_size,
+                config.num_attention_heads * self.head_dim,
+                bias=False,
+            )
+            self.k_proj = nn.Linear(
+                config.hidden_size,
+                config.num_key_value_heads * self.head_dim,
+                bias=False,
+            )
+            self.v_proj = nn.Linear(
+                config.hidden_size,
+                config.num_key_value_heads * self.head_dim,
+                bias=False,
+            )
+        self.q_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+        self.k_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None,
+        past_key_values: object | None = None,
+        **_kwargs: object,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+        query_states = self.q_norm(
+            self.q_proj(hidden_states).view(hidden_shape)
+        ).transpose(1, 2)
+        key_states = self.k_norm(
+            self.k_proj(hidden_states).view(hidden_shape)
+        ).transpose(1, 2)
+        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states,
+            key_states,
+            *position_embeddings,
+        )
+        if past_key_values is not None:
+            key_states, value_states = past_key_values.update(  # type: ignore[attr-defined]
+                key_states,
+                value_states,
+                self.layer_idx,
+            )
+        attention_interface = ALL_ATTENTION_FUNCTIONS.get_interface(
+            self.config._attn_implementation,
+            eager_attention_forward,
+        )
+        attention_output, attention_weights = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            sliding_window=self.sliding_window,
+        )
+        attention_output = attention_output.reshape(*input_shape, -1).contiguous()
+        return self.o_proj(attention_output), attention_weights
+
+
 def apply_synchronized_block_permuted_rope(
     query_states: torch.Tensor,
     key_states: torch.Tensor,
@@ -287,6 +437,17 @@ class AloePriQwen2ForCausalLM(Qwen2ForCausalLM):
 
     def __init__(self, config: AloePriQwen2Config) -> None:
         super().__init__(config)
+        if config.aloepri_rope_style == "glm_interleaved_partial":
+            for layer in self.model.layers:
+                layer.self_attn.__class__ = AloePriGLMAttention
+        elif config.aloepri_rope_style == "qwen3_qk_norm":
+            for index, layer in enumerate(self.model.layers):
+                replacement = AloePriQwen3Attention(config, index)
+                replacement.load_state_dict(
+                    layer.self_attn.state_dict(),
+                    strict=False,
+                )
+                layer.self_attn = replacement
         if config.aloepri_attention_compute_dtype == "float64":
             for layer in self.model.layers:
                 layer.self_attn.__class__ = AloePriFP64Attention

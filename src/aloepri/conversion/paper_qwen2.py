@@ -154,6 +154,17 @@ def convert_qwen2_modules(
                 )
                 if source_projection.bias is not None:
                     target_projection.bias.copy_(source_projection.bias)
+            for norm_name in ("q_norm", "k_norm"):
+                source_norm = getattr(source_layer.self_attn, norm_name, None)
+                target_norm = getattr(target_layer.self_attn, norm_name, None)
+                if source_norm is None and target_norm is None:
+                    continue
+                if source_norm is None or target_norm is None:
+                    raise TypeError(
+                        f"attention normalization mismatch at layer {layer_index}: "
+                        f"{norm_name}"
+                    )
+                target_norm.weight.copy_(source_norm.weight.detach())
             target_layer.self_attn.o_proj.weight.copy_(
                 transform_output_projection(
                     source_layer.self_attn.o_proj.weight,

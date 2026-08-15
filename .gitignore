@@ -7,6 +7,7 @@
 .superpowers/
 .ssh-askpass.cmd
 .tmp-qwen05b-final-extract/
+.tmp-compressed-tensors-reference/
 __pycache__/
 *.py[cod]
 .env

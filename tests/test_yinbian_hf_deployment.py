@@ -18,6 +18,7 @@ from aloepri.cloud.hf_deployment import (
     _validated_model_root,
     _validated_preuploaded_root,
     _wait_health,
+    validate_remote_capacity,
 )
 from aloepri.cloud.ssh import SSHProfile
 
@@ -128,6 +129,7 @@ def test_native_runtime_package_and_scripts_are_private(tmp_path: Path) -> None:
     start = _native_start_script(request, version, root)
     stop = _native_stop_script(version)
     assert "--host 127.0.0.1 --port 18000" in start
+    assert "--device cuda-auto" in start
     assert "runtime.env" in start
     assert "YINBIAN_BEARER_TOKEN" not in start
     assert "aloepri-runtime.zip" not in start
@@ -147,6 +149,26 @@ def test_native_runtime_package_and_scripts_are_private(tmp_path: Path) -> None:
 def test_deployment_runtime_mode_defaults_to_docker() -> None:
     assert _deployment_runtime_mode({}) == "docker"
     assert _deployment_runtime_mode({"metadata": {"runtime_mode": "native"}}) == "native"
+
+
+def test_remote_capacity_uses_aggregate_gpu_memory_and_disk_headroom() -> None:
+    package_bytes = 10 * 1024**3
+    accepted = validate_remote_capacity(
+        package_bytes,
+        {"disk_free_bytes": 30 * 1024**3, "gpu_free_total_mib": 14_000},
+    )
+    assert accepted["required_disk_bytes"] == 18 * 1024**3
+    assert accepted["required_gpu_mib"] > 12_000
+    with pytest.raises(ValueError, match="GPU memory"):
+        validate_remote_capacity(
+            package_bytes,
+            {"disk_free_bytes": 30 * 1024**3, "gpu_free_total_mib": 8_000},
+        )
+    with pytest.raises(ValueError, match="disk"):
+        validate_remote_capacity(
+            package_bytes,
+            {"disk_free_bytes": 12 * 1024**3, "gpu_free_total_mib": 14_000},
+        )
 
 
 def test_health_check_stops_early_and_redacts_log_after_process_exit() -> None:

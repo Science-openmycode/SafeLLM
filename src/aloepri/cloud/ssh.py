@@ -339,11 +339,18 @@ async def inspect_ubuntu_server(profile: SSHProfile) -> dict[str, Any]:
             hard_failures.append("server profile expects root but SSH user is not root")
         gpu_total_mib = 0
         gpu_free_mib = 0
+        gpu_total_all_mib = 0
+        gpu_free_all_mib = 0
         if nvidia_lines:
             try:
-                gpu_fields = [field.strip() for field in nvidia_lines[0].split(",")]
-                gpu_total_mib = int(gpu_fields[2])
-                gpu_free_mib = int(gpu_fields[3])
+                parsed_gpus = [
+                    [field.strip() for field in line.split(",")]
+                    for line in nvidia_lines
+                ]
+                gpu_total_mib = int(parsed_gpus[0][2])
+                gpu_free_mib = int(parsed_gpus[0][3])
+                gpu_total_all_mib = sum(int(fields[2]) for fields in parsed_gpus)
+                gpu_free_all_mib = sum(int(fields[3]) for fields in parsed_gpus)
             except (IndexError, ValueError):
                 hard_failures.append("GPU memory values could not be parsed")
             else:
@@ -407,6 +414,9 @@ async def inspect_ubuntu_server(profile: SSHProfile) -> dict[str, Any]:
             "resources": {
                 "gpu_total_mib": gpu_total_mib,
                 "gpu_free_mib": gpu_free_mib,
+                "gpu_count": len(nvidia_lines),
+                "gpu_total_all_mib": gpu_total_all_mib,
+                "gpu_free_total_mib": gpu_free_all_mib,
                 "memory_total_bytes": memory_total,
                 "memory_free_bytes": memory_free,
                 "disk_total_bytes": disk_total,
@@ -427,7 +437,7 @@ async def install_runtime_dependencies(
     profile: SSHProfile,
     progress: RuntimeProgress | None = None,
 ) -> dict[str, Any]:
-    """Install Docker and NVIDIA Container Toolkit after explicit caller confirmation."""
+    """Install the selected deployment runtime after explicit caller confirmation."""
 
     def report(stage: str, percent: int, message: str) -> None:
         if progress is not None:

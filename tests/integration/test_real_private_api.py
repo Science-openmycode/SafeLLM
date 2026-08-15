@@ -44,7 +44,9 @@ def test_real_private_api_round_trip() -> None:
         return_dict=True,
     )
     private_input = key.encode_ids(encoded["input_ids"])[0].tolist()
-    runtime = PrivateHFRuntime(private, device="cuda" if torch.cuda.is_available() else "cpu")
+    requested_device = os.environ.get("ALOEPRI_TEST_DEVICE")
+    device = requested_device or ("cuda" if torch.cuda.is_available() else "cpu")
+    runtime = PrivateHFRuntime(private, device=device)
     client = TestClient(create_app(runtime))
     request = {
         "model_id": key.model_id,

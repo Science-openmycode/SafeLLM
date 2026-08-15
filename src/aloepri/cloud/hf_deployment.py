@@ -13,12 +13,62 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from aloepri.cloud.ssh import SSHProfile, SSHSession, inspect_ubuntu_server
+from aloepri.cloud.ssh import (
+    SSHProfile,
+    SSHSession,
+    inspect_ubuntu_server,
+    install_runtime_dependencies,
+)
 from aloepri.packaging import inspect_server_package
 from aloepri.product.state import DeploymentStatus, ProductStore
 
 DEFAULT_IMAGE = "ghcr.io/science-openmycode/yinbian-runtime-hf:1.0.0"
 DeploymentProgress = Callable[[str, int, str], None]
+
+
+async def ensure_deployment_host_ready(
+    profile: SSHProfile,
+    *,
+    auto_install_runtime: bool,
+    progress: DeploymentProgress | None = None,
+) -> dict[str, Any]:
+    """Validate a host and optionally install the agreed native prerequisites."""
+
+    preflight = await inspect_ubuntu_server(profile)
+    if not preflight["pass"] or not preflight["trusted"]:
+        raise ValueError(
+            "server preflight failed or host key is unconfirmed: "
+            f"{preflight['hard_failures']}"
+        )
+    if preflight["warnings"] and auto_install_runtime:
+        if progress is not None:
+            progress("BOOTSTRAPPING_RUNTIME", 84, "正在自动安装服务器基础运行环境")
+        await install_runtime_dependencies(profile, progress=progress)
+        preflight = await inspect_ubuntu_server(profile)
+    if preflight["warnings"]:
+        raise ValueError(f"server runtime dependencies are missing: {preflight['warnings']}")
+    return preflight
+
+
+def validate_remote_capacity(
+    package_bytes: int, resources: dict[str, Any]
+) -> dict[str, int]:
+    if package_bytes <= 0:
+        raise ValueError("server package is empty")
+    required_disk = package_bytes + max(8 * 1024**3, package_bytes // 10)
+    if int(resources["disk_free_bytes"]) < required_disk:
+        raise ValueError(
+            "server disk is insufficient before upload: "
+            f"required={required_disk}, free={resources['disk_free_bytes']}"
+        )
+    required_gpu_mib = round(package_bytes / 1024**2 * 1.08 + 2048)
+    if int(resources["gpu_free_total_mib"]) < required_gpu_mib:
+        raise ValueError(
+            "aggregate free GPU memory is insufficient for this package: "
+            f"required_mib={required_gpu_mib}, "
+            f"free_mib={resources['gpu_free_total_mib']}"
+        )
+    return {"required_disk_bytes": required_disk, "required_gpu_mib": required_gpu_mib}
 
 
 @dataclass(frozen=True)
@@ -36,6 +86,7 @@ class HFDeploymentRequest:
     bearer_token: str | None = None
     bearer_credential_id: str | None = None
     preuploaded_remote_root: str | None = None
+    auto_install_runtime: bool = True
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -79,12 +130,22 @@ class HFDeploymentManager:
         scan = inspect_server_package(request.server_package)
         if not scan["pass"]:
             raise ValueError(f"server package secret scan failed: {scan['findings']}")
-        preflight = await inspect_ubuntu_server(profile)
-        if not preflight["pass"] or not preflight["trusted"] or preflight["warnings"]:
-            raise ValueError(
-                "server preflight failed, host key is unconfirmed, or runtime dependencies "
-                f"are missing: {preflight['hard_failures']} {preflight['warnings']}"
-            )
+        preflight = await ensure_deployment_host_ready(
+            profile,
+            auto_install_runtime=request.auto_install_runtime,
+            progress=progress,
+        )
+        package_bytes = sum(
+            path.stat().st_size
+            for path in request.server_package.rglob("*")
+            if path.is_file()
+        )
+        resources = preflight["resources"]
+        # The native HF runtime does not permit CPU/disk offload because that
+        # silently turns an accepted deployment into an unusably slow service.
+        # Weight bytes are a conservative lower bound; KV cache and allocator
+        # headroom are added explicitly.
+        capacity = validate_remote_capacity(package_bytes, resources)
         runtime_mode = str(preflight.get("runtime_mode", "docker"))
         if runtime_mode not in {"docker", "native"}:
             raise ValueError(f"unsupported remote runtime mode: {runtime_mode}")
@@ -111,6 +172,10 @@ class HFDeploymentManager:
                     ),
                     "real_public_cloud_validated": False,
                     "runtime_mode": runtime_mode,
+                    "gpu_count": resources["gpu_count"],
+                    "gpu_free_total_mib": resources["gpu_free_total_mib"],
+                    "package_bytes": package_bytes,
+                    "required_gpu_mib": capacity["required_gpu_mib"],
                 },
             }
         )
@@ -567,7 +632,7 @@ async def _prepare_native_runtime(
     runtime_root = root / "runtime"
     python = "python3"
     site_packages = runtime_root / "site-packages-cu121-v1"
-    marker = runtime_root / "native-runtime-v4-pinned.ready"
+    marker = runtime_root / "native-runtime-v5-pinned.ready"
     ready = await session.run(["test", "-f", str(marker)])
     if ready["exit_code"] == 0:
         report("NATIVE_RUNTIME_READY", 92, "Python推理依赖已就绪")
@@ -599,7 +664,10 @@ async def _prepare_native_runtime(
             "torch==2.5.1+cu121",
             "accelerate==1.14.0",
             "fastapi==0.141.1",
-            "numpy==2.4.6",
+            # Ubuntu 22.04 images commonly provide Python 3.10.  NumPy 2.2 is
+            # the newest line with compatible wheels; 2.4 made otherwise
+            # healthy rental hosts fail during bootstrap.
+            "numpy==2.2.6",
             "orjson==3.11.9",
             "pydantic==2.13.4",
             "safetensors==0.8.0",
@@ -658,6 +726,7 @@ def _native_start_script(
         "-m aloepri.serving.native_entry "
         f"--model {shlex.quote(str(version_root / 'model'))} "
         f"--host 127.0.0.1 --port {request.remote_port} "
+        "--device cuda-auto "
         '--gpu-memory-fraction 0.80 >"$VERSION_ROOT/server.log" 2>&1 < /dev/null &\n'
         'echo $! >"$PID_FILE"\n'
     )

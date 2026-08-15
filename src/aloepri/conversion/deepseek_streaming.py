@@ -21,6 +21,7 @@ from aloepri.conversion.paper_qwen2 import (
     transform_output_projection,
 )
 from aloepri.formats.deepseek_fp8 import dequantize_fp8, quantize_fp8_bounded
+from aloepri.formats.packed_int4 import dequantize_grouped_int4
 from aloepri.keys.generate import generate_vocab_key
 from aloepri.tensor_io import SafeTensorRangeSink, SafeTensorRangeSource, TensorOutputSpec
 from aloepri.transforms.deepseek import (
@@ -146,17 +147,71 @@ class IndexedSafeTensorSource:
         single_path = self.root / "model.safetensors"
         if index_path.is_file():
             payload = json.loads(index_path.read_text(encoding="utf-8"))
-            self.weight_map = {
+            raw_weight_map = {
                 str(name): str(filename) for name, filename in payload["weight_map"].items()
             }
         elif single_path.is_file():
             with safe_open(single_path, framework="pt", device="cpu") as handle:
-                self.weight_map = {str(name): single_path.name for name in handle.keys()}
+                raw_weight_map = {str(name): single_path.name for name in handle.keys()}
         else:
             raise FileNotFoundError(f"no safetensors checkpoint found under {self.root}")
         config_path = self.root / "config.json"
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        quantization = config.get("quantization_config") or {}
+        raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.raw_config = raw_config
+        self.kimi_k25_text_view = (
+            raw_config.get("model_type") == "kimi_k25"
+            and isinstance(raw_config.get("text_config"), dict)
+        )
+        self._physical_names: dict[str, str] = {}
+        self._packed_int4: dict[str, tuple[str, str, str]] = {}
+        if self.kimi_k25_text_view:
+            self.config = dict(raw_config["text_config"])
+            self.config.update(
+                {
+                    "model_type": "deepseek_v3",
+                    "architectures": ["DeepseekV3ForCausalLM"],
+                    "aloepri_source_family": "kimi_k25_text",
+                    "aloepri_source_model_type": "kimi_k25",
+                    "aloepri_multimodal_boundary": "text-only-private-runtime",
+                }
+            )
+            self.config.pop("auto_map", None)
+            prefix = "language_model."
+            public: dict[str, str] = {}
+            raw_names = set(raw_weight_map)
+            for physical_name, filename in raw_weight_map.items():
+                if not physical_name.startswith(prefix):
+                    continue
+                canonical = physical_name.removeprefix(prefix)
+                if canonical.endswith(".weight_packed"):
+                    base = canonical.removesuffix(".weight_packed")
+                    scale = f"{physical_name.removesuffix('.weight_packed')}.weight_scale"
+                    shape = f"{physical_name.removesuffix('.weight_packed')}.weight_shape"
+                    if scale not in raw_names or shape not in raw_names:
+                        raise ValueError(
+                            f"Kimi packed INT4 tensor is missing scale/shape: {physical_name}"
+                        )
+                    virtual = f"{base}.weight"
+                    public[virtual] = filename
+                    self._physical_names[virtual] = physical_name
+                    self._packed_int4[virtual] = (physical_name, scale, shape)
+                elif canonical.endswith((".weight_scale", ".weight_shape")):
+                    packed = f"{physical_name.rsplit('.', 1)[0]}.weight_packed"
+                    if packed in raw_names:
+                        continue
+                    public[canonical] = filename
+                    self._physical_names[canonical] = physical_name
+                else:
+                    public[canonical] = filename
+                    self._physical_names[canonical] = physical_name
+            self.weight_map = public
+            self._raw_weight_map = raw_weight_map
+        else:
+            self.config = raw_config
+            self.weight_map = raw_weight_map
+            self._raw_weight_map = raw_weight_map
+            self._physical_names = {name: name for name in raw_weight_map}
+        quantization = self.config.get("quantization_config") or {}
         self.fp8_block = (
             str(quantization.get("quant_method", "")).lower() == "fp8"
             and tuple(quantization.get("weight_block_size", ())) == (128, 128)
@@ -180,7 +235,7 @@ class IndexedSafeTensorSource:
         except KeyError as error:
             raise ValueError(f"unsupported range-read dtype: {dtype}") from error
 
-    def _raw(self, name: str) -> Tensor:
+    def _raw_physical(self, name: str) -> Tensor:
         if self.range_source is not None:
             metadata = self.range_source.metadata(name)
             dtype = self._torch_dtype(metadata.dtype)
@@ -194,11 +249,25 @@ class IndexedSafeTensorSource:
                 start = offset // element_size
                 output[start : start + tile.numel()].copy_(tile)
             return output.reshape(metadata.shape)
-        filename = self.weight_map[name]
+        filename = self._raw_weight_map[name]
         with safe_open(self.root / filename, framework="pt", device="cpu") as handle:
             return cast(Tensor, handle.get_tensor(name))
 
+    def _raw(self, name: str) -> Tensor:
+        return self._raw_physical(self._physical_names.get(name, name))
+
     def get(self, name: str) -> Tensor:
+        packed = self._packed_int4.get(name)
+        if packed is not None:
+            packed_name, scale_name, shape_name = packed
+            shape_tensor = self._raw_physical(shape_name)
+            original_shape = tuple(int(item) for item in shape_tensor.tolist())
+            return dequantize_grouped_int4(
+                self._raw_physical(packed_name),
+                self._raw_physical(scale_name),
+                original_shape,
+                group_size=32,
+            )
         tensor = self._raw(name)
         scale_name = f"{name.removesuffix('.weight')}.weight_scale_inv"
         if self.fp8_block and name.endswith(".weight") and scale_name in self.weight_map:
@@ -208,13 +277,19 @@ class IndexedSafeTensorSource:
     def get_dim0(self, name: str, index: int) -> Tensor:
         """Read one contiguous leading-dimension slice without loading the tensor."""
 
+        if name in self._packed_int4:
+            tensor = self.get(name)
+            if index < 0 or index >= tensor.shape[0]:
+                raise ValueError(f"invalid leading-dimension slice for {name}: {index}")
+            return tensor[index].clone()
         if self.fp8_block:
             raise ValueError(
                 "fused FP8 expert tensors are unsupported; normalize to individual experts"
             )
+        physical_name = self._physical_names.get(name, name)
         path = self.root / self.weight_map[name]
         range_source = SafeTensorRangeSource(path)
-        metadata = range_source.metadata(name)
+        metadata = range_source.metadata(physical_name)
         if len(metadata.shape) < 2 or index < 0 or index >= metadata.shape[0]:
             raise ValueError(f"invalid leading-dimension slice for {name}: {index}")
         elements = 1
@@ -222,7 +297,9 @@ class IndexedSafeTensorSource:
             elements *= dimension
         dtype = self._torch_dtype(metadata.dtype)
         byte_length = elements * torch.empty((), dtype=dtype).element_size()
-        payload = range_source.read_range(name, index * byte_length, byte_length)
+        payload = range_source.read_range(
+            physical_name, index * byte_length, byte_length
+        )
         return torch.frombuffer(bytearray(payload), dtype=dtype).reshape(metadata.shape[1:]).clone()
 
     def decoded_dtype(self, name: str) -> torch.dtype:
@@ -231,6 +308,14 @@ class IndexedSafeTensorSource:
         cached = self._decoded_dtype_cache.get(name)
         if cached is not None:
             return cached
+        packed = self._packed_int4.get(name)
+        if packed is not None:
+            scale_metadata = SafeTensorRangeSource(
+                self.root / self._raw_weight_map[packed[1]]
+            ).metadata(packed[1])
+            dtype = self._torch_dtype(scale_metadata.dtype)
+            self._decoded_dtype_cache[name] = dtype
+            return dtype
         scale_name = f"{name.removesuffix('.weight')}.weight_scale_inv"
         if self.fp8_block and name.endswith(".weight") and scale_name in self.weight_map:
             dtype = torch.float32
@@ -241,9 +326,13 @@ class IndexedSafeTensorSource:
         return dtype
 
     def shape(self, name: str) -> tuple[int, ...]:
+        packed = self._packed_int4.get(name)
+        if packed is not None:
+            return tuple(int(item) for item in self._raw_physical(packed[2]).tolist())
         filename = self.weight_map[name]
         with safe_open(self.root / filename, framework="pt", device="cpu") as handle:
-            return tuple(handle.get_slice(name).get_shape())
+            physical_name = self._physical_names.get(name, name)
+            return tuple(handle.get_slice(physical_name).get_shape())
 
 
 def _layer_prefix(layer_index: int) -> str:
@@ -418,7 +507,7 @@ def _validate_shapes(
 
 def audit_deepseek_checkpoint(source_root: Path) -> dict[str, Any]:
     source = IndexedSafeTensorSource(source_root)
-    config = json.loads((source.root / "config.json").read_text(encoding="utf-8"))
+    config = dict(source.config)
     if config.get("model_type") not in {
         "deepseek_v2",
         "deepseek_v3",
@@ -577,12 +666,17 @@ def _write_private_configs(
     key_id: str,
     paper_complete: dict[str, Any] | None = None,
     config_overrides: dict[str, Any] | None = None,
+    canonical_config: dict[str, Any] | None = None,
 ) -> None:
     for name in ("config.json", "generation_config.json"):
         path = source / name
         if not path.is_file():
             continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = (
+            dict(canonical_config)
+            if name == "config.json" and canonical_config is not None
+            else json.loads(path.read_text(encoding="utf-8"))
+        )
         if tau is not None:
             for field in (
                 "bos_token_id",
@@ -697,7 +791,7 @@ def convert_deepseek_checkpoint(
         online_key_root.name if online_key_root is not None else key_root.name
     )
     config_path = source.root / "config.json"
-    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config = dict(source.config)
     receipt_path = source.root / "download_receipt.json"
     normalization_path = source.root / "normalization_manifest.json"
     source_revision = "local-unpinned"
@@ -1562,6 +1656,7 @@ def convert_deepseek_checkpoint(
             )
             if key in config
         },
+        canonical_config=config if source.kimi_k25_text_view else None,
     )
     architecture_key_path = key_partial / "offline_master_key.safetensors"
     offline_tensors: dict[str, Tensor] = {}

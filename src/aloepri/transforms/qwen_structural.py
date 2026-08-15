@@ -145,6 +145,187 @@ def make_attention_key(
     )
 
 
+def make_glm_attention_key(
+    num_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    *,
+    partial_rotary_factor: float,
+    seed: int,
+    qk_scale_min: float = 1.0,
+    qk_scale_max: float = 1.0,
+    value_condition_max: float | None = None,
+) -> AttentionKey:
+    """Create Q/K maps which commute with GLM's interleaved partial RoPE."""
+
+    if num_heads % num_kv_heads:
+        raise ValueError("num_heads must be divisible by num_kv_heads")
+    rotary_dim = int(head_dim * partial_rotary_factor)
+    if rotary_dim <= 0 or rotary_dim > head_dim or rotary_dim % 2:
+        raise ValueError("GLM rotary dimension must be positive, even and <= head_dim")
+    if qk_scale_min <= 0 or qk_scale_max < qk_scale_min:
+        raise ValueError("Q/K scales require 0 < min <= max")
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    group_size = num_heads // num_kv_heads
+    kv_order = torch.randperm(num_kv_heads, generator=generator)
+    within = torch.randperm(group_size, generator=generator)
+    q_order = torch.cat(
+        [within + old_kv * group_size for old_kv in kv_order.tolist()]
+    )
+    q_maps = []
+    k_maps = []
+    value_maps = []
+    recorded_scales = []
+    log_min, log_max = math.log(qk_scale_min), math.log(qk_scale_max)
+    pass_dim = head_dim - rotary_dim
+    for group in range(num_kv_heads):
+        rotary_map = torch.zeros((rotary_dim, rotary_dim), dtype=torch.float64)
+        rotary_scales = (
+            torch.empty(rotary_dim // 2, dtype=torch.float64)
+            .uniform_(log_min, log_max, generator=generator)
+            .exp()
+        )
+        for pair in range(rotary_dim // 2):
+            angle = torch.rand((), generator=generator, dtype=torch.float64) * (2 * math.pi)
+            cosine, sine = torch.cos(angle), torch.sin(angle)
+            start = pair * 2
+            rotary_map[start, start] = cosine
+            rotary_map[start, start + 1] = -sine
+            rotary_map[start + 1, start] = sine
+            rotary_map[start + 1, start + 1] = cosine
+        rotary_scale = torch.diag(rotary_scales.repeat_interleave(2))
+        q_rotary = rotary_map @ rotary_scale
+        k_rotary = rotary_map @ torch.diag(rotary_scales.reciprocal().repeat_interleave(2))
+        if pass_dim:
+            random = torch.randn(
+                (pass_dim, pass_dim),
+                generator=generator,
+                dtype=torch.float64,
+            )
+            pass_orthogonal, _ = torch.linalg.qr(random)
+            pass_scales = (
+                torch.empty(pass_dim, dtype=torch.float64)
+                .uniform_(log_min, log_max, generator=generator)
+                .exp()
+            )
+            q_pass = pass_orthogonal @ torch.diag(pass_scales)
+            k_pass = pass_orthogonal @ torch.diag(pass_scales.reciprocal())
+            q_map = torch.block_diag(q_rotary, q_pass)
+            k_map = torch.block_diag(k_rotary, k_pass)
+            recorded_scales.append(torch.cat((rotary_scales.repeat_interleave(2), pass_scales)))
+        else:
+            q_map, k_map = q_rotary, k_rotary
+            recorded_scales.append(rotary_scales.repeat_interleave(2))
+        q_maps.append(q_map)
+        k_maps.append(k_map)
+        value_generator = torch.Generator(device="cpu").manual_seed(seed + 2000 + group)
+        for _ in range(10_000):
+            candidate = (
+                torch.randn(
+                    (head_dim, head_dim),
+                    generator=value_generator,
+                    dtype=torch.float64,
+                )
+                / math.sqrt(head_dim)
+            )
+            if (
+                value_condition_max is None
+                or float(torch.linalg.cond(candidate)) <= value_condition_max
+            ):
+                value_maps.append(candidate)
+                break
+        else:
+            raise RuntimeError("failed to sample a numerically admissible Gaussian U_vo")
+    identity_blocks = torch.arange(rotary_dim // 2).repeat(num_kv_heads, 1)
+    return AttentionKey(
+        q_order=q_order,
+        kv_order=kv_order,
+        rope_maps=torch.stack(q_maps),
+        q_maps=torch.stack(q_maps),
+        k_maps=torch.stack(k_maps),
+        block_orders=identity_blocks,
+        qk_scales=torch.stack(recorded_scales),
+        value_maps=torch.stack(value_maps),
+    )
+
+
+def make_qwen3_attention_key(
+    num_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    *,
+    seed: int,
+    qk_scale_min: float = 1.0,
+    qk_scale_max: float = 1.0,
+    value_condition_max: float | None = None,
+) -> AttentionKey:
+    """Build a transform compatible with Qwen3's shared Q/K RMSNorm.
+
+    Independent dense Q/K maps are invalid because Qwen3 shares one norm
+    weight vector across all heads.  A synchronized signed RoPE-pair map and
+    one reciprocal Q/K scalar preserve that normalization exactly.
+    """
+
+    if num_heads % num_kv_heads:
+        raise ValueError("num_heads must be divisible by num_kv_heads")
+    if head_dim % 2:
+        raise ValueError("Qwen3 RoPE head dimension must be even")
+    if qk_scale_min <= 0 or qk_scale_max < qk_scale_min:
+        raise ValueError("Q/K scales require 0 < min <= max")
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    group_size = num_heads // num_kv_heads
+    kv_order = torch.randperm(num_kv_heads, generator=generator)
+    q_order = torch.cat(
+        [
+            torch.randperm(group_size, generator=generator) + old_kv * group_size
+            for old_kv in kv_order.tolist()
+        ]
+    )
+    pair_signs = (
+        torch.randint(0, 2, (head_dim // 2,), generator=generator) * 2 - 1
+    ).to(torch.float64)
+    shared_map = torch.diag(torch.cat((pair_signs, pair_signs)))
+    scalar = float(
+        torch.empty((), dtype=torch.float64)
+        .uniform_(math.log(qk_scale_min), math.log(qk_scale_max), generator=generator)
+        .exp()
+    )
+    q_maps = shared_map.repeat(num_kv_heads, 1, 1)
+    k_maps = shared_map.repeat(num_kv_heads, 1, 1)
+    value_maps = []
+    for group in range(num_kv_heads):
+        value_generator = torch.Generator(device="cpu").manual_seed(seed + 2000 + group)
+        for _ in range(10_000):
+            candidate = (
+                torch.randn(
+                    (head_dim, head_dim),
+                    generator=value_generator,
+                    dtype=torch.float64,
+                )
+                / math.sqrt(head_dim)
+            )
+            if (
+                value_condition_max is None
+                or float(torch.linalg.cond(candidate)) <= value_condition_max
+            ):
+                value_maps.append(candidate)
+                break
+        else:
+            raise RuntimeError("failed to sample a numerically admissible Gaussian U_vo")
+    identity_blocks = torch.arange(head_dim // 2).repeat(num_kv_heads, 1)
+    scales = torch.full((num_kv_heads, head_dim // 2), scalar, dtype=torch.float64)
+    return AttentionKey(
+        q_order=q_order,
+        kv_order=kv_order,
+        rope_maps=q_maps,
+        q_maps=q_maps,
+        k_maps=k_maps,
+        block_orders=identity_blocks,
+        qk_scales=scales,
+        value_maps=torch.stack(value_maps),
+    )
+
+
 def make_dynamic_rope_block_order(
     head_dim: int,
     *,
@@ -385,4 +566,103 @@ def transform_qwen_layers(
         from aloepri.models.modeling_aloepri_qwen2 import install_synchronized_blockperm
 
         install_synchronized_blockperm(model)
+    return tensors
+
+
+def transform_glm_layers(
+    model: nn.Module,
+    *,
+    seed: int,
+    partial_rotary_factor: float,
+    ffn_scale_min: float = 1.0,
+    ffn_scale_max: float = 1.0,
+    qk_scale_min: float = 1.0,
+    qk_scale_max: float = 1.0,
+    value_condition_max: float | None = None,
+) -> dict[str, Tensor]:
+    """Apply Algorithm 2 using maps valid for GLM's RoPE decomposition."""
+
+    tensors: dict[str, Tensor] = {}
+    for index, layer in enumerate(model.model.layers):
+        attention = layer.self_attn
+        key = make_glm_attention_key(
+            attention.config.num_attention_heads,
+            attention.config.num_key_value_heads,
+            attention.head_dim,
+            partial_rotary_factor=partial_rotary_factor,
+            seed=seed + index * 10,
+            qk_scale_min=qk_scale_min,
+            qk_scale_max=qk_scale_max,
+            value_condition_max=value_condition_max,
+        )
+        transform_attention(attention, key)
+        ffn_order, ffn_scales = transform_mlp_scaled(
+            layer.mlp,
+            seed=seed + index * 10 + 1,
+            scale_min=ffn_scale_min,
+            scale_max=ffn_scale_max,
+        )
+        prefix = f"layers.{index}"
+        tensors[f"{prefix}.q_order"] = key.q_order
+        tensors[f"{prefix}.kv_order"] = key.kv_order
+        tensors[f"{prefix}.q_maps"] = key.q_maps
+        tensors[f"{prefix}.k_maps"] = key.k_maps
+        tensors[f"{prefix}.qk_scales"] = key.qk_scales
+        tensors[f"{prefix}.value_maps"] = key.value_maps
+        tensors[f"{prefix}.ffn_order"] = ffn_order
+        tensors[f"{prefix}.ffn_scales"] = ffn_scales.to(torch.float32)
+    return tensors
+
+
+def transform_qwen3_layers(
+    model: nn.Module,
+    *,
+    seed: int,
+    ffn_scale_min: float = 1.0,
+    ffn_scale_max: float = 1.0,
+    qk_scale_min: float = 1.0,
+    qk_scale_max: float = 1.0,
+    value_condition_max: float | None = None,
+) -> dict[str, Tensor]:
+    """Apply Algorithm 2 maps while preserving Qwen3 Q/K RMSNorm."""
+
+    tensors: dict[str, Tensor] = {}
+    for index, layer in enumerate(model.model.layers):
+        attention = layer.self_attn
+        if not hasattr(attention, "q_norm") or not hasattr(attention, "k_norm"):
+            raise TypeError(f"Qwen3 layer {index} is missing q_norm/k_norm")
+        key = make_qwen3_attention_key(
+            attention.config.num_attention_heads,
+            attention.config.num_key_value_heads,
+            attention.head_dim,
+            seed=seed + index * 10,
+            qk_scale_min=qk_scale_min,
+            qk_scale_max=qk_scale_max,
+            value_condition_max=value_condition_max,
+        )
+        transform_attention(attention, key)
+        absolute_map = key.q_maps[0].abs().to(attention.q_norm.weight.dtype)
+        scalar = key.qk_scales[0, 0].to(attention.q_norm.weight.dtype)
+        with torch.no_grad():
+            attention.q_norm.weight.copy_(
+                (attention.q_norm.weight.detach() @ absolute_map) * scalar
+            )
+            attention.k_norm.weight.copy_(
+                (attention.k_norm.weight.detach() @ absolute_map) / scalar
+            )
+        ffn_order, ffn_scales = transform_mlp_scaled(
+            layer.mlp,
+            seed=seed + index * 10 + 1,
+            scale_min=ffn_scale_min,
+            scale_max=ffn_scale_max,
+        )
+        prefix = f"layers.{index}"
+        tensors[f"{prefix}.q_order"] = key.q_order
+        tensors[f"{prefix}.kv_order"] = key.kv_order
+        tensors[f"{prefix}.q_maps"] = key.q_maps
+        tensors[f"{prefix}.k_maps"] = key.k_maps
+        tensors[f"{prefix}.qk_scales"] = key.qk_scales
+        tensors[f"{prefix}.value_maps"] = key.value_maps
+        tensors[f"{prefix}.ffn_order"] = ffn_order
+        tensors[f"{prefix}.ffn_scales"] = ffn_scales.to(torch.float32)
     return tensors

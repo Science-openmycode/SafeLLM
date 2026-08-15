@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +163,14 @@ def build_catalog_plan(
         "uri": output_uri,
         "dtype": entry.conversion["output_dtype"],
         "model_id": entry.catalog_id,
+        "estimated_private_bytes": (
+            None
+            if entry.expected_bytes is None
+            else int(
+                entry.expected_bytes
+                * float(entry.conversion.get("estimated_output_ratio", 1.15))
+            )
+        ),
     }
     if output["type"] == "s3":
         if staging_path is None:
@@ -203,6 +211,22 @@ def build_catalog_plan(
     )
     conversion.conversion["expansion_h"] = int(entry.conversion["expansion_h"])
     conversion.conversion["dtype"] = str(entry.conversion["output_dtype"])
+    conversion.conversion["estimated_output_ratio"] = float(
+        entry.conversion.get("estimated_output_ratio", 1.15)
+    )
+    conversion = replace(
+        conversion,
+        resources=replace(
+            conversion.resources,
+            host_memory_budget_gib=float(
+                entry.conversion.get(
+                    "minimum_host_ram_gib",
+                    conversion.resources.host_memory_budget_gib,
+                )
+            ),
+            tile_mib=int(entry.conversion.get("tile_mib", conversion.resources.tile_mib)),
+        ),
+    )
     return conversion
 
 

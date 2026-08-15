@@ -67,12 +67,20 @@ def test_catalog_groups_multiple_architecture_families_without_overclaiming() ->
     assert entries["deepseek-v2-lite-chat"].family_name == "DeepSeek MLA / MoE"
     assert entries["deepseek-v2-lite-chat"].conversion_ready is True
     assert entries["glm-4-9b-chat-hf"].family_name == "GLM"
-    assert entries["glm-4-9b-chat-hf"].conversion_ready is False
+    assert entries["glm-4-9b-chat-hf"].conversion_ready is True
+    assert entries["glm-4-9b-chat-hf"].deployment_ready is True
+    assert entries["qwen3-8b"].conversion_ready is True
+    assert entries["qwen3-8b"].deployment_ready is True
+    assert entries["glm-4.7-fp8"].conversion_ready is True
+    assert entries["glm-4.7-fp8"].deployment_ready is True
+    assert entries["kimi-k2-instruct"].conversion_ready is True
+    assert entries["kimi-k2-instruct"].deployment_ready is True
     assert entries["kimi-k2.6"].family_name == "Kimi"
-    assert entries["kimi-k2.6"].conversion_ready is False
+    assert entries["kimi-k2.6"].conversion_ready is True
+    assert entries["kimi-k2.6"].deployment_ready is True
 
 
-def test_new_families_are_structurally_recognized_but_not_conversion_ready() -> None:
+def test_new_families_have_explicit_conversion_readiness() -> None:
     registry = default_adapter_registry()
     glm = registry.detect(
         {
@@ -81,7 +89,7 @@ def test_new_families_are_structurally_recognized_but_not_conversion_ready() -> 
             "num_key_value_heads": 2,
         }
     )
-    assert glm.status == MatchStatus.EXPERIMENTAL
+    assert glm.status == MatchStatus.SUPPORTED
     assert glm.adapter_id == "glm_dense"
     kimi = registry.detect(
         {
@@ -93,8 +101,17 @@ def test_new_families_are_structurally_recognized_but_not_conversion_ready() -> 
             },
         }
     )
-    assert kimi.status == MatchStatus.EXPERIMENTAL
+    assert kimi.status == MatchStatus.SUPPORTED
     assert kimi.adapter_id == "kimi_k2"
+    kimi_text = registry.detect(
+        {
+            "model_type": "kimi_k2",
+            "n_routed_experts": 384,
+            "num_nextn_predict_layers": 0,
+        }
+    )
+    assert kimi_text.status == MatchStatus.SUPPORTED
+    assert kimi_text.adapter_id == "kimi_k2"
 
 
 def test_local_qwen_plan_reads_headers_without_loading_model(tmp_path: Path) -> None:
