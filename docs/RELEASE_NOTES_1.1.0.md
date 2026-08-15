@@ -4,6 +4,8 @@
 - 新增 GLM Dense 融合 SwiGLU 规范化。
 - 新增 GLM4-MoE 的 FP8、专家路由、部分 RoPE 和 MTP 权重转换。
 - 新增 Kimi-K2 零拷贝规范化及 Kimi-K2.6 官方 group INT4 文本骨干转换。
+- 模型目录扩展到 54 个固定版本：Qwen2/2.5 7 个、Qwen3 Dense 6 个、DeepSeek 17 个、GLM 16 个、Kimi 8 个。
+- 部署界面使用“模型族 → 参数量与版本”两级选择，模型目录按族折叠；后台进度刷新不再重建模型控件。
 - Qwen2.5、Qwen3、DeepSeek、GLM、Kimi 在界面中按族分组。
 - 直接部署会自动预检并补齐服务器基础环境。
 - 部署前按私有包大小检查远端磁盘和全部 GPU 总空闲显存。

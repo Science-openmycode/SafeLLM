@@ -8,6 +8,7 @@ const pages = {
 };
 const sessionServerSecrets = new Map();
 let catalogModels = [];
+let modelCatalogRendered = false;
 let refreshing = false;
 
 function escapeHtml(value) {
@@ -203,15 +204,20 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const [dashboard, models] = await Promise.all([api("/api/dashboard"), api("/api/models")]);
+    const dashboard = await api("/api/dashboard");
+    const models = catalogModels.length ? catalogModels : await api("/api/models");
     window.dashboard = dashboard;
     catalogModels = models;
     const activeJobs = dashboard.jobs.filter((job) => !["CANCELLED", "COMPLETED"].includes(job.status));
     const terminalJobs = dashboard.jobs.filter((job) => ["CANCELLED", "COMPLETED"].includes(job.status));
-    const selectedFamily = document.querySelector("#wizard-family").value;
-    const selectedModel = document.querySelector("#wizard-model").value;
-    renderFamilyOptions(models, selectedFamily);
-    renderModelOptions(models, document.querySelector("#wizard-family").value, selectedModel);
+    if (!modelCatalogRendered) {
+      const selectedFamily = document.querySelector("#wizard-family").value;
+      const selectedModel = document.querySelector("#wizard-model").value;
+      renderFamilyOptions(models, selectedFamily);
+      renderModelOptions(models, document.querySelector("#wizard-family").value, selectedModel);
+      document.querySelector("#model-grid").innerHTML = renderModelCatalog(models);
+      modelCatalogRendered = true;
+    }
     updateModelNote();
     const metrics = [
       ["可用模型", dashboard.models],
@@ -223,7 +229,6 @@ async function refresh() {
     document.querySelector("#recent-jobs").innerHTML = activeJobs.length ? jobRows(activeJobs.slice(0, 4)) : '<div class="empty">暂无需要处理的任务，请点击“新建任务”开始</div>';
     document.querySelector("#job-list").innerHTML = activeJobs.length ? jobRows(activeJobs) : '<div class="empty">暂无进行中的任务</div>';
     document.querySelector("#terminal-job-list").innerHTML = terminalJobs.length ? jobRows(terminalJobs) : '<div class="empty">暂无已结束任务</div>';
-    document.querySelector("#model-grid").innerHTML = renderModelCatalog(models);
     document.querySelector("#wizard-server").innerHTML = '<option value="">请选择服务器</option>' + dashboard.servers.map((server) => `<option value="${escapeHtml(server.server_id)}">${escapeHtml(server.display_name)} · ${escapeHtml(server.username)}@${escapeHtml(server.host)}:${server.port}</option>`).join("");
     document.querySelector("#server-list").innerHTML = dashboard.servers.length ? dashboard.servers.map((server) => {
       const operation = latestServerOperation(server.server_id);
@@ -520,5 +525,12 @@ document.querySelector("#key-restore-form").addEventListener("submit", async (ev
   } catch (error) { toast(error.message); }
 });
 
+function autoRefresh() {
+  const userIsChoosing = document.querySelector("form:not([hidden])")
+    || document.querySelector(".card:hover")
+    || document.querySelector(".model-family:hover");
+  if (!userIsChoosing) refresh();
+}
+
 refresh();
-setInterval(refresh, 1000);
+setInterval(autoRefresh, 2000);

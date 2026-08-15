@@ -26,6 +26,17 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         models = client.get("/api/models")
         assert models.status_code == 200
         assert models.json()[0]["catalog_id"]
+        family_counts: dict[str, int] = {}
+        for item in models.json():
+            family = item["family_name"]
+            family_counts[family] = family_counts.get(family, 0) + 1
+        assert family_counts == {
+            "DeepSeek MLA / MoE": 17,
+            "GLM": 16,
+            "Kimi": 8,
+            "Qwen2 / Qwen2.5": 7,
+            "Qwen3": 6,
+        }
         qwen_models = {
             item["catalog_id"]: item for item in models.json() if item["adapter_id"] == "qwen2"
         }
@@ -51,6 +62,9 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert by_id["kimi-k2-instruct"]["conversion_ready"] is True
         assert by_id["kimi-k2-instruct"]["deployment_ready"] is True
         assert by_id["kimi-k2.6"]["family_name"] == "Kimi"
+        assert by_id["deepseek-v3-1-terminus"]["adapter_id"] == "deepseek_v3"
+        assert by_id["glm-4.5-air-fp8"]["adapter_id"] == "glm4_moe"
+        assert by_id["kimi-k2-thinking"]["adapter_id"] == "kimi_k2"
         created = client.post(
             "/api/servers",
             json={

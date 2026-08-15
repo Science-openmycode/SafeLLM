@@ -119,6 +119,213 @@ def _qwen3_dense_entry(
     )
 
 
+def _deepseek_entry(
+    *,
+    repo_name: str,
+    revision: str,
+    generation: str,
+    parameter_summary: str,
+    expected_bytes: int | None,
+) -> ModelCatalogEntry:
+    v3 = generation == "v3"
+    adapter_id = "deepseek_v3" if v3 else "deepseek_v2"
+    dtype = "fp8_e4m3fn" if v3 else "bfloat16"
+    source: dict[str, object] = {"format": "safetensors", "dtype": dtype}
+    if v3:
+        source["weight_block_size"] = [128, 128]
+    return ModelCatalogEntry(
+        catalog_id=repo_name.lower().replace(".", "-").replace("_", "-"),
+        display_name=repo_name,
+        repo_id=f"deepseek-ai/{repo_name}",
+        revision=revision,
+        adapter_id=adapter_id,
+        status="family-compatible",
+        parameter_summary=parameter_summary,
+        expected_bytes=expected_bytes,
+        capabilities={
+            "gqa": False,
+            "mla": True,
+            "moe": True,
+            "mtp": v3,
+            "fp8": v3,
+        },
+        source=source,
+        conversion={
+            "output_dtype": dtype,
+            "expansion_h": 128 if v3 else 0,
+            "tile_mib": 256,
+            "minimum_host_ram_gib": 32,
+        },
+        runtime={"preferred": "hf", "fallback": "sglang"},
+        license="DeepSeek Model License",
+        family_id=adapter_id,
+        family_name="DeepSeek MLA / MoE",
+        conversion_ready=True,
+        deployment_ready=True,
+        support_note=(
+            "官方同架构版本已接入统一MLA/MoE转换器；下载后仍会逐张量检查并在目标服务器强制加载冒烟"
+        ),
+        max_stage="chat-after-smoke",
+        visibility="family",
+        source_url=f"https://huggingface.co/deepseek-ai/{repo_name}",
+    )
+
+
+def _glm_dense_entry(
+    *, repo_name: str, revision: str, parameter_summary: str, expected_bytes: int
+) -> ModelCatalogEntry:
+    return ModelCatalogEntry(
+        catalog_id=repo_name.lower(),
+        display_name=repo_name,
+        repo_id=f"zai-org/{repo_name}",
+        revision=revision,
+        adapter_id="glm_dense",
+        status="family-compatible",
+        parameter_summary=parameter_summary,
+        expected_bytes=expected_bytes,
+        capabilities={"gqa": True, "mla": False, "moe": False, "mtp": False},
+        source={"format": "safetensors", "dtype": "bfloat16"},
+        conversion={
+            "output_dtype": "bfloat16",
+            "expansion_h": 128,
+            "tile_mib": 256,
+            "minimum_host_ram_gib": 48 if expected_bytes < 40_000_000_000 else 128,
+        },
+        runtime={"preferred": "hf", "fallback": "vllm"},
+        license="GLM-4 License",
+        family_id="glm_dense",
+        family_name="GLM",
+        conversion_ready=True,
+        deployment_ready=True,
+        support_note="GLM Dense同族转换路径已接入；下载后严格校验融合FFN、GQA和Partial RoPE布局",
+        max_stage="chat-after-smoke",
+        visibility="family",
+        source_url=f"https://huggingface.co/zai-org/{repo_name}",
+    )
+
+
+def _glm_moe_entry(
+    *,
+    repo_name: str,
+    revision: str,
+    parameter_summary: str,
+    expected_bytes: int,
+    fp8: bool,
+) -> ModelCatalogEntry:
+    return ModelCatalogEntry(
+        catalog_id=repo_name.lower(),
+        display_name=repo_name,
+        repo_id=f"zai-org/{repo_name}",
+        revision=revision,
+        adapter_id="glm4_moe",
+        status="family-compatible",
+        parameter_summary=parameter_summary,
+        expected_bytes=expected_bytes,
+        capabilities={"gqa": True, "mla": False, "moe": True, "mtp": True, "fp8": fp8},
+        source={"format": "safetensors", "dtype": "fp8" if fp8 else "bfloat16"},
+        conversion={
+            "output_dtype": "bfloat16",
+            "expansion_h": 128,
+            "tile_mib": 256,
+            "minimum_host_ram_gib": 64,
+            "estimated_output_ratio": 2.2 if fp8 else 1.15,
+        },
+        runtime={"preferred": "hf", "fallback": "sglang"},
+        license="MIT",
+        family_id="glm4_moe",
+        family_name="GLM",
+        conversion_ready=True,
+        deployment_ready=True,
+        support_note="GLM4-MoE同族权重已接入FP8/BF16、专家路由、Partial RoPE和MTP转换路径",
+        max_stage="chat-after-smoke",
+        visibility="family",
+        source_url=f"https://huggingface.co/zai-org/{repo_name}",
+    )
+
+
+def _kimi_text_entry(
+    *,
+    repo_name: str,
+    revision: str,
+    parameter_summary: str,
+    expected_bytes: int,
+    multimodal_int4: bool = False,
+) -> ModelCatalogEntry:
+    return ModelCatalogEntry(
+        catalog_id=repo_name.lower(),
+        display_name=repo_name,
+        repo_id=f"moonshotai/{repo_name}",
+        revision=revision,
+        adapter_id="kimi_k2",
+        status="text-private-supported" if multimodal_int4 else "family-compatible",
+        parameter_summary=parameter_summary,
+        expected_bytes=expected_bytes,
+        capabilities={
+            "gqa": False,
+            "mla": True,
+            "moe": True,
+            "mtp": False,
+            "fp8": not multimodal_int4,
+            "int4": multimodal_int4,
+            "multimodal": multimodal_int4,
+        },
+        source={
+            "format": "safetensors",
+            "dtype": "mixed_int4_bfloat16" if multimodal_int4 else "fp8_e4m3fn",
+        },
+        conversion={
+            "output_dtype": "bfloat16" if multimodal_int4 else "fp8_e4m3fn",
+            "expansion_h": 128,
+            "tile_mib": 64 if multimodal_int4 else 256,
+            "minimum_host_ram_gib": 32,
+            "mode": "text-backbone" if multimodal_int4 else "text",
+            "estimated_output_ratio": 4.2 if multimodal_int4 else 1.15,
+        },
+        runtime={"preferred": "hf", "fallback": "sglang" if not multimodal_int4 else None},
+        license="Modified MIT",
+        family_id="kimi_k2",
+        family_name="Kimi",
+        conversion_ready=True,
+        deployment_ready=True,
+        support_note=(
+            "多模态外壳中的完整文本骨干已接入INT4解码；当前私有协议只开放文本问答"
+            if multimodal_int4
+            else "Kimi-K2同族MLA、384专家与FP8权重已接入统一转换路径"
+        ),
+        max_stage="chat-after-smoke",
+        visibility="family",
+        source_url=f"https://huggingface.co/moonshotai/{repo_name}",
+    )
+
+
+def _moonlight_entry(
+    *, repo_name: str, revision: str, parameter_summary: str
+) -> ModelCatalogEntry:
+    return ModelCatalogEntry(
+        catalog_id=repo_name.lower(),
+        display_name=repo_name,
+        repo_id=f"moonshotai/{repo_name}",
+        revision=revision,
+        adapter_id="deepseek_v3",
+        status="family-compatible",
+        parameter_summary=parameter_summary,
+        expected_bytes=32_000_000_000,
+        capabilities={"gqa": False, "mla": True, "moe": True, "mtp": False, "fp8": False},
+        source={"format": "safetensors", "dtype": "bfloat16"},
+        conversion={"output_dtype": "bfloat16", "expansion_h": 0, "tile_mib": 256},
+        runtime={"preferred": "hf", "fallback": "sglang"},
+        license="MIT",
+        family_id="kimi_moonlight",
+        family_name="Kimi",
+        conversion_ready=True,
+        deployment_ready=True,
+        support_note="官方配置为DeepSeek-V3式MLA/MoE文本模型，复用统一DeepSeek转换器并执行严格张量门禁",
+        max_stage="chat-after-smoke",
+        visibility="family",
+        source_url=f"https://huggingface.co/moonshotai/{repo_name}",
+    )
+
+
 class ModelCatalog:
     def __init__(self, entries: Iterable[ModelCatalogEntry]) -> None:
         self._entries = {entry.catalog_id: entry for entry in entries}
@@ -182,6 +389,104 @@ def builtin_catalog() -> ModelCatalog:
                 revision="495f39366efef23836d0cfae4fbe635880d2be31",
                 expected_bytes=145_412_519_312,
                 license_id="Qwen Research License",
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V2-Lite",
+                revision="604d5664dddd88a0433dbae533b7fe9472482de0",
+                generation="v2",
+                parameter_summary="16B total / 2.4B activated · Base",
+                expected_bytes=31_413_526_576,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V2",
+                revision="4461458f186c35188585855f28f77af5661ad489",
+                generation="v2",
+                parameter_summary="236B total / 21B activated · Base",
+                expected_bytes=472_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V2-Chat",
+                revision="8e3f5f6c2226787e41ba3e9283a06389d178c926",
+                generation="v2",
+                parameter_summary="236B total / 21B activated · Chat",
+                expected_bytes=472_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V2-Chat-0628",
+                revision="5d09e272c2b223830f4e84359cd9dd047a5d7c78",
+                generation="v2",
+                parameter_summary="236B total / 21B activated · Chat 0628",
+                expected_bytes=472_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V2.5",
+                revision="c85b5ede86f2a598af339624cac5723861e557ed",
+                generation="v2",
+                parameter_summary="236B total / 21B activated · V2.5",
+                expected_bytes=472_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V2.5-1210",
+                revision="6f134cbe88cb9284a8ce696e8ac8eefd0bc24ede",
+                generation="v2",
+                parameter_summary="236B total / 21B activated · V2.5 1210",
+                expected_bytes=472_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V3-Base",
+                revision="afb92e1fa402c2be2a9eb085312bb02e0384d6c7",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · Base",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V3-0324",
+                revision="e9b33add76883f293d6bf61f6bd89b497e80e335",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · 0324",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V3.1",
+                revision="c0781d039fb7a1ba2abc4add0bdc293e92d2b8db",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · V3.1",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V3.1-Base",
+                revision="d3d4eafdc470de44bbf6f0a74f852eb522357be8",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · V3.1 Base",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-V3.1-Terminus",
+                revision="19510d6dc61f79dbd925bd51ee8a9081c509a4b6",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · Terminus",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-R1",
+                revision="56d4cbbb4d29f4355bab4b9a39ccb717a14ad5ad",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · Reasoning",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-R1-Zero",
+                revision="72234287cbc67dbf474d911359ae32b61a2fdc7e",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · R1 Zero",
+                expected_bytes=689_000_000_000,
+            ),
+            _deepseek_entry(
+                repo_name="DeepSeek-R1-0528",
+                revision="4236a6af538feda4548eca9ab308586007567f52",
+                generation="v3",
+                parameter_summary="671B total / 37B activated · R1 0528",
+                expected_bytes=689_000_000_000,
             ),
             ModelCatalogEntry(
                 catalog_id="openseek-small-v1-sft",
@@ -262,6 +567,99 @@ def builtin_catalog() -> ModelCatalog:
                 max_stage="chat-after-smoke",
                 visibility="developer",
                 source_url="https://huggingface.co/deepseek-ai/DeepSeek-V3",
+            ),
+            _glm_dense_entry(
+                repo_name="glm-4-9b-chat-1m-hf",
+                revision="c6e9cd8555fe037a26d9113f14258f2600023690",
+                parameter_summary="9B Dense · Chat · 1M context",
+                expected_bytes=18_800_000_000,
+            ),
+            _glm_dense_entry(
+                repo_name="GLM-4-9B-0414",
+                revision="645b8482494e31b6b752272bf7f7f273ef0f3caf",
+                parameter_summary="9B Dense · 0414",
+                expected_bytes=18_800_000_000,
+            ),
+            _glm_dense_entry(
+                repo_name="GLM-4-32B-Base-0414",
+                revision="7675abea82951aaaedeb19014bab4e8f88c2d7a5",
+                parameter_summary="32B Dense · Base 0414",
+                expected_bytes=65_000_000_000,
+            ),
+            _glm_dense_entry(
+                repo_name="GLM-4-32B-0414",
+                revision="077b5c2f5c43bd3239fd605a0600229e8facbd4a",
+                parameter_summary="32B Dense · Chat 0414",
+                expected_bytes=65_000_000_000,
+            ),
+            _glm_dense_entry(
+                repo_name="GLM-Z1-32B-0414",
+                revision="8eb2858992c1f749e2a6d4075455decc2484722d",
+                parameter_summary="32B Dense · Reasoning 0414",
+                expected_bytes=65_000_000_000,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.5-Air-Base",
+                revision="888c873d4eca81f28d0ef420aa2d96457c28b959",
+                parameter_summary="106B total / 12B activated · Base BF16",
+                expected_bytes=212_000_000_000,
+                fp8=False,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.5-Air",
+                revision="a24ceef6ce4f3536971efe9b778bdaa1bab18daa",
+                parameter_summary="106B total / 12B activated · BF16",
+                expected_bytes=212_000_000_000,
+                fp8=False,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.5-Air-FP8",
+                revision="f9a9c5acf5e543cd24d659a056c5dbcda78ffcfc",
+                parameter_summary="106B total / 12B activated · FP8",
+                expected_bytes=113_000_000_000,
+                fp8=True,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.5-Base",
+                revision="922a0cee7f137cf3b64c186f0bee77882e4a4e80",
+                parameter_summary="355B total / 32B activated · Base BF16",
+                expected_bytes=716_000_000_000,
+                fp8=False,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.5",
+                revision="cbb2c7cfb52fa128a9660cb1a7a78e017899e115",
+                parameter_summary="355B total / 32B activated · BF16",
+                expected_bytes=716_000_000_000,
+                fp8=False,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.5-FP8",
+                revision="8cc290ee4c7cbfa38d3a2db9bd0b7371773ece81",
+                parameter_summary="355B total / 32B activated · FP8",
+                expected_bytes=358_000_000_000,
+                fp8=True,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.6",
+                revision="be72194883d968d7923a07e2f61681ea9a2826d1",
+                parameter_summary="357B total / 32B activated · BF16",
+                expected_bytes=714_000_000_000,
+                fp8=False,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.6-FP8",
+                revision="c064d336a8d0b0f59071f77eafdcdfca40f4b54c",
+                parameter_summary="357B total / 32B activated · FP8",
+                expected_bytes=357_000_000_000,
+                fp8=True,
+            ),
+            _glm_moe_entry(
+                repo_name="GLM-4.7",
+                revision="602d01efcdd332c5238ca4bcede555defbe83eb7",
+                parameter_summary="358B total / 32B activated · BF16",
+                expected_bytes=716_000_000_000,
+                fp8=False,
             ),
             ModelCatalogEntry(
                 catalog_id="glm-4-9b-chat-hf",
@@ -382,6 +780,41 @@ def builtin_catalog() -> ModelCatalog:
                 size="32B",
                 revision="9216db5781bf21249d130ec9da846c4624c16137",
                 expected_bytes=65_524_246_528,
+            ),
+            _moonlight_entry(
+                repo_name="Moonlight-16B-A3B",
+                revision="476b36a473d4467f94469414bef6cee75c9c8172",
+                parameter_summary="16B total / 3B activated · Base",
+            ),
+            _moonlight_entry(
+                repo_name="Moonlight-16B-A3B-Instruct",
+                revision="4e735b07a89f73647dfab71ab91b840f362ede5b",
+                parameter_summary="16B total / 3B activated · Instruct",
+            ),
+            _kimi_text_entry(
+                repo_name="Kimi-K2-Base",
+                revision="ce72df012259dcc55d945e890f815fe7ef69159c",
+                parameter_summary="1T total / 32B activated · Base FP8",
+                expected_bytes=1_026_408_235_864,
+            ),
+            _kimi_text_entry(
+                repo_name="Kimi-K2-Instruct-0905",
+                revision="ac6c49f04883bd0a0598b790693a72061c676629",
+                parameter_summary="1T total / 32B activated · Instruct 0905 FP8",
+                expected_bytes=1_026_408_235_864,
+            ),
+            _kimi_text_entry(
+                repo_name="Kimi-K2-Thinking",
+                revision="a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55",
+                parameter_summary="1T total / 32B activated · Thinking FP8",
+                expected_bytes=1_026_408_235_864,
+            ),
+            _kimi_text_entry(
+                repo_name="Kimi-K2.5",
+                revision="4d01dfe0332d63057c186e0b262165819efb6611",
+                parameter_summary="1.1T multimodal · INT4 text backbone",
+                expected_bytes=595_000_000_000,
+                multimodal_int4=True,
             ),
             ModelCatalogEntry(
                 catalog_id="kimi-k2-instruct",
