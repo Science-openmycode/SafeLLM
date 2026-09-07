@@ -15,10 +15,14 @@ from safetensors.torch import load_file
 from torch import Tensor
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
+from aloepri.client.streaming_decode import (
+    IncrementalTokenDecoder,
+    build_byte_level_token_table,
+)
 from aloepri.privacy.rmdp import M1Result, perturb_tokens_m1
 from aloepri.serving.private_text import decode_private_id_text, encode_private_id_text
 from aloepri.serving.protocol import GenerateResponse, GenerateTextResponse
-from aloepri.transforms.vocab import decode_private, encode_private, validate_permutation
+from aloepri.transforms.vocab import validate_permutation
 
 
 def _verify_key_manifest(path: Path) -> None:
@@ -64,6 +68,15 @@ class TokenKey:
     tau: Tensor
     inverse_tau: Tensor
 
+    def __post_init__(self) -> None:
+        """Validate the online key once, before it enters the request hot path."""
+
+        validate_permutation(self.tau)
+        validate_permutation(self.inverse_tau, self.tau.numel())
+        expected = torch.arange(self.tau.numel(), dtype=self.tau.dtype)
+        if not torch.equal(self.inverse_tau[self.tau], expected):
+            raise ValueError("tau and inverse_tau are not mutual inverses")
+
     @classmethod
     def from_directory(cls, path: Path) -> TokenKey:
         _verify_key_manifest(path)
@@ -76,11 +89,6 @@ class TokenKey:
         tensors = load_file(path / metadata.get("vocab_file", default_vocab_file), device="cpu")
         tau = tensors["tau"]
         inverse_tau = tensors["inverse_tau"]
-        validate_permutation(tau)
-        validate_permutation(inverse_tau, tau.numel())
-        expected = torch.arange(tau.numel(), dtype=tau.dtype)
-        if not torch.equal(inverse_tau[tau], expected):
-            raise ValueError("tau and inverse_tau are not mutual inverses")
         return cls(
             model_id=metadata["model_id"],
             key_id=metadata["key_id"],
@@ -89,10 +97,29 @@ class TokenKey:
         )
 
     def encode_ids(self, plain_ids: Tensor) -> Tensor:
-        return encode_private(plain_ids, self.tau)
+        if plain_ids.numel() and (
+            int(plain_ids.min()) < 0 or int(plain_ids.max()) >= self.tau.numel()
+        ):
+            raise ValueError("input_ids contains an out-of-vocabulary id")
+        return self.tau.to(plain_ids.device)[plain_ids]
 
     def decode_ids(self, private_ids: Tensor) -> Tensor:
-        return decode_private(private_ids, self.inverse_tau)
+        if private_ids.numel() and (
+            int(private_ids.min()) < 0
+            or int(private_ids.max()) >= self.inverse_tau.numel()
+        ):
+            raise ValueError("output_ids contains an out-of-vocabulary id")
+        return self.inverse_tau.to(private_ids.device)[private_ids]
+
+    def encode_id(self, plain_id: int) -> int:
+        if not 0 <= plain_id < self.tau.numel():
+            raise ValueError("input token id is outside the vocabulary")
+        return int(self.tau[plain_id])
+
+    def decode_id(self, private_id: int) -> int:
+        if not 0 <= private_id < self.inverse_tau.numel():
+            raise ValueError("output token id is outside the vocabulary")
+        return int(self.inverse_tau[private_id])
 
     def decode_stream(self, private_ids: Iterable[int]) -> list[int]:
         values = torch.tensor(list(private_ids), dtype=torch.int64)
@@ -108,7 +135,7 @@ class PrivateGeneration:
     tpot_ms: float
     input_tokens: int
     output_tokens: int
-    privacy: dict[str, float | int | str] | None = None
+    privacy: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +146,7 @@ class PrivateStreamChunk:
     text: str
     elapsed_ms: float
     accumulated_text: str = ""
-    privacy: dict[str, float | int | str] | None = None
+    privacy: dict[str, Any] | None = None
 
 
 class PrivateInferenceClient:
@@ -145,6 +172,10 @@ class PrivateInferenceClient:
             raise ValueError("remote AloePri servers require HTTPS")
         self.tokenizer = tokenizer
         self.key = key
+        token_bytes = build_byte_level_token_table(tokenizer)
+        if token_bytes is not None and len(token_bytes) < key.tau.numel():
+            token_bytes += (None,) * (key.tau.numel() - len(token_bytes))
+        self._stream_token_bytes = token_bytes
         if transport_mode not in {"token_ids", "encoded_text"}:
             raise ValueError("transport_mode must be 'token_ids' or 'encoded_text'")
         self.transport_mode = transport_mode
@@ -442,8 +473,12 @@ class PrivateInferenceClient:
         *,
         privacy: dict[str, float | int | str] | None,
     ) -> Iterable[PrivateStreamChunk]:
-        decoded_ids: list[int] = []
-        accumulated_text = ""
+        decoder = IncrementalTokenDecoder(
+            self.tokenizer,
+            token_bytes=self._stream_token_bytes,
+            build_if_missing=False,
+            skip_special_tokens=True,
+        )
         expected_request_id: str | None = None
         expected_sequence_no = 0
         done = False
@@ -475,24 +510,15 @@ class PrivateInferenceClient:
                         f"SSE sequence mismatch: expected {expected_sequence_no}, got {sequence_no}"
                     )
                 private_id = self._event_private_id(event)
-                output_id = int(
-                    self.key.decode_ids(torch.tensor([private_id], dtype=torch.int64))[0]
-                )
-                decoded_ids.append(output_id)
-                decoded_text = self._decode(decoded_ids)
-                text_delta = (
-                    decoded_text[len(accumulated_text) :]
-                    if decoded_text.startswith(accumulated_text)
-                    else decoded_text
-                )
-                accumulated_text = decoded_text
+                output_id = self.key.decode_id(private_id)
+                text_delta = decoder.push(output_id)
                 yield PrivateStreamChunk(
                     request_id=request_id,
                     sequence_no=sequence_no,
                     output_id=output_id,
                     text=text_delta,
                     elapsed_ms=float(event["elapsed_ms"]),
-                    accumulated_text=accumulated_text,
+                    accumulated_text=decoder.text,
                     privacy=privacy,
                 )
                 expected_sequence_no += 1

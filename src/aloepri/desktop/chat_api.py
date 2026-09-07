@@ -13,9 +13,23 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from aloepri.client.tee_sdk import (
+    NativeGmSession,
+    SoftwareSimSession,
+    TeeDeployment,
+    TeeGmSession,
+    TeeInferenceClient,
+)
 from aloepri.cloud.ssh import SSHProfile
 from aloepri.cloud.tunnel import TunnelRegistry
-from aloepri.demo.app import DemoGateway, DemoGenerator, DemoRequest, DemoResponse, create_demo_app
+from aloepri.demo.app import (
+    DemoGateway,
+    DemoGenerator,
+    DemoRequest,
+    DemoResponse,
+    TeeDemoGateway,
+    create_demo_app,
+)
 from aloepri.desktop.chat_store import ChatHistoryStore
 from aloepri.keys.directory_vault import materialize_online_key_directory
 from aloepri.keys.vault import CredentialVault
@@ -47,7 +61,7 @@ class HistorySnapshot(StrictModel):
 
 class RoutingGateway(DemoGenerator):
     def __init__(self) -> None:
-        self._gateway: DemoGateway | None = None
+        self._gateway: DemoGenerator | None = None
         self._deployment_id: str | None = None
         self._lock = threading.Lock()
 
@@ -55,7 +69,7 @@ class RoutingGateway(DemoGenerator):
     def deployment_id(self) -> str | None:
         return self._deployment_id
 
-    def select(self, deployment_id: str, gateway: DemoGateway) -> None:
+    def select(self, deployment_id: str, gateway: DemoGenerator) -> None:
         with self._lock:
             previous = self._gateway
             self._gateway = gateway
@@ -63,7 +77,7 @@ class RoutingGateway(DemoGenerator):
         if previous is not None:
             previous.close()
 
-    def _selected(self) -> DemoGateway:
+    def _selected(self) -> DemoGenerator:
         with self._lock:
             if self._gateway is None:
                 raise RuntimeError("请先选择并连接一个健康部署")
@@ -134,19 +148,25 @@ def _desktop_bootstrap(initial_deployment_id: str | None = None) -> str:
     const topbar = document.querySelector(".topbar > div");
     const select = document.createElement("select");
     select.id = "deployment-selector";
-    select.setAttribute("aria-label", "选择健康部署");
+    select.setAttribute("aria-label", "选择部署和安全模式");
     select.style.cssText = "margin-left:14px;border:1px solid #ddd;border-radius:8px;padding:7px;background:white";
     const response = await fetch("/api/desktop/deployments");
     const deployments = await response.json();
-    if (!deployments.length) {
+    const healthy = deployments.filter(item => item.status === "HEALTHY");
+    if (!deployments.length || !healthy.length) {
       select.innerHTML = '<option>没有可用部署</option>';
       select.disabled = true;
       document.querySelector("#prompt").disabled = true;
       document.querySelector("#submit").disabled = true;
     } else {
-      select.innerHTML = deployments.map(item => `<option value="${item.deployment_id}">${item.model_id} · ${item.version_id}</option>`).join("");
+      const modeName = item => item.metadata?.security_mode === "tee_gm" ? "TEE国密" : "词表置换";
+      const option = item => `<option value="${item.deployment_id}" ${item.status === "HEALTHY" ? "" : "disabled"}>${modeName(item)} · ${item.metadata?.target_type === "local" ? "本机" : "远程"} · ${item.model_id} · ${item.status}</option>`;
+      const permutation = deployments.filter(item => item.metadata?.security_mode !== "tee_gm");
+      const tee = deployments.filter(item => item.metadata?.security_mode === "tee_gm");
+      select.innerHTML = `${permutation.length ? `<optgroup label="旧版 · 词表置换">${permutation.map(option).join("")}</optgroup>` : ""}${tee.length ? `<optgroup label="新版 · TEE国密">${tee.map(option).join("")}</optgroup>` : ""}`;
       const wanted = rawGet.call(localStorage, selectedKey);
-      if (wanted && deployments.some(item => item.deployment_id === wanted)) select.value = wanted;
+      if (wanted && healthy.some(item => item.deployment_id === wanted)) select.value = wanted;
+      else select.value = healthy[0].deployment_id;
       const activate = async () => {
         let result = await fetch("/api/desktop/select", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deployment_id:select.value})});
         if (result.status === 409) {
@@ -160,6 +180,10 @@ def _desktop_bootstrap(initial_deployment_id: str | None = None) -> str:
           result = await fetch("/api/desktop/select", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deployment_id:select.value})});
         }
         if (!result.ok) throw new Error((await result.json()).detail || "部署选择失败");
+        const selectedDeployment = deployments.find(item => item.deployment_id === select.value);
+        const securityMode = selectedDeployment?.metadata?.security_mode || "permutation";
+        document.documentElement.dataset.securityMode = securityMode;
+        if (window.applySecurityMode) window.applySecurityMode(securityMode);
         rawSet.call(localStorage, selectedKey, select.value);
       };
       try { await activate(); } catch(error) { window.alert(error.message); }
@@ -210,11 +234,19 @@ def create_chat_desktop_app(
                 "yinbian_chat_session", session_token, httponly=True, samesite="strict"
             )
             return response
-        if request.method == "GET" and request.url.path == "/privacy":
-            return HTMLResponse(
-                _brand_html(DEMO_STATIC / "privacy.html"),
+        if request.method == "GET" and request.url.path in {"/privacy", "/privacy/tee"}:
+            page = "privacy-tee.html" if request.url.path == "/privacy/tee" else "privacy.html"
+            response = HTMLResponse(
+                _brand_html(
+                    DEMO_STATIC / page,
+                    script=_desktop_bootstrap(initial_deployment_id),
+                ),
                 headers={"Cache-Control": "no-store"},
             )
+            response.set_cookie(
+                "yinbian_chat_session", session_token, httponly=True, samesite="strict"
+            )
+            return response
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             if request.cookies.get("yinbian_chat_session") != session_token:
                 return JSONResponse(
@@ -224,13 +256,27 @@ def create_chat_desktop_app(
 
     @app.get("/api/desktop/deployments")
     def deployments() -> list[dict[str, Any]]:
-        return store.list_deployments(healthy_only=True)
+        from aloepri.product.local_deployment import reconcile_local_deployments
+
+        reconcile_local_deployments(store)
+        # Keep stopped/older versions visible in the selector.  The browser
+        # disables them until the user starts them from the deployment program.
+        return store.list_deployments()
 
     @app.post("/api/desktop/tunnels/{deployment_id}/open")
     def open_tunnel(deployment_id: str, request: TunnelRequest) -> dict[str, Any]:
         deployment = store.get_deployment(deployment_id)
         if deployment["status"] != DeploymentStatus.HEALTHY.value:
             raise HTTPException(status_code=409, detail="deployment is not healthy")
+        metadata = deployment.get("metadata", {})
+        if metadata.get("target_type") == "local":
+            return {
+                "deployment_id": deployment_id,
+                "connected": True,
+                "local_port": int(deployment["remote_port"]),
+                "error": None,
+                "connection_mode": "direct-loopback",
+            }
         server = store.get_server(str(deployment["server_id"]))
         password = request.password
         credential_ref = server.get("credential_ref")
@@ -274,10 +320,29 @@ def create_chat_desktop_app(
 
     @app.get("/api/desktop/tunnels/{deployment_id}")
     def tunnel_status(deployment_id: str) -> dict[str, Any]:
+        deployment = store.get_deployment(deployment_id)
+        if deployment.get("metadata", {}).get("target_type") == "local":
+            return {
+                "deployment_id": deployment_id,
+                "connected": deployment["status"] == DeploymentStatus.HEALTHY.value,
+                "local_port": int(deployment["remote_port"]),
+                "error": None,
+                "connection_mode": "direct-loopback",
+            }
         return tunnels.status(deployment_id).__dict__
 
     @app.post("/api/desktop/tunnels/{deployment_id}/close")
     def close_tunnel(deployment_id: str) -> dict[str, Any]:
+        deployment = store.get_deployment(deployment_id)
+        if deployment.get("metadata", {}).get("target_type") == "local":
+            return {
+                "deployment_id": deployment_id,
+                "connected": True,
+                "local_port": int(deployment["remote_port"]),
+                "error": None,
+                "connection_mode": "direct-loopback",
+                "unchanged": True,
+            }
         return tunnels.close(deployment_id).__dict__
 
     @app.post("/api/desktop/select")
@@ -315,12 +380,13 @@ def create_chat_desktop_app(
                 raise HTTPException(status_code=409, detail="SSH tunnel is not connected")
             local_server = f"http://127.0.0.1:{tunnel.local_port}"
         tokenizer_dir = metadata.get("tokenizer_dir")
+        security_mode = str(metadata.get("security_mode", "permutation"))
         online_key_dir = metadata.get("online_key_dir")
         online_key_credential = metadata.get("online_key_credential_id")
-        if not tokenizer_dir or (not online_key_dir and not online_key_credential):
+        if not tokenizer_dir:
             raise HTTPException(
                 status_code=409,
-                detail="deployment has no local tokenizer or matching online key path",
+                detail="deployment has no local tokenizer",
             )
         bearer = None
         credential_id = metadata.get("bearer_credential_id")
@@ -329,7 +395,42 @@ def create_chat_desktop_app(
                 str(credential_id)
             )["secret"]
         try:
-            if online_key_credential:
+            gateway: DemoGenerator
+            if security_mode == "tee_gm":
+                from transformers import AutoTokenizer
+
+                tokenizer = AutoTokenizer.from_pretrained(
+                    Path(str(tokenizer_dir)), local_files_only=True
+                )
+                tee_backend = str(metadata.get("tee_backend", ""))
+                session: TeeGmSession
+                if tee_backend == "software_sim":
+                    session = SoftwareSimSession(str(local_server))
+                elif tee_backend == "intel_tdx":
+                    gm_client = metadata.get("gm_client_path")
+                    gm_profile = metadata.get("gm_profile_path")
+                    if not gm_client or not gm_profile:
+                        raise ValueError(
+                            "TDX deployment has no attested GM client executable/profile"
+                        )
+                    session = NativeGmSession(Path(str(gm_client)), Path(str(gm_profile)))
+                else:
+                    raise ValueError("TEE deployment has an invalid backend")
+                tee_client = TeeInferenceClient(
+                    tokenizer=tokenizer,
+                    deployment=TeeDeployment(
+                        model_id=str(deployment["model_id"]),
+                        model_version=str(deployment["model_version"]),
+                        key_id=str(deployment["key_id"]),
+                        vocab_size=len(tokenizer),
+                    ),
+                    session=session,
+                )
+                gateway = TeeDemoGateway(
+                    tee_client,
+                    max_context_tokens=int(metadata.get("max_context_tokens", 1800)),
+                )
+            elif online_key_credential:
                 with tempfile.TemporaryDirectory(prefix="yinbian-online-key-") as temporary:
                     key_dir = materialize_online_key_directory(
                         CredentialVault(product_paths().credentials),
@@ -343,7 +444,7 @@ def create_chat_desktop_app(
                         bearer_token=bearer,
                         max_context_tokens=int(metadata.get("max_context_tokens", 1800)),
                     )
-            else:
+            elif online_key_dir:
                 gateway = DemoGateway(
                     model_server=str(local_server),
                     tokenizer_dir=Path(str(tokenizer_dir)),
@@ -351,6 +452,8 @@ def create_chat_desktop_app(
                     bearer_token=bearer,
                     max_context_tokens=int(metadata.get("max_context_tokens", 1800)),
                 )
+            else:
+                raise ValueError("permutation deployment has no matching online key")
         except (OSError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         router.select(request.deployment_id, gateway)
@@ -359,6 +462,8 @@ def create_chat_desktop_app(
             "model_id": deployment["model_id"],
             "model_version": deployment["model_version"],
             "key_id": deployment["key_id"],
+            "security_mode": security_mode,
+            "tee_backend": metadata.get("tee_backend"),
         }
 
     @app.get("/api/desktop/status")

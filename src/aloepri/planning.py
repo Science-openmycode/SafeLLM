@@ -12,6 +12,7 @@ from aloepri.adapters.registry import AdapterRegistry, default_adapter_registry
 from aloepri.catalog.download import find_catalog_entry
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.catalog.models import ArchitectureFingerprint, MatchStatus
+from aloepri.tee.config import SecurityProfile
 
 
 @dataclass(frozen=True)
@@ -66,12 +67,18 @@ class ConversionPlan:
         default_factory=lambda: {
             "vocab_permutation": True,
             "offline_key_encrypted": True,
+            "security_mode": "permutation",
+            "boundary_mode": "in_model",
+            "tee_backend": None,
         }
     )
     coverage: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def security_profile(self) -> SecurityProfile:
+        return SecurityProfile.from_mapping(self.security)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +99,9 @@ class ConversionPlan:
         payload = dict(payload)
         payload["resources"] = ResourceSpec(**payload.get("resources", {}))
         payload["pipeline"] = PipelineSpec(**payload.get("pipeline", {}))
-        return cls(**payload)
+        plan = cls(**payload)
+        plan.security_profile()
+        return plan
 
 
 def _coverage_payload(report: CoverageReport) -> dict[str, Any]:
@@ -127,7 +136,7 @@ def build_local_plan(
         )
     source_dtype = match.fingerprint.weight_format
     job_id = str(uuid.uuid4())
-    return ConversionPlan(
+    plan = ConversionPlan(
         schema_version=1,
         job_id=job_id,
         source={"type": "local", "path": str(model_dir.resolve())},
@@ -142,6 +151,8 @@ def build_local_plan(
         },
         coverage=_coverage_payload(coverage),
     )
+    plan.conversion["dtype"] = str(output_dtype or source_dtype)
+    return plan
 
 
 def build_catalog_plan(

@@ -19,7 +19,9 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--device", choices=("cuda", "cuda-auto"), default="cuda-auto")
+    parser.add_argument(
+        "--device", choices=("cpu", "cuda", "cuda-auto"), default="cuda-auto"
+    )
     parser.add_argument("--gpu-memory-fraction", type=float, default=0.80)
     args = parser.parse_args()
     bearer = os.environ.get("YINBIAN_BEARER_TOKEN")

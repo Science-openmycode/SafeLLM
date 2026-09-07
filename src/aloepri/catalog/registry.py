@@ -48,7 +48,12 @@ def _qwen25_instruct_entry(
             "expansion_h": 128,
             "tile_mib": 256,
             "minimum_host_ram_gib": minimum_ram_gib,
-            "estimated_output_ratio": 1.15,
+            "estimated_output_ratio": {
+                "0.5B": 1.70,
+                "1.5B": 1.35,
+                "3B": 1.25,
+                "7B": 1.20,
+            }.get(size, 1.15),
         },
         runtime={"preferred": "hf", "fallback": "vllm"},
         license=license_id,

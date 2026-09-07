@@ -102,7 +102,27 @@ def test_demo_page_and_observable_flow() -> None:
         assert "在线推理：真实数据流架构图" in privacy.text
         assert "亲手输入一句话" in privacy.text
         assert 'id="lab-form"' in privacy.text
+        assert 'class="app-shell"' in privacy.text
+        assert "TEE 国密原理" in privacy.text
         assert "查看模型服务器实际收到的请求载荷" in privacy.text
+        tee_privacy = client.get("/privacy/tee")
+        assert tee_privacy.status_code == 200
+        assert "TEE 国密原理" in tee_privacy.text
+        assert 'id="tee-lab-form"' in tee_privacy.text
+        assert "加密后的提示词" in tee_privacy.text
+        assert 'id="tee-loop-sample"' in tee_privacy.text
+        assert "privacy-route-overview.png" in tee_privacy.text
+        assert "privacy-route-tee.png" in tee_privacy.text
+        assert "privacy-route-security.png" in tee_privacy.text
+        assert 'id="stage-head-value"' in tee_privacy.text
+        assert "下面只保留讲解所需的五个结果" in tee_privacy.text
+        route_asset = client.get("/assets/privacy-route-tee.png")
+        assert route_asset.status_code == 200
+        assert route_asset.headers["content-type"] == "image/png"
+        tee_script = client.get("/assets/privacy-tee.js")
+        assert tee_script.status_code == 200
+        assert "event.security_mode !== \"tee_gm\"" in tee_script.text
+        assert "renderLoopSample(event)" in tee_script.text
 
         response = client.post(
             "/api/generate",

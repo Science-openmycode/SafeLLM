@@ -18,7 +18,8 @@
           <span aria-hidden="true">＋</span>
           新问题
         </button>
-        <a class="privacy-link" href="/privacy"><span aria-hidden="true">◇</span>隐私原理</a>
+        <a class="privacy-link" href="/privacy"><span aria-hidden="true">τ</span>置换隐私原理</a>
+        <a class="privacy-link" href="/privacy/tee?v=20260829-flow6"><span aria-hidden="true">盾</span>TEE 国密原理</a>
         <section class="saved-chats" aria-label="历史对话">
           <div class="saved-chats-heading">
             <span>历史对话</span>
@@ -88,7 +89,7 @@
           <section id="private-trace" class="privacy-panel" hidden>
             <div class="privacy-heading">
               <div>
-                <span class="lock-mark">τ</span>
+                <span id="trace-lock-mark" class="lock-mark">τ</span>
                 <div><h2>隐私推理过程</h2><p>这里展示模型服务器实际接收和返回的数据。</p></div>
               </div>
               <span id="identity" class="identity">等待模型身份</span>
@@ -96,19 +97,19 @@
 
             <div class="trace-grid">
               <article class="trace-card">
-                <div class="trace-title"><span>发送给服务器</span><em>τ(input)</em></div>
-                <h3>混淆后的提示词</h3>
+                <div class="trace-title"><span>发送给服务器</span><em id="input-transform-label">τ(input)</em></div>
+                <h3 id="private-input-heading">混淆后的提示词</h3>
                 <pre id="private-input-text" class="cipher-text placeholder">尚未运行</pre>
                 <div id="private-input-ids" class="token-ribbon" aria-label="混淆输入 token IDs"></div>
-                <footer><span id="input-count">—</span><small>模型服务器实际接收</small></footer>
+                <footer><span id="input-count">—</span><small id="input-boundary-caption">模型服务器实际接收</small></footer>
               </article>
 
               <article class="trace-card">
-                <div class="trace-title"><span>服务器返回</span><em>τ(output)</em></div>
-                <h3>混淆后的回答</h3>
+                <div class="trace-title"><span>服务器返回</span><em id="output-transform-label">τ(output)</em></div>
+                <h3 id="private-output-heading">混淆后的回答</h3>
                 <pre id="private-output-text" class="cipher-text placeholder">尚未运行</pre>
                 <div id="private-output-ids" class="token-ribbon" aria-label="混淆输出 token IDs"></div>
-                <footer><span id="output-count">—</span><small>客户端逐 token 执行 τ⁻¹</small></footer>
+                <footer><span id="output-count">—</span><small id="output-boundary-caption">客户端逐 token 执行 τ⁻¹</small></footer>
               </article>
             </div>
 
@@ -119,7 +120,7 @@
               <div><span>输出速度</span><strong id="throughput">—</strong><small>token/s</small></div>
             </div>
 
-            <details class="mapping">
+            <details id="tau-mapping" class="mapping">
               <summary><span>查看本次输入的 τ 映射样本</span><small>不展示完整在线密钥</small></summary>
               <div class="table-wrap">
                 <table>

@@ -30,6 +30,11 @@ def main() -> None:
     parser.add_argument("--tokenizer", type=Path, required=True)
     parser.add_argument("--prompts", type=Path, required=True)
     parser.add_argument("--key", type=Path)
+    parser.add_argument(
+        "--paired-inputs",
+        type=Path,
+        help="Pre-tokenized plain/private input pairs; avoids placing tau on the model server",
+    )
     parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     parser.add_argument("--max-new-tokens", type=int, default=16)
     parser.add_argument("--warmup", type=int, default=2)
@@ -39,6 +44,8 @@ def main() -> None:
     parser.add_argument("--model-role", choices=["baseline", "candidate"])
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.key is not None and args.paired_inputs is not None:
+        raise ValueError("--key and --paired-inputs are mutually exclusive")
     if not 0.1 <= args.gpu_memory_fraction <= 0.9:
         raise ValueError("--gpu-memory-fraction must be between 0.1 and 0.9")
     register_aloepri_qwen2()
@@ -64,6 +71,16 @@ def main() -> None:
     load_seconds = time.perf_counter() - started
     tau = load_file(args.key, device="cpu")["tau"].to(device) if args.key else None
     prompts = json.loads(args.prompts.read_text(encoding="utf-8"))
+    paired_inputs = (
+        json.loads(args.paired_inputs.read_text(encoding="utf-8"))
+        if args.paired_inputs
+        else None
+    )
+    if paired_inputs is not None:
+        if len(paired_inputs) != len(prompts):
+            raise ValueError("paired input count does not match the prompt count")
+        if args.model_role not in {"baseline", "candidate"}:
+            raise ValueError("paired inputs require --model-role")
     all_prompts = prompts[: args.warmup] + prompts
     request_records = []
     for index, prompt in enumerate(all_prompts):
@@ -71,16 +88,27 @@ def main() -> None:
         request_id = hashlib.sha256(
             f"{request_index}\0{prompt}".encode()
         ).hexdigest()
-        encoded = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            tokenize=True,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-        ).to(device)
-        input_ids = encoded["input_ids"]
-        if tau is not None:
-            input_ids = tau[input_ids]
+        if paired_inputs is None:
+            encoded = tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True,
+            ).to(device)
+            input_ids = encoded["input_ids"]
+            if tau is not None:
+                input_ids = tau[input_ids]
+        else:
+            pair_index = index if index < args.warmup else request_index
+            pair = paired_inputs[pair_index]
+            expected_prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            if pair.get("prompt_sha256") != expected_prompt_hash:
+                raise ValueError(f"paired input prompt mismatch at index {pair_index}")
+            field = (
+                "plain_input_ids" if args.model_role == "baseline" else "private_input_ids"
+            )
+            input_ids = torch.tensor([pair[field]], dtype=torch.long, device=device)
         mask = torch.ones_like(input_ids)
         if device == "cuda":
             torch.cuda.synchronize()
@@ -167,6 +195,9 @@ def main() -> None:
             "device": device,
             "prompts": file_identity(args.prompts),
             "key": file_identity(args.key) if args.key else None,
+            "paired_inputs": (
+                file_identity(args.paired_inputs) if args.paired_inputs else None
+            ),
             "max_new_tokens": args.max_new_tokens,
             "warmup": args.warmup,
             "gpu_memory_fraction": args.gpu_memory_fraction,

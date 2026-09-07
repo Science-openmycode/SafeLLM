@@ -5,15 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="AloePri 隐私推理架构与数据流说明" />
     <title>AloePri · 隐私原理</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260829-unified" />
+    <link rel="stylesheet" href="/assets/privacy-tee.css?v=20260829-unified" />
     <link rel="stylesheet" href="/assets/privacy.css?v=20260813-public2" />
+    <link rel="stylesheet" href="/assets/privacy-shell.css?v=20260829-unified" />
   </head>
-  <body>
-    <header class="page-nav">
-      <a class="brand" href="/"><span>A</span><strong>AloePri</strong></a>
-      <div class="nav-links"><a class="active" href="/privacy">隐私原理</a><a href="/">返回对话</a></div>
-    </header>
-
-    <main>
+  <body class="principle-app permutation-principle-app" data-flow-mode="permutation">
+    <div class="app-shell">
+      <aside class="sidebar principle-sidebar">
+        <a class="brand" href="/"><span class="brand-mark">隐</span><strong>隐变智模</strong></a>
+        <a class="new-chat back-chat" href="/"><span aria-hidden="true">←</span>返回对话</a>
+        <a class="privacy-link active" href="/privacy"><span aria-hidden="true">τ</span>置换隐私原理</a>
+        <a class="privacy-link" href="/privacy/tee?v=20260829-flow6"><span aria-hidden="true">盾</span>TEE 国密原理</a>
+        <nav class="flow-index" aria-label="本页数据流导航">
+          <div class="saved-chats-heading"><span>置换数据流</span><small>5</small></div>
+          <a class="flow-index-link active" href="#lab"><b>01</b><span>真实演示<small>输入、置换与回答</small></span></a>
+          <a class="flow-index-link" href="#offline"><b>02</b><span>离线改造<small>模型与密钥分离</small></span></a>
+          <a class="flow-index-link" href="#online"><b>03</b><span>在线推理<small>完整数据流</small></span></a>
+          <a class="flow-index-link" href="#steps"><b>04</b><span>分层保护<small>每层如何变化</small></span></a>
+          <a class="flow-index-link" href="#visibility"><b>05</b><span>可见边界<small>谁能看到什么</small></span></a>
+        </nav>
+        <div class="sidebar-spacer"></div>
+        <div class="security-note"><span class="live-dot"></span><div><strong>词表置换模式</strong><small>客户端持有τ与τ⁻¹，服务器只运行私有模型</small></div></div>
+        <div class="model-note"><span>当前视图</span><strong>置换隐私原理</strong></div>
+      </aside>
+      <main class="chat-shell principle-shell">
+        <header class="topbar principle-topbar"><div><strong>隐私推理数据流</strong><span>词表置换模式</span></div><div class="topbar-actions"><a href="/privacy/tee?v=20260829-flow6">查看TEE国密原理</a><a class="primary" href="/">返回对话</a></div></header>
+        <div class="principle-scroll">
+          <div class="permutation-content">
       <section id="public-boundary-notice" class="public-boundary-notice" hidden>
         <strong>公网展示边界</strong>
         <p>访客输入通过 HTTPS 到达演示提供者电脑上的可信 gateway；gateway 完成分词、置换与恢复。模型服务仍只接收混淆 token。要验证“明文不离开使用者设备”，请运行本地客户端版本。</p>
@@ -25,7 +44,7 @@
         <div class="hero-pills"><span>明文留在客户端</span><span>服务端只见私有 token</span><span>输出逐 token 恢复</span></div>
       </section>
 
-      <section class="live-lab" aria-labelledby="lab-title">
+      <section id="lab" class="live-lab" aria-labelledby="lab-title">
         <div class="lab-intro">
           <div><p class="eyebrow">LIVE PRIVACY LAB</p><h2 id="lab-title">亲手输入一句话，看它如何穿过隐私边界</h2><p>下面使用当前 Qwen2.5-0.5B tokenizer、online key 和混淆 checkpoint。显示的 token 与回答都来自真实运行。</p></div>
           <div id="lab-status" class="lab-status idle"><i></i><span>等待输入</span></div>
@@ -98,7 +117,8 @@
         </details>
       </section>
 
-      <section class="section offline-section">
+      <div class="architecture-board permutation-board">
+      <section id="offline" class="section offline-section">
         <div class="section-title"><span>01</span><div><h2>部署前：一次性离线转换</h2><p>在线推理开始前，先把原模型变成只在私有坐标中工作的 checkpoint。</p></div></div>
         <div class="offline-flow architecture-card">
           <div class="offline-source node"><small>输入</small><strong>原始 Qwen checkpoint</strong><code>Wₑ · Attention · FFN · Head</code></div>
@@ -113,7 +133,7 @@
         </div>
       </section>
 
-      <section class="section">
+      <section id="online" class="section">
         <div class="section-title"><span>02</span><div><h2>在线推理：真实数据流架构图</h2><p>每条箭头表示请求运行时真实发生的一次转换或传输。</p></div></div>
         <div class="architecture-card online-architecture">
           <div class="lane trusted-lane">
@@ -160,7 +180,7 @@
         </div>
       </section>
 
-      <section class="section step-section">
+      <section id="steps" class="section step-section">
         <div class="section-title"><span>03</span><div><h2>分段理解每一层保护</h2><p>选择一个步骤，查看它改变了什么、密钥在哪里、服务端能看到什么。</p></div></div>
         <div class="step-layout">
           <div class="step-tabs" role="tablist" aria-label="隐私流程步骤">
@@ -180,7 +200,7 @@
         </div>
       </section>
 
-      <section class="section visibility-section">
+      <section id="visibility" class="section visibility-section">
         <div class="section-title"><span>04</span><div><h2>谁能看到什么</h2><p>安全边界来自密钥和模型包的分离，而不是把所有内容放在同一台服务器。</p></div></div>
         <div class="visibility-grid">
           <article><div class="viewer client-viewer">客户端</div><ul><li>真实 prompt 与对话历史</li><li>原 tokenizer</li><li>τ 与 τ⁻¹</li><li>最终自然语言回答</li></ul></article>
@@ -190,9 +210,13 @@
         </div>
         <p class="boundary-disclaimer">该边界表示工程上不把明文和逆置换材料交给模型服务，并通过已实现攻击进行验证；它不等同于对任意恶意服务器的绝对密码学不可恢复声明。</p>
       </section>
-    </main>
+      </div>
+          </div>
 
-    <footer><span>AloePri · Qwen2.5-0.5B</span><a href="/">进入真实私有对话 →</a></footer>
-    <script src="/assets/privacy.js?v=20260813-public2" defer></script>
+          <footer><span>隐变智模 · Qwen2.5-0.5B</span><a href="/">进入真实私有对话 →</a></footer>
+        </div>
+      </main>
+    </div>
+    <script src="/assets/privacy.js?v=20260829-unified" defer></script>
   </body>
 </html>

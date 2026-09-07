@@ -23,7 +23,46 @@
     </aside>
     <main>
       <header><div><h1 id="title">部署总览</h1><p id="subtitle">选择模型、完成本地改造并部署到您的服务器</p></div><button class="primary" id="refresh">刷新状态</button></header>
-      <section id="dashboard" class="page active"><div id="metrics" class="metrics"></div><div class="panel"><h2>最近任务</h2><div id="recent-jobs" class="empty">暂无任务</div></div></section>
+      <section id="dashboard" class="page active">
+        <div id="metrics" class="metrics"></div>
+        <section class="panel overview-story overview-scenario" aria-labelledby="overview-scenario-title">
+          <div class="overview-story-head">
+            <div class="overview-story-title">
+              <span class="overview-story-index">01</span>
+              <div>
+                <small>APPLICATION SCENARIO</small>
+                <h2 id="overview-scenario-title">应用场景：模型属于用户，算力来自云端</h2>
+                <p>用户完成模型改造后部署到云端，日常请求只以受保护形式进入推理服务。</p>
+              </div>
+            </div>
+            <div class="overview-story-tags" aria-label="应用场景要点">
+              <span>用户持有模型</span>
+              <span>云端提供算力</span>
+              <span>服务器诚实但好奇</span>
+            </div>
+          </div>
+          <div class="overview-story-frame scenario-frame">
+            <img src="/deployment-scenario-framework.png?v=2" alt="隐变智模应用场景：模型所有者在本地完成模型混淆，云端服务器使用混淆模型提供标准推理服务">
+          </div>
+        </section>
+        <section class="panel overview-route" aria-labelledby="overview-route-title">
+          <div class="overview-story-head">
+            <div class="overview-story-title">
+              <span class="overview-story-index">02</span>
+              <div>
+                <small>PRIVACY-PRESERVING DEPLOYMENT</small>
+                <h2 id="overview-route-title">总体技术路线</h2>
+                <p>从原始模型改造、云端部署，到隐私数据进入模型并安全返回结果的完整链路。</p>
+              </div>
+            </div>
+            <div class="overview-story-tags"><span>模型改造 → 安全部署 → 隐私推理</span></div>
+          </div>
+          <div class="overview-story-frame">
+            <img src="/privacy-route-overview.png" alt="隐变智模总体技术路线：离线模型改造、云端部署与隐私推理流程">
+          </div>
+        </section>
+        <div class="panel"><h2>最近任务</h2><div id="recent-jobs" class="empty">暂无任务</div></div>
+      </section>
       <section id="models" class="page"><div class="section-head"><div><h2>模型目录</h2><p>按模型族横向切换，下方只展示当前族的参数量与版本。</p></div></div><div id="model-grid" class="model-browser"></div></section>
       <section id="jobs" class="page">
         <form id="deploy-wizard" class="panel form" hidden>
@@ -31,10 +70,16 @@
           <label class="field"><span>模型族</span><select id="wizard-family" required><option value="">正在加载模型族…</option></select></label>
           <label class="field"><span>参数量与版本</span><select name="model" id="wizard-model" required disabled><option value="">请先选择模型族</option></select></label>
           <div id="wizard-model-note" class="model-note full">请选择模型。已实测与同架构可执行模型会分别标识。</div>
+          <label class="field"><span>模型来源</span><select name="source_mode" id="wizard-source-mode"><option value="catalog-download">从模型目录下载</option><option value="local-existing">使用本地已经下载好的模型</option></select></label>
+          <label class="field" id="wizard-local-path-field" hidden><span>本地模型目录</span><input name="local_model_path" id="wizard-local-model-path" placeholder="例如 E:\models\Qwen2.5-0.5B-Instruct" disabled></label>
+          <div id="wizard-local-check" class="model-note full" hidden>请选择包含 config.json、Tokenizer和Safetensors权重的模型目录；系统会跳过下载并先检查架构。</div>
           <input name="destination" id="wizard-destination" value="" placeholder="自动使用隐变智模缓存盘；也可以指定本地目录">
-          <select name="mode" id="wizard-mode"><option value="local-only">先在本地下载并改造，稍后部署</option><option value="direct-deploy">改造、上传并自动部署</option></select>
+          <select name="mode" id="wizard-mode"><option value="local-deploy">改造完成后自动部署到本机</option><option value="local-only">只在本地改造，稍后再部署</option><option value="direct-deploy">改造、上传并自动部署到云服务器</option></select>
+          <label class="field"><span>安全模式</span><select name="security_mode" id="wizard-security-mode"><option value="permutation">现有词表置换模式</option><option value="tee_gm">TEE 国密模式</option></select></label>
+          <label class="field" id="wizard-tee-backend-field" hidden><span>TEE 后端</span><select name="tee_backend" id="wizard-tee-backend" disabled><option value="intel_tdx">Intel TDX（生产，必须远程证明）</option><option value="software_sim">软件模拟（仅开发验证）</option></select></label>
+          <div id="wizard-tee-note" class="model-note full" hidden>TEE 国密模式不使用词表置换。生产部署必须通过 Intel TDX、DCAP Quote 和国密组件预检，系统不会自动降级。</div>
           <select name="device"><option value="auto">自动选择 CPU/GPU</option><option value="cuda">GPU 优先</option><option value="cpu">仅 CPU</option></select>
-          <select name="download_endpoint"><option value="auto">模型下载源：自动（官方不可用时切换镜像）</option><option value="https://huggingface.co">模型下载源：Hugging Face官方</option><option value="https://hf-mirror.com">模型下载源：HF Mirror</option></select>
+          <select name="download_endpoint" id="wizard-download-endpoint"><option value="auto">模型下载源：自动（官方不可用时切换镜像）</option><option value="https://huggingface.co">模型下载源：Hugging Face官方</option><option value="https://hf-mirror.com">模型下载源：HF Mirror</option></select>
           <select name="server_id" id="wizard-server" hidden disabled><option value="">请选择服务器</option></select>
           <input name="password" id="wizard-password" type="password" placeholder="SSH 密码（不保存）" hidden disabled>
           <label class="consent"><input name="accept_license" type="checkbox" required> 我已查看模型许可证，并同意该固定版本的使用条款</label>
@@ -46,7 +91,7 @@
       <section id="servers" class="page">
         <div class="section-head"><div><h2>服务器</h2><p>支持直接粘贴SSH命令，也可以分别填写主机、端口和用户名。</p></div><button class="primary" id="show-server-form">添加服务器</button></div>
         <form id="server-form" class="panel form" hidden autocomplete="off">
-          <h2>添加Ubuntu GPU服务器</h2>
+          <h2 id="server-form-title">添加Ubuntu GPU服务器</h2>
           <label class="field full"><span>服务器名称</span><input name="display_name" placeholder="例如：4090云服务器" required></label>
           <label class="field full"><span>SSH登录命令（推荐直接粘贴）</span><input name="ssh_command" id="ssh-command" placeholder="ssh -p 51838 root@gpu.example.com"></label>
           <label class="field"><span>主机地址</span><input name="host" id="server-host" placeholder="gpu.example.com"></label>
@@ -54,11 +99,11 @@
           <label class="field"><span>用户名</span><input name="username" id="server-username" value="root"></label>
           <label class="field"><span>认证方式</span><select name="auth_type" id="server-auth"><option value="password">密码</option><option value="private_key">SSH私钥</option></select></label>
           <label class="field" id="server-password-field"><span>SSH密码</span><input name="password" type="password" autocomplete="new-password"></label>
-          <label class="field" id="server-key-field" hidden><span>SSH私钥路径</span><input name="private_key_path" placeholder="C:\Users\用户名\.ssh\id_ed25519"></label>
+          <label class="field" id="server-key-field" hidden><span>SSH私钥路径</span><input name="private_key_path" placeholder="自动使用当前用户的 .ssh\id_ed25519"></label>
           <label class="field"><span>远端模型目录</span><input name="model_root" value="/opt/yinbian"></label>
           <label class="consent"><input name="remember_password" type="checkbox" checked> 在本机加密记住密码，以后自动部署和连接</label>
           <label class="consent"><input name="check_now" type="checkbox" checked> 保存后立即连接检查并显示服务器指纹</label>
-          <div class="form-actions"><button type="button" id="cancel-server-form">取消</button><button class="primary">保存并检查</button></div>
+          <div class="form-actions"><button type="button" id="cancel-server-form">取消</button><button class="primary" id="save-server-button">保存并检查</button></div>
         </form>
         <div id="server-list" class="grid"></div>
       </section>

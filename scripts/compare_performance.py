@@ -73,6 +73,10 @@ def main() -> None:
             raise ValueError("performance prompt fingerprint mismatch")
         if provenance.get("key") is not None and not verify_file_identity(provenance["key"]):
             raise ValueError("performance key fingerprint mismatch")
+        if provenance.get("paired_inputs") is not None and not verify_file_identity(
+            provenance["paired_inputs"]
+        ):
+            raise ValueError("performance paired-input fingerprint mismatch")
         if not verify_file_identity(provenance.get("script", {})):
             raise ValueError("performance benchmark script fingerprint mismatch")
         if item.get("dtype") != provenance.get("dtype"):
@@ -93,8 +97,9 @@ def main() -> None:
             "runtime",
             "tokenizer",
             "script",
+            "paired_inputs",
         ):
-            if provenance[field] != reference[field]:
+            if provenance.get(field) != reference.get(field):
                 raise ValueError(f"performance environment differs for {field}")
         if item.get("dtype") != all_runs[0].get("dtype"):
             raise ValueError("performance runs use mixed dtypes")

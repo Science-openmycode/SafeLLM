@@ -1,0 +1,15 @@
+{
+  "bootstrap_url": "http://tee-host.example:8444/v1/tee/attestation",
+  "gm_base_url": "https://tee-host.example:8443",
+  "model_id": "qwen2.5-0.5b-instruct",
+  "model_version": "PINNED_MODEL_REVISION",
+  "key_id": "PINNED_KEY_ID",
+  "runtime_hash_sm3": "REPLACE_WITH_64_LOWERCASE_HEX",
+  "server_manifest_sm3": "REPLACE_WITH_64_LOWERCASE_HEX",
+  "tongsuo_executable": "/opt/tongsuo/bin/tongsuo",
+  "tongsuo_curl": "/opt/tongsuo/bin/curl",
+  "dcap_verifier_command": ["/opt/yinbian/bin/yinbian-dcap-verify"],
+  "allowed_mrtd": ["PINNED_RELEASE_MRTD"],
+  "allowed_rtmrs": [["PINNED_RTMR0"], ["PINNED_RTMR1"]]
+}
+

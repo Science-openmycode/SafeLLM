@@ -84,6 +84,7 @@ def test_qwen_executor_uses_cli_enum_spellings(
     def fake_run(command: list[str], **kwargs: object) -> None:
         captured.extend(command)
         captured_environment.update(kwargs["env"])  # type: ignore[arg-type]
+        Path(command[command.index("--key-dir") + 1]).mkdir(parents=True)
 
     monkeypatch.setattr(executor.subprocess, "run", fake_run)
     monkeypatch.setattr(executor, "split_key_package", lambda *_: None)
@@ -92,6 +93,7 @@ def test_qwen_executor_uses_cli_enum_spellings(
     assert captured[captured.index("--rms-representation") + 1] == "stable-factor"
     assert captured_environment["PYTHONFAULTHANDLER"] == "1"
     assert captured_environment["OMP_NUM_THREADS"] == "4"
+    assert "pythonw.exe" not in captured[0].casefold()
 
 
 def test_qwen_executor_removes_only_empty_stale_partial_directories(
@@ -113,7 +115,10 @@ def test_qwen_executor_removes_only_empty_stale_partial_directories(
         output={"type": "local", "uri": str(output)},
         security={"vocab_permutation": True, "offline_key_encrypted": False},
     )
-    monkeypatch.setattr(executor.subprocess, "run", lambda *_args, **_kwargs: None)
+    def fake_run(command: list[str], **_kwargs: object) -> None:
+        Path(command[command.index("--key-dir") + 1]).mkdir(parents=True)
+
+    monkeypatch.setattr(executor.subprocess, "run", fake_run)
     monkeypatch.setattr(executor, "split_key_package", lambda *_args: None)
     executor._run_qwen(plan, output, source)  # type: ignore[attr-defined]
     assert not output_partial.exists()
@@ -140,3 +145,45 @@ def test_qwen_executor_refuses_nonempty_stale_partial_directory(
     )
     with pytest.raises(FileExistsError, match="requires inspection"):
         executor._run_qwen(plan, output, source)  # type: ignore[attr-defined]
+
+
+def test_qwen_executor_routes_tee_plan_without_online_token_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    output = tmp_path / "private"
+    tee_boundary = tmp_path / "trusted-boundary"
+    plan = ConversionPlan(
+        schema_version=1,
+        job_id="qwen-tee",
+        source={"type": "local", "path": str(source)},
+        adapter="qwen2",
+        fingerprint={"weight_format": "float32"},
+        output={"type": "local", "uri": str(output)},
+        keys={"tee": str(tee_boundary)},
+        security={
+            "vocab_permutation": False,
+            "offline_key_encrypted": False,
+            "security_mode": "tee_gm",
+            "boundary_mode": "tee_split",
+            "tee_backend": "software_sim",
+        },
+    )
+    captured: list[str] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> None:
+        captured.extend(command)
+        key_dir = Path(command[command.index("--key-dir") + 1])
+        key_dir.mkdir(parents=True)
+        (key_dir / "paper_key.safetensors").write_bytes(b"key")
+        (key_dir / "key.json").write_text("{}", encoding="utf-8")
+        Path(command[command.index("--tee-output") + 1]).mkdir(parents=True)
+        Path(command[command.index("--output") + 1]).mkdir(parents=True)
+
+    monkeypatch.setattr(executor.subprocess, "run", fake_run)
+    result = executor._run_qwen(plan, output, source)  # type: ignore[attr-defined]
+    assert captured[captured.index("--security-mode") + 1] == "tee-gm"
+    assert captured[captured.index("--boundary-mode") + 1] == "tee-split"
+    assert result["online_key"] is None
+    assert result["tee_boundary"] == str(tee_boundary.resolve())

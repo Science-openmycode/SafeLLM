@@ -13,7 +13,7 @@ import time
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import typer
 import uvicorn
@@ -45,6 +45,7 @@ from aloepri.product.resources import inspect_local_resources
 from aloepri.product.state import ProductJobStatus, ProductStore
 from aloepri.product.tokenizer_assets import materialize_local_tokenizer
 from aloepri.product.tunnel_worker import tunnel_state_path, tunnel_stop_path
+from aloepri.tee.preflight import inspect_remote_tdx
 
 models_app = typer.Typer(no_args_is_help=True)
 jobs_app = typer.Typer(no_args_is_help=True)
@@ -341,6 +342,31 @@ def doctor_local(
         raise typer.Exit(1)
 
 
+@doctor_app.command("tee")
+def doctor_tee(
+    server_id: str,
+    password: Annotated[str | None, typer.Option("--password", hide_input=True)] = None,
+    private_key_passphrase: Annotated[
+        str | None, typer.Option("--private-key-passphrase", hide_input=True)
+    ] = None,
+) -> None:
+    """Run non-mutating Intel TDX, Tongsuo, GPU, IOMMU and time checks."""
+
+    server = _product_store().get_server(server_id)
+    profile = _ssh_profile(
+        server,
+        password=password,
+        private_key_passphrase=private_key_passphrase,
+    )
+    try:
+        result = asyncio.run(inspect_remote_tdx(profile))
+    except (OSError, RuntimeError, ValueError) as error:
+        raise typer.BadParameter(str(error)) from error
+    _echo(result)
+    if not result["pass"]:
+        raise typer.Exit(1)
+
+
 def plan_command(
     model: Annotated[str | None, typer.Option("--model")] = None,
     model_fixture: Annotated[
@@ -404,6 +430,7 @@ def plan_callback(
 @plan_app.command("create")
 def plan_create(
     model: Annotated[str, typer.Option("--model")],
+    catalog_model: Annotated[str | None, typer.Option("--catalog-model")] = None,
     output: Annotated[Path, typer.Option("--output")] = Path(
         "artifacts/plans/yinbian-conversion.yaml"
     ),
@@ -412,6 +439,11 @@ def plan_create(
     device: Annotated[str, typer.Option("--device")] = "auto",
     download_endpoint: Annotated[str, typer.Option("--download-endpoint")] = "auto",
     server: Annotated[str | None, typer.Option("--server")] = None,
+    security_mode: Annotated[str, typer.Option("--security-mode")] = "permutation",
+    tee_backend: Annotated[str | None, typer.Option("--tee-backend")] = None,
+    gm_crypto_helper: Annotated[Path | None, typer.Option("--gm-crypto-helper")] = None,
+    gm_signing_key: Annotated[str | None, typer.Option("--gm-signing-key")] = None,
+    gm_boundary_key: Annotated[str | None, typer.Option("--gm-boundary-key")] = None,
 ) -> None:
     if mode not in {"direct-deploy", "local-only"}:
         raise typer.BadParameter("--mode must be direct-deploy or local-only")
@@ -428,6 +460,20 @@ def plan_create(
         )
     if mode == "direct-deploy" and server is None:
         raise typer.BadParameter("direct-deploy requires --server")
+    if security_mode not in {"permutation", "tee_gm"}:
+        raise typer.BadParameter("--security-mode must be permutation or tee_gm")
+    if security_mode == "permutation" and tee_backend is not None:
+        raise typer.BadParameter("permutation mode does not accept --tee-backend")
+    if security_mode == "tee_gm" and tee_backend not in {"software_sim", "intel_tdx"}:
+        raise typer.BadParameter("tee_gm requires --tee-backend software_sim or intel_tdx")
+    if mode == "direct-deploy" and tee_backend == "software_sim":
+        raise typer.BadParameter("software_sim cannot be used for a production deployment")
+    if tee_backend == "intel_tdx" and (
+        gm_crypto_helper is None or not gm_signing_key or not gm_boundary_key
+    ):
+        raise typer.BadParameter(
+            "intel_tdx requires --gm-crypto-helper, --gm-signing-key and --gm-boundary-key"
+        )
     path = Path(model)
     plan = (
         build_local_plan(path, output_uri=destination)
@@ -438,8 +484,45 @@ def plan_create(
             download_endpoint=download_endpoint,
         )
     )
+    if path.is_dir() and catalog_model is not None:
+        entry = find_catalog_entry(catalog_model)
+        if plan.adapter != entry.adapter_id:
+            raise typer.BadParameter(
+                "local checkpoint architecture differs from --catalog-model: "
+                f"detected={plan.adapter}, expected={entry.adapter_id}"
+            )
+        if mode == "direct-deploy" and not entry.deployment_ready:
+            raise typer.BadParameter(
+                f"{entry.display_name} has not passed one-click deployment acceptance"
+            )
+        plan.source.update(
+            {
+                "repo_id": entry.repo_id,
+                "revision": entry.revision,
+                "catalog_id": entry.catalog_id,
+            }
+        )
+        plan.output["model_id"] = entry.catalog_id
+    if security_mode == "tee_gm" and plan.adapter not in {"qwen2", "qwen2_5"}:
+        raise typer.BadParameter("TEE 1.0 acceptance currently supports only Qwen2/Qwen2.5")
     selected_device = "cuda:0" if device == "cuda" else device
     plan.output["deployment_mode"] = mode
+    if security_mode == "tee_gm":
+        plan.security.update(
+            {
+                "vocab_permutation": False,
+                "security_mode": "tee_gm",
+                "boundary_mode": "tee_split",
+                "tee_backend": tee_backend,
+                "gm_crypto_helper": (
+                    str(gm_crypto_helper.resolve()) if gm_crypto_helper else None
+                ),
+                "gm_signing_key": gm_signing_key,
+                "gm_boundary_key": gm_boundary_key,
+            }
+        )
+        plan.conversion.update({"alpha_e": 0.0, "alpha_h": 0.0})
+        plan.keys["tee"] = str(Path(destination).with_name(f"{Path(destination).name}-tee"))
     if server is not None:
         _product_store().get_server(server)
         plan.output["server_id"] = server
@@ -538,15 +621,24 @@ def jobs_resume(
             sink = SSHDirectorySink(
                 profile, f"{profile.model_root}/uploads/{current_plan.job_id}"
             )
-        result = ProgressiveConversionPipeline(product).run_catalog_model(
-            current_plan,
-            mode=mode,
-            token=os.environ.get("YINBIAN_HF_TOKEN"),
-            sink=sink,
-            clean_source_after_commit=bool(
-                current_plan.security.get("clean_source_after_commit", False)
-            ),
-        )
+        pipeline = ProgressiveConversionPipeline(product)
+        if str(current_plan.source.get("type")) == "local":
+            result = pipeline.run_local_model(
+                current_plan,
+                mode=mode,
+                sink=sink,
+                offline_key_password=os.environ.get("YINBIAN_OFFLINE_KEY_PASSWORD"),
+            )
+        else:
+            result = pipeline.run_catalog_model(
+                current_plan,
+                mode=mode,
+                token=os.environ.get("YINBIAN_HF_TOKEN"),
+                sink=sink,
+                clean_source_after_commit=bool(
+                    current_plan.security.get("clean_source_after_commit", False)
+                ),
+            )
         _echo(result)
         return
     store = _store()
@@ -958,14 +1050,103 @@ def deploy_create(
     _echo(result)
 
 
+@deploy_app.command("local")
+def deploy_local_machine(
+    job_id: Annotated[str, typer.Option("--job")],
+    device: Annotated[str, typer.Option("--device")] = "auto",
+    port: Annotated[int, typer.Option("--port", min=0, max=65535)] = 0,
+) -> None:
+    """Start and validate a completed private model on this machine."""
+
+    from aloepri.product.deployment_policy import require_validated_hf_deployment
+    from aloepri.product.local_deployment import (
+        LocalDeploymentManager,
+        LocalDeploymentRequest,
+    )
+
+    store = _product_store()
+    job = store.get_job(job_id)
+    plan_payload = job["plan"].get("conversion", job["plan"])
+    require_validated_hf_deployment(plan_payload)
+    plan = ConversionPlan.from_dict(plan_payload)
+    security_profile = plan.security_profile()
+    package = Path(str(job.get("progress", {}).get("output", "")))
+    if not package.is_dir():
+        raise typer.BadParameter("the verified local private package is unavailable")
+    deployment_id = f"dep-{job_id}-local-{uuid.uuid4().hex[:8]}"
+    bearer = secrets.token_urlsafe(32)
+    credential_id = f"deployment-{deployment_id}-bearer"
+    try:
+        result = LocalDeploymentManager(store).deploy(
+            LocalDeploymentRequest(
+                deployment_id=deployment_id,
+                version_id=f"v-{job_id[:12]}-local-{uuid.uuid4().hex[:8]}",
+                job_id=job_id,
+                model_id=str(plan.output.get("model_id", package.name)),
+                model_version=str(plan.source.get("revision", job_id)),
+                key_id=str(plan.output.get("key_id", f"key-{job_id[:8]}")),
+                server_package=package,
+                port=port,
+                device=device,
+                bearer_token=bearer,
+                bearer_credential_id=credential_id,
+                security_mode=security_profile.security_mode.value,
+                tee_backend=(
+                    security_profile.tee_backend.value
+                    if security_profile.tee_backend is not None
+                    else None
+                ),
+                tee_boundary=(
+                    Path(str(job.get("progress", {}).get("tee_boundary")))
+                    if job.get("progress", {}).get("tee_boundary")
+                    else None
+                ),
+            )
+        )
+    except (OSError, RuntimeError, TimeoutError, ValueError) as error:
+        raise typer.BadParameter(str(error)) from error
+    output_root = Path(str(plan.output.get("uri", package)))
+    tokenizer_root = materialize_local_tokenizer(
+        plan, destination_root=product_paths().state / "tokenizers"
+    )
+    online_credential = online_key_credential_id(
+        str(plan.output.get("model_id", output_root.name)),
+        str(plan.output.get("key_id", f"key-{job_id[:8]}")),
+    )
+    credential_path = product_paths().credentials / f"{online_credential}.dpapi"
+    default_online = output_root.parent / f"{output_root.name}-keys" / "online"
+    result["metadata"] = {
+        **result.get("metadata", {}),
+        "tokenizer_dir": str(tokenizer_root),
+        "online_key_dir": None if credential_path.is_file() else str(default_online.resolve()),
+        "online_key_credential_id": online_credential if credential_path.is_file() else None,
+        "max_context_tokens": 1800,
+    }
+    _echo(store.put_deployment(result))
+
+
 @deploy_app.command("list")
 def deploy_list() -> None:
-    _echo(_product_store().list_deployments())
+    from aloepri.product.local_deployment import reconcile_local_deployments
+
+    store = _product_store()
+    reconcile_local_deployments(store)
+    _echo(store.list_deployments())
 
 
 @deploy_app.command("status")
 def deploy_status(deployment_id: str) -> None:
-    _echo(_product_store().get_deployment(deployment_id))
+    from aloepri.product.local_deployment import (
+        LocalDeploymentManager,
+        is_local_deployment,
+    )
+
+    store = _product_store()
+    deployment = store.get_deployment(deployment_id)
+    if is_local_deployment(deployment):
+        _echo(LocalDeploymentManager(store).status(deployment_id))
+        return
+    _echo(deployment)
 
 
 def _deployment_action(
@@ -976,9 +1157,18 @@ def _deployment_action(
     private_key_passphrase: str | None,
 ) -> dict[str, Any]:
     from aloepri.cloud.hf_deployment import HFDeploymentManager
+    from aloepri.product.local_deployment import (
+        LocalDeploymentManager,
+        is_local_deployment,
+    )
 
     store = _product_store()
     deployment = store.get_deployment(deployment_id)
+    if is_local_deployment(deployment):
+        if action == "rollback":
+            raise typer.BadParameter("local deployment has no previous healthy version")
+        local_manager = LocalDeploymentManager(store)
+        return cast(dict[str, Any], getattr(local_manager, action)(deployment_id))
     profile = _ssh_profile(
         store.get_server(str(deployment["server_id"])),
         password=password,
@@ -1050,9 +1240,16 @@ def deploy_logs(
     private_key_passphrase: str | None,
 ) -> None:
     from aloepri.cloud.hf_deployment import HFDeploymentManager
+    from aloepri.product.local_deployment import (
+        LocalDeploymentManager,
+        is_local_deployment,
+    )
 
     store = _product_store()
     deployment = store.get_deployment(deployment_id)
+    if is_local_deployment(deployment):
+        _echo(LocalDeploymentManager(store).logs(deployment_id, tail=tail))
+        return
     profile = _ssh_profile(
         store.get_server(str(deployment["server_id"])),
         password=password,
@@ -1134,6 +1331,8 @@ def deploy_router(
     deployment_id: Annotated[str | None, typer.Option("--deployment-id")] = None,
     version_id: Annotated[str | None, typer.Option("--version-id")] = None,
     remote_port: Annotated[int, typer.Option("--remote-port")] = 18000,
+    device: Annotated[str, typer.Option("--device")] = "auto",
+    local_port: Annotated[int, typer.Option("--local-port", min=0, max=65535)] = 0,
     tail: Annotated[int, typer.Option("--tail", min=1, max=10000)] = 200,
     confirm: Annotated[bool, typer.Option("--confirm")] = False,
     password: Annotated[str | None, typer.Option("--password", hide_input=True)] = None,
@@ -1145,6 +1344,7 @@ def deploy_router(
 
     actions = {
         "create",
+        "local",
         "list",
         "status",
         "start",
@@ -1162,6 +1362,11 @@ def deploy_router(
         return
     if action_or_job == "list":
         deploy_list()
+        return
+    if action_or_job == "local":
+        if job_id is None:
+            raise typer.BadParameter("deploy local requires --job")
+        deploy_local_machine(job_id, device, local_port)
         return
     if action_or_job == "create":
         if job_id is None or server_id is None or server_package is None:

@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>隐变智模并发容量、算力需求与模型推理损耗评估报告</title>
+  <style>
+:root {
+  --ink: #14211d;
+  --muted: #64736d;
+  --green: #0aa57f;
+  --green-dark: #08735d;
+  --mint: #e7f8f2;
+  --blue: #2265d8;
+  --blue-soft: #edf4ff;
+  --amber: #a35b00;
+  --amber-soft: #fff5df;
+  --red: #c33d36;
+  --line: #dfe7e3;
+  --paper: #ffffff;
+  --canvas: #f4f7f6;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--canvas);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  line-height: 1.75;
+}
+.hero {
+  color: white;
+  background:
+    radial-gradient(circle at 86% 12%, rgba(255,255,255,.17), transparent 28%),
+    linear-gradient(130deg, #073f35 0%, #087b62 52%, #10a984 100%);
+  padding: 66px 24px 58px;
+}
+.hero-inner, .layout { max-width: 1260px; margin: 0 auto; }
+.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .16em; opacity: .78; }
+.hero h1 { max-width: 920px; margin: 12px 0 14px; font-size: clamp(34px, 5vw, 58px); line-height: 1.12; }
+.hero p { max-width: 820px; margin: 0; font-size: 18px; opacity: .88; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+.chip { padding: 7px 12px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; background: rgba(255,255,255,.09); font-size: 13px; }
+.layout { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 28px; padding: 34px 24px 80px; }
+.toc { position: sticky; top: 20px; align-self: start; max-height: calc(100vh - 40px); overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.9); box-shadow: 0 8px 28px rgba(31,58,49,.06); }
+.toc strong { display: block; margin-bottom: 10px; font-size: 14px; }
+.toc a { display: block; padding: 5px 0; color: var(--muted); text-decoration: none; font-size: 13px; line-height: 1.4; }
+.toc a:hover { color: var(--green-dark); }
+.toc .level-3 { padding-left: 13px; }
+main { min-width: 0; padding: 44px 52px; border: 1px solid var(--line); border-radius: 22px; background: var(--paper); box-shadow: 0 14px 44px rgba(31,58,49,.07); }
+main > h1:first-child, main > p:nth-child(-n+5), main > hr:first-of-type { display: none; }
+h2 { margin: 58px 0 18px; padding-top: 10px; font-size: 29px; line-height: 1.3; border-top: 1px solid var(--line); }
+h2:first-of-type { margin-top: 0; border-top: 0; }
+h3 { margin: 34px 0 12px; font-size: 21px; }
+p { margin: 10px 0 16px; }
+strong { color: #0b352b; }
+table { width: 100%; margin: 18px 0 27px; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 13px; font-size: 14px; }
+thead th { color: #164b3d; background: var(--mint); font-weight: 750; }
+th, td { padding: 11px 13px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th:last-child, td:last-child { border-right: 0; }
+tr:last-child td { border-bottom: 0; }
+tbody tr:nth-child(even) { background: #fbfcfc; }
+code { color: #105f4c; background: #edf7f3; border-radius: 5px; padding: 2px 5px; font-family: Consolas, "SFMono-Regular", monospace; }
+pre { overflow: auto; margin: 18px 0 25px; padding: 18px 20px; color: #e7fff7; background: #102a24; border-radius: 13px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); line-height: 1.55; }
+pre code { padding: 0; color: inherit; background: transparent; }
+ul, ol { padding-left: 25px; }
+li { margin: 5px 0; }
+hr { height: 1px; margin: 38px 0; border: 0; background: var(--line); }
+blockquote { margin: 22px 0; padding: 14px 18px; border-left: 4px solid var(--green); border-radius: 0 10px 10px 0; background: var(--mint); }
+.footer { max-width: 1260px; margin: -46px auto 35px; padding: 0 24px; color: var(--muted); font-size: 12px; text-align: right; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; padding: 18px 12px 55px; }
+  .toc { position: static; max-height: none; }
+  main { padding: 28px 20px; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+@media print {
+  @page { size: A4; margin: 16mm 13mm; }
+  body { background: white; font-size: 10.5pt; }
+  .hero { padding: 24mm 12mm 18mm; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .hero h1 { font-size: 28pt; }
+  .layout { display: block; max-width: none; padding: 0; }
+  .toc { position: static; margin: 10mm 0; box-shadow: none; break-after: page; }
+  main { padding: 0; border: 0; box-shadow: none; }
+  h2 { break-after: avoid; }
+  h3 { break-after: avoid; }
+  table, pre { break-inside: avoid; }
+  .footer { margin: 10mm 0 0; }
+}
+</style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="eyebrow">YINBIAN ZHIMO · CAPACITY ASSESSMENT</div>
+      <h1>隐变智模并发容量、算力需求与模型推理损耗评估报告</h1>
+      <p>可信混淆网关的Token算力、并发容量，以及云端私有模型相对原模型的推理损耗。</p>
+      <div class="hero-meta">
+        <span class="chip">外发版 1.0</span>
+        <span class="chip">2026-08-24</span>
+        <span class="chip">Qwen2.5-0.5B 实测</span>
+        <span class="chip">本地网关与云端模型分开核算</span>
+      </div>
+    </div>
+  </header>
+  <div class="layout">
+    <nav class="toc"><strong>报告目录</strong><a class="level-2" href="#1-执行摘要">1. 执行摘要</a>
+<a class="level-2" href="#2-系统边界与数据流">2. 系统边界与数据流</a>
+<a class="level-2" href="#3-指标定义">3. 指标定义</a>
+<a class="level-2" href="#4-本地混淆网关实测">4. 本地混淆网关实测</a>
+<a class="level-3" href="#4-1-实验环境">4.1 实验环境</a>
+<a class="level-3" href="#4-2-不同请求长度的单请求时间">4.2 不同请求长度的单请求时间</a>
+<a class="level-3" href="#4-3-典型请求的绝对计算量">4.3 典型请求的绝对计算量</a>
+<a class="level-3" href="#4-4-真实并行吞吐">4.4 真实并行吞吐</a>
+<a class="level-3" href="#4-5-网关内存">4.5 网关内存</a>
+<a class="level-2" href="#5-从token业务量换算所需算力">5. 从Token业务量换算所需算力</a>
+<a class="level-3" href="#5-1-主公式">5.1 主公式</a>
+<a class="level-3" href="#5-2-算力需求表">5.2 算力需求表</a>
+<a class="level-3" href="#5-3-参考硬件映射">5.3 参考硬件映射</a>
+<a class="level-3" href="#5-4-网络带宽">5.4 网络带宽</a>
+<a class="level-2" href="#6-从活跃会话换算业务负载">6. 从活跃会话换算业务负载</a>
+<a class="level-2" href="#7-云端私有模型推理损耗实测">7. 云端私有模型推理损耗实测</a>
+<a class="level-3" href="#7-1-测试协议">7.1 测试协议</a>
+<a class="level-3" href="#7-2-实测结果">7.2 实测结果</a>
+<a class="level-2" href="#8-模型越大-私有推理损耗是否越小">8. 模型越大，私有推理损耗是否越小</a>
+<a class="level-2" href="#9-容量规划建议">9. 容量规划建议</a>
+<a class="level-3" href="#9-1-小型验证或内部业务">9.1 小型验证或内部业务</a>
+<a class="level-3" href="#9-2-中型生产业务">9.2 中型生产业务</a>
+<a class="level-3" href="#9-3-大型高并发业务">9.3 大型高并发业务</a>
+<a class="level-2" href="#10-成本换算">10. 成本换算</a>
+<a class="level-2" href="#11-结论">11. 结论</a>
+<a class="level-2" href="#附录a-复现工件">附录A：复现工件</a>
+<a class="level-2" href="#附录b-复现命令">附录B：复现命令</a></nav>
+    <main><h1 id="隐变智模并发容量-算力需求与模型推理损耗评估报告">隐变智模并发容量、算力需求与模型推理损耗评估报告</h1>
+<p><strong>报告版本：</strong> 1.0（外发版）<br />
+<strong>报告日期：</strong> 2026-08-24<br />
+<strong>评估对象：</strong> 隐变智模可信混淆网关与云端私有模型<br />
+<strong>实测模型：</strong> Qwen2.5-0.5B-Instruct</p>
+<hr />
+<h2 id="1-执行摘要">1. 执行摘要</h2>
+<p>隐变智模的在线开销由两个彼此独立的部分组成：</p>
+<ol>
+<li><strong>可信网关开销：</strong> 在企业侧完成Chat Template、Tokenizer、输入Token置换、输出Token逆置换和增量文本恢复，主要消耗CPU。</li>
+<li><strong>云端私有模型开销：</strong> 私有模型因隐藏维扩展和精确RMS计算产生额外GPU计算、显存和推理时间。</li>
+</ol>
+<p>本轮结论如下。</p>
+<table>
+<thead>
+<tr>
+<th>结论项</th>
+<th style="text-align:right">结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>典型请求</td>
+<td style="text-align:right">512输入Token＋256输出Token</td>
+</tr>
+<tr>
+<td>普通网关计算量</td>
+<td style="text-align:right">3,120周期/总Token</td>
+</tr>
+<tr>
+<td>私有网关计算量</td>
+<td style="text-align:right">8,299周期/总Token</td>
+</tr>
+<tr>
+<td>隐私方案新增</td>
+<td style="text-align:right">5,179周期/总Token</td>
+</tr>
+<tr>
+<td>相同业务量所需网关算力</td>
+<td style="text-align:right">普通方案的2.66倍，新增约166%</td>
+</tr>
+<tr>
+<td>4 Worker私有网关实测吞吐</td>
+<td style="text-align:right">90.01万输入＋输出Token/s</td>
+</tr>
+<tr>
+<td>4 Worker、60%安全负载</td>
+<td style="text-align:right">约54.0万输入＋输出Token/s</td>
+</tr>
+<tr>
+<td>在线密钥大小</td>
+<td style="text-align:right">2.32 MiB</td>
+</tr>
+<tr>
+<td>网关是否需要GPU</td>
+<td style="text-align:right">不需要</td>
+</tr>
+<tr>
+<td>0.5B私有模型TTFT p50</td>
+<td style="text-align:right">+47.05%</td>
+</tr>
+<tr>
+<td>0.5B私有模型TPOT p50</td>
+<td style="text-align:right">+49.61%</td>
+</tr>
+<tr>
+<td>0.5B私有模型输出吞吐</td>
+<td style="text-align:right">-33.37%</td>
+</tr>
+<tr>
+<td>0.5B私有模型峰值显存</td>
+<td style="text-align:right">+62.58%</td>
+</tr>
+</tbody>
+</table>
+<p>对于商业部署，最重要的容量公式是：</p>
+<pre><code class="language-text">所需私有网关有效算力(Gcycle/s)
+= 业务总Token/s × 8,298.511 ÷ 10^9 ÷ 目标利用率
+</code></pre>
+<p>例如，峰值业务为100万输入＋输出Token/s、网关最高使用70%时，需要：</p>
+<pre><code class="language-text">100万 × 8,298.511 ÷ 10^9 ÷ 0.70
+= 11.855 Gcycle/s有效计算能力
+</code></pre>
+<hr />
+<h2 id="2-系统边界与数据流">2. 系统边界与数据流</h2>
+<pre><code class="language-text">用户明文问题
+    ↓
+企业侧可信网关
+Chat Template → Tokenizer → tau置换
+    ↓ 仅发送私有Token ID
+云端私有模型
+私有Token推理与SSE返回
+    ↓
+企业侧可信网关
+inverse_tau → 增量Detokenize
+    ↓
+用户获得明文回答
+</code></pre>
+<p>本报告分别计算：</p>
+<pre><code class="language-text">A. 企业侧网关：Token处理需要多少CPU类有效算力
+B. 云端模型：私有模型相对原模型增加多少GPU推理开销
+</code></pre>
+<p>两者不能混算。网关算力与模型参数量没有直接关系；云端模型算力与模型结构、隐藏维、层数、推理后端和GPU有关。</p>
+<hr />
+<h2 id="3-指标定义">3. 指标定义</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>输入Token</td>
+<td>一次请求经Tokenizer处理后的输入序列长度</td>
+</tr>
+<tr>
+<td>输出Token</td>
+<td>模型本轮生成的Token数量</td>
+</tr>
+<tr>
+<td>总Token</td>
+<td>输入Token＋输出Token，用于网关业务量核算</td>
+</tr>
+<tr>
+<td>Token/s</td>
+<td>网关每秒完成的输入＋输出Token，不是模型生成速度</td>
+</tr>
+<tr>
+<td>周期/Token</td>
+<td>当前实现处理一个总Token消耗的CPU时钟周期</td>
+</tr>
+<tr>
+<td>Gcycle/s</td>
+<td>每秒十亿个CPU周期，用作本报告的计算能力单位</td>
+</tr>
+<tr>
+<td>活跃会话</td>
+<td>当前正在生成回答的会话，不是注册用户或空闲连接数</td>
+</tr>
+<tr>
+<td>TTFT</td>
+<td>从请求开始到收到第一个输出Token的时间</td>
+</tr>
+<tr>
+<td>TPOT</td>
+<td>首Token之后，每生成一个Token的平均时间</td>
+</tr>
+<tr>
+<td>p50/p95/p99</td>
+<td>50%、95%、99%的请求不超过该数值</td>
+</tr>
+</tbody>
+</table>
+<p>本地网关包含的真实处理步骤为：</p>
+<ul>
+<li>Chat Template；</li>
+<li>Tokenizer分词；</li>
+<li>输入Token的 <code>tau</code> 置换；</li>
+<li>私有SSE响应解析；</li>
+<li>输出Token的 <code>inverse_tau</code> 逆置换；</li>
+<li>增量Detokenize；</li>
+<li>明文SSE重新封装。</li>
+</ul>
+<p>不包含云端模型推理和公网等待时间。</p>
+<hr />
+<h2 id="4-本地混淆网关实测">4. 本地混淆网关实测</h2>
+<h3 id="4-1-实验环境">4.1 实验环境</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU</td>
+<td>Intel Core i7-12700H</td>
+</tr>
+<tr>
+<td>内存</td>
+<td>16 GB</td>
+</tr>
+<tr>
+<td>Python</td>
+<td>3.11.15</td>
+</tr>
+<tr>
+<td>Tokenizer</td>
+<td>Qwen2.5 Tokenizer</td>
+</tr>
+<tr>
+<td>词表规模</td>
+<td>151,936</td>
+</tr>
+<tr>
+<td>并行测试</td>
+<td>1、2、4个独立Worker</td>
+</tr>
+<tr>
+<td>典型请求</td>
+<td>512输入Token、256输出Token</td>
+</tr>
+<tr>
+<td>计时方式</td>
+<td>热路径预热后配对计时；模型等待时间排除</td>
+</tr>
+</tbody>
+</table>
+<h3 id="4-2-不同请求长度的单请求时间">4.2 不同请求长度的单请求时间</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">输入/输出Token</th>
+<th style="text-align:right">普通网关</th>
+<th style="text-align:right">私有网关</th>
+<th style="text-align:right">隐私新增</th>
+<th style="text-align:right">私有/普通</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">128 / 128</td>
+<td style="text-align:right">0.448 ms</td>
+<td style="text-align:right">1.215 ms</td>
+<td style="text-align:right">0.766 ms</td>
+<td style="text-align:right">2.71倍</td>
+</tr>
+<tr>
+<td style="text-align:right">512 / 256</td>
+<td style="text-align:right">0.901 ms</td>
+<td style="text-align:right">2.491 ms</td>
+<td style="text-align:right">1.590 ms</td>
+<td style="text-align:right">2.76倍</td>
+</tr>
+<tr>
+<td style="text-align:right">2,048 / 512</td>
+<td style="text-align:right">1.740 ms</td>
+<td style="text-align:right">5.425 ms</td>
+<td style="text-align:right">3.686 ms</td>
+<td style="text-align:right">3.12倍</td>
+</tr>
+</tbody>
+</table>
+<p>在128～2,048输入Token、128～512输出Token的运营区间内，私有网关时间拟合为：</p>
+<pre><code class="language-text">私有处理时间(ms)
+= 0.2982
++ 0.000835 × 输入Token数
++ 0.006727 × 输出Token数
+</code></pre>
+<p>拟合优度 <code>R²=0.9972</code>。输出Token成本更高，是因为每个输出Token均需完成SSE解析、逆置换和增量文本恢复。</p>
+<h3 id="4-3-典型请求的绝对计算量">4.3 典型请求的绝对计算量</h3>
+<p>典型512输入、256输出请求共有768个总Token。</p>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th style="text-align:right">周期/请求</th>
+<th style="text-align:right">周期/总Token</th>
+<th style="text-align:right">相对普通网关</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>普通网关</td>
+<td style="text-align:right">239.59万</td>
+<td style="text-align:right">3,120</td>
+<td style="text-align:right">1.00倍</td>
+</tr>
+<tr>
+<td>私有网关</td>
+<td style="text-align:right">637.33万</td>
+<td style="text-align:right">8,299</td>
+<td style="text-align:right">2.66倍</td>
+</tr>
+<tr>
+<td>隐私新增</td>
+<td style="text-align:right">397.73万</td>
+<td style="text-align:right">5,179</td>
+<td style="text-align:right">+166.0%</td>
+</tr>
+</tbody>
+</table>
+<p>因此，对相同的输入＋输出Token业务量，当前Python私有网关需要普通网关约2.66倍的CPU类有效计算能力。</p>
+<p>独立的4 Worker并发吞吐测试得到2.62倍算力倍率，与周期法的2.66倍相差约1.5%。本报告容量规划采用更保守的2.66倍。</p>
+<p>这里不是说整套系统成本增加166%。云端GPU通常仍是主要成本；166%仅表示可信网关热路径的CPU计算增量。</p>
+<h3 id="4-4-真实并行吞吐">4.4 真实并行吞吐</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">Worker</th>
+<th style="text-align:right">普通网关</th>
+<th style="text-align:right">私有网关</th>
+<th style="text-align:right">私有总Token吞吐</th>
+<th style="text-align:right">私有p99</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1</td>
+<td style="text-align:right">1,001 req/s</td>
+<td style="text-align:right">372 req/s</td>
+<td style="text-align:right">28.54万Token/s</td>
+<td style="text-align:right">4.85 ms</td>
+</tr>
+<tr>
+<td style="text-align:right">2</td>
+<td style="text-align:right">1,779 req/s</td>
+<td style="text-align:right">696 req/s</td>
+<td style="text-align:right">53.48万Token/s</td>
+<td style="text-align:right">4.44 ms</td>
+</tr>
+<tr>
+<td style="text-align:right">4</td>
+<td style="text-align:right">3,071 req/s</td>
+<td style="text-align:right">1,172 req/s</td>
+<td style="text-align:right">90.01万Token/s</td>
+<td style="text-align:right">4.46 ms</td>
+</tr>
+</tbody>
+</table>
+<p>4 Worker并行效率约为单Worker线性值的78.8%。下降来自进程调度、内存访问和当前Python/PyTorch/Transformers运行时，并不是置换表计算变复杂。</p>
+<h3 id="4-5-网关内存">4.5 网关内存</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th style="text-align:right">实测占用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>在线置换密钥</td>
+<td style="text-align:right">2.32 MiB</td>
+</tr>
+<tr>
+<td>单Worker RSS</td>
+<td style="text-align:right">约0.79 GiB</td>
+</tr>
+<tr>
+<td>4 Worker合计RSS</td>
+<td style="text-align:right">约3.16 GiB</td>
+</tr>
+</tbody>
+</table>
+<p>内存主要来自Python、PyTorch、Transformers和Tokenizer。在线密钥本身很小。当前实现推荐4 Worker节点至少配置8 GiB内存；若改为无PyTorch的Rust或轻量C++网关，内存和周期/Token仍有较大下降空间。</p>
+<hr />
+<h2 id="5-从token业务量换算所需算力">5. 从Token业务量换算所需算力</h2>
+<h3 id="5-1-主公式">5.1 主公式</h3>
+<p>设业务峰值为 (B) 个输入＋输出Token/s，则：</p>
+<pre><code class="language-text">普通网关实际计算量(Gcycle/s) = B × 3,119.724 ÷ 10^9
+私有网关实际计算量(Gcycle/s) = B × 8,298.511 ÷ 10^9
+隐私新增计算量(Gcycle/s)     = B × 5,178.787 ÷ 10^9
+</code></pre>
+<p>考虑目标最高利用率 (u)：</p>
+<pre><code class="language-text">规划算力 = 实际计算量 ÷ u
+</code></pre>
+<h3 id="5-2-算力需求表">5.2 算力需求表</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">峰值总Token/s</th>
+<th style="text-align:right">普通网关</th>
+<th style="text-align:right">私有网关</th>
+<th style="text-align:right">隐私新增</th>
+<th style="text-align:right">私有规划算力（70%负载）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1万</td>
+<td style="text-align:right">0.031 Gcycle/s</td>
+<td style="text-align:right">0.083 Gcycle/s</td>
+<td style="text-align:right">0.052 Gcycle/s</td>
+<td style="text-align:right">0.119 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">10万</td>
+<td style="text-align:right">0.312 Gcycle/s</td>
+<td style="text-align:right">0.830 Gcycle/s</td>
+<td style="text-align:right">0.518 Gcycle/s</td>
+<td style="text-align:right">1.186 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">100万</td>
+<td style="text-align:right">3.120 Gcycle/s</td>
+<td style="text-align:right">8.299 Gcycle/s</td>
+<td style="text-align:right">5.179 Gcycle/s</td>
+<td style="text-align:right">11.855 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">1,000万</td>
+<td style="text-align:right">31.197 Gcycle/s</td>
+<td style="text-align:right">82.985 Gcycle/s</td>
+<td style="text-align:right">51.788 Gcycle/s</td>
+<td style="text-align:right">118.550 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">1亿</td>
+<td style="text-align:right">311.972 Gcycle/s</td>
+<td style="text-align:right">829.851 Gcycle/s</td>
+<td style="text-align:right">517.879 Gcycle/s</td>
+<td style="text-align:right">1,185.502 Gcycle/s</td>
+</tr>
+</tbody>
+</table>
+<h3 id="5-3-参考硬件映射">5.3 参考硬件映射</h3>
+<p>当前参考机4 Worker的实测上限为90.01万Token/s。按60%安全负载，单个参考计算单元按54.0万Token/s规划。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">峰值总Token/s</th>
+<th style="text-align:right">参考4-Worker计算单元</th>
+<th>当前Python实现的参考资源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">10万</td>
+<td style="text-align:right">1个</td>
+<td>4 vCPU / 8 GiB</td>
+</tr>
+<tr>
+<td style="text-align:right">50万</td>
+<td style="text-align:right">1个</td>
+<td>4 vCPU / 8 GiB</td>
+</tr>
+<tr>
+<td style="text-align:right">100万</td>
+<td style="text-align:right">2个</td>
+<td>约8 vCPU / 16 GiB，或2台4C8G</td>
+</tr>
+<tr>
+<td style="text-align:right">500万</td>
+<td style="text-align:right">10个</td>
+<td>建议多节点部署，约40 vCPU级参考算力</td>
+</tr>
+<tr>
+<td style="text-align:right">1,000万</td>
+<td style="text-align:right">19个</td>
+<td>建议多节点部署，约76 vCPU级参考算力</td>
+</tr>
+</tbody>
+</table>
+<p>这张表只把当前参考机性能映射为可理解的部署规模。正式采购应在目标CPU上执行同一基准，以实测Token/s或周期/Token替换参考值。</p>
+<h3 id="5-4-网络带宽">5.4 网络带宽</h3>
+<p>典型私有请求平均传输约11,799字节。包含20%的TLS、TCP和流量波动余量：</p>
+<pre><code class="language-text">带宽(Mbps)
+= 总Token/s ÷ 768 × 11,799 × 8 × 1.20 ÷ 10^6
+</code></pre>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">峰值总Token/s</th>
+<th style="text-align:right">典型私有协议带宽</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">10万</td>
+<td style="text-align:right">14.7 Mbps</td>
+</tr>
+<tr>
+<td style="text-align:right">100万</td>
+<td style="text-align:right">147.5 Mbps</td>
+</tr>
+<tr>
+<td style="text-align:right">500万</td>
+<td style="text-align:right">737.4 Mbps</td>
+</tr>
+<tr>
+<td style="text-align:right">1,000万</td>
+<td style="text-align:right">1.47 Gbps</td>
+</tr>
+</tbody>
+</table>
+<p>超过约500万总Token/s时，千兆网络会先于CPU成为明显约束，建议采用10GbE并拆分多个网关节点。</p>
+<hr />
+<h2 id="6-从活跃会话换算业务负载">6. 从活跃会话换算业务负载</h2>
+<p>只有业务给出“同时生成会话数”时，才需要使用模型单会话生成速度。</p>
+<p>设：</p>
+<pre><code class="language-text">N = 同时生成会话数
+r = 每个会话平均输出速度，Token/s
+Lout = 平均回答长度
+Lin = 平均输入长度
+</code></pre>
+<p>则：</p>
+<pre><code class="language-text">完成请求率 = N × r ÷ Lout
+网关总Token/s = 完成请求率 × (Lin + Lout)
+</code></pre>
+<p>以512输入、256输出为例：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">活跃会话</th>
+<th style="text-align:right">单会话速度</th>
+<th style="text-align:right">完成请求率</th>
+<th style="text-align:right">网关总Token/s</th>
+<th style="text-align:right">私有规划算力（70%）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1,000</td>
+<td style="text-align:right">10 Token/s</td>
+<td style="text-align:right">39.1 req/s</td>
+<td style="text-align:right">3.0万</td>
+<td style="text-align:right">0.356 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">1,000</td>
+<td style="text-align:right">30 Token/s</td>
+<td style="text-align:right">117.2 req/s</td>
+<td style="text-align:right">9.0万</td>
+<td style="text-align:right">1.067 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">10,000</td>
+<td style="text-align:right">10 Token/s</td>
+<td style="text-align:right">390.6 req/s</td>
+<td style="text-align:right">30.0万</td>
+<td style="text-align:right">3.556 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">10,000</td>
+<td style="text-align:right">30 Token/s</td>
+<td style="text-align:right">1,171.9 req/s</td>
+<td style="text-align:right">90.0万</td>
+<td style="text-align:right">10.669 Gcycle/s</td>
+</tr>
+<tr>
+<td style="text-align:right">50,000</td>
+<td style="text-align:right">30 Token/s</td>
+<td style="text-align:right">5,859.4 req/s</td>
+<td style="text-align:right">450.0万</td>
+<td style="text-align:right">53.347 Gcycle/s</td>
+</tr>
+</tbody>
+</table>
+<p>“并发用户”必须指正在生成Token的活跃会话。平台注册用户、登录用户和长连接数量不能直接代入该公式。</p>
+<hr />
+<h2 id="7-云端私有模型推理损耗实测">7. 云端私有模型推理损耗实测</h2>
+<h3 id="7-1-测试协议">7.1 测试协议</h3>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU</td>
+<td>NVIDIA GeForce RTX 3090 24 GB</td>
+</tr>
+<tr>
+<td>模型</td>
+<td>Qwen2.5-0.5B-Instruct</td>
+</tr>
+<tr>
+<td>后端</td>
+<td>Hugging Face eager</td>
+</tr>
+<tr>
+<td>精度</td>
+<td>BF16</td>
+</tr>
+<tr>
+<td>Batch</td>
+<td>1</td>
+</tr>
+<tr>
+<td>样本</td>
+<td>50个固定Prompt，每次生成64 Token</td>
+</tr>
+<tr>
+<td>运行次数</td>
+<td>原模型4次＋私有模型4次</td>
+</tr>
+<tr>
+<td>请求数</td>
+<td>每种模型200次，共400次</td>
+</tr>
+<tr>
+<td>顺序控制</td>
+<td>ABBA＋BAAB独立进程运行</td>
+</tr>
+<tr>
+<td>置信区间</td>
+<td>配对请求Bootstrap，10,000次重采样</td>
+</tr>
+</tbody>
+</table>
+<h3 id="7-2-实测结果">7.2 实测结果</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th style="text-align:right">原模型</th>
+<th style="text-align:right">私有模型</th>
+<th style="text-align:right">损耗</th>
+<th style="text-align:right">95%置信区间</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TTFT p50</td>
+<td style="text-align:right">21.99 ms</td>
+<td style="text-align:right">32.33 ms</td>
+<td style="text-align:right">+47.05%</td>
+<td style="text-align:right">+46.51%～+47.68%</td>
+</tr>
+<tr>
+<td>TTFT p95</td>
+<td style="text-align:right">22.79 ms</td>
+<td style="text-align:right">33.13 ms</td>
+<td style="text-align:right">+45.37%</td>
+<td style="text-align:right">+41.32%～+48.05%</td>
+</tr>
+<tr>
+<td>TTFT p99</td>
+<td style="text-align:right">24.30 ms</td>
+<td style="text-align:right">34.94 ms</td>
+<td style="text-align:right">+43.79%</td>
+<td style="text-align:right">+35.12%～+54.92%</td>
+</tr>
+<tr>
+<td>TPOT p50</td>
+<td style="text-align:right">20.90 ms</td>
+<td style="text-align:right">31.27 ms</td>
+<td style="text-align:right">+49.61%</td>
+<td style="text-align:right">+49.00%～+50.27%</td>
+</tr>
+<tr>
+<td>TPOT p95</td>
+<td style="text-align:right">21.29 ms</td>
+<td style="text-align:right">31.92 ms</td>
+<td style="text-align:right">+49.91%</td>
+<td style="text-align:right">+49.19%～+50.44%</td>
+</tr>
+<tr>
+<td>TPOT p99</td>
+<td style="text-align:right">21.72 ms</td>
+<td style="text-align:right">31.97 ms</td>
+<td style="text-align:right">+47.16%</td>
+<td style="text-align:right">+46.42%～+50.22%</td>
+</tr>
+<tr>
+<td>输出吞吐</td>
+<td style="text-align:right">47.86 Token/s</td>
+<td style="text-align:right">31.89 Token/s</td>
+<td style="text-align:right">-33.37%</td>
+<td style="text-align:right">—</td>
+</tr>
+<tr>
+<td>峰值显存</td>
+<td style="text-align:right">0.950 GiB</td>
+<td style="text-align:right">1.544 GiB</td>
+<td style="text-align:right">+62.58%</td>
+<td style="text-align:right">—</td>
+</tr>
+<tr>
+<td>模型加载</td>
+<td style="text-align:right">0.413 s</td>
+<td style="text-align:right">0.489 s</td>
+<td style="text-align:right">+18.40%</td>
+<td style="text-align:right">—</td>
+</tr>
+</tbody>
+</table>
+<p>当前0.5B产品checkpoint没有达到“TTFT和TPOT损耗不超过15%”的目标。主要原因是0.5B原模型计算量很小，而固定扩维和精确RMS附加计算占比较高。</p>
+<hr />
+<h2 id="8-模型越大-私有推理损耗是否越小">8. 模型越大，私有推理损耗是否越小</h2>
+<p>论文扩维关系为：</p>
+<pre><code class="language-text">D = d + 2h
+</code></pre>
+<p>当前使用 <code>h=128</code>，因此 <code>D=d+256</code>。只看残差坐标扩维，比例为：</p>
+<pre><code class="language-text">扩维比例 = 256 / d
+</code></pre>
+<p>隐藏维越大，这部分百分比必然下降。但当前实现还包含每层FP64精确RMS，所以完整运行时间不一定单调下降。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">Qwen2.5规模</th>
+<th style="text-align:right">d→D</th>
+<th style="text-align:right">私有权重增加</th>
+<th style="text-align:right">普通投影FLOP增加</th>
+<th style="text-align:right">加精确RMS后的原始FLOP增加</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">0.5B</td>
+<td style="text-align:right">896→1,152</td>
+<td style="text-align:right">+65.37%</td>
+<td style="text-align:right">+27.35%</td>
+<td style="text-align:right">+37.15%</td>
+</tr>
+<tr>
+<td style="text-align:right">1.5B</td>
+<td style="text-align:right">1,536→1,792</td>
+<td style="text-align:right">+35.43%</td>
+<td style="text-align:right">+16.20%</td>
+<td style="text-align:right">+26.09%</td>
+</tr>
+<tr>
+<td style="text-align:right">3B</td>
+<td style="text-align:right">2,048→2,304</td>
+<td style="text-align:right">+24.80%</td>
+<td style="text-align:right">+12.20%</td>
+<td style="text-align:right">+23.10%</td>
+</tr>
+<tr>
+<td style="text-align:right">7B</td>
+<td style="text-align:right">3,584→3,840</td>
+<td style="text-align:right">+8.25%</td>
+<td style="text-align:right">+7.04%</td>
+<td style="text-align:right">+17.98%</td>
+</tr>
+<tr>
+<td style="text-align:right">14B</td>
+<td style="text-align:right">5,120→5,376</td>
+<td style="text-align:right">+6.14%</td>
+<td style="text-align:right">+4.91%</td>
+<td style="text-align:right">+23.66%</td>
+</tr>
+<tr>
+<td style="text-align:right">32B</td>
+<td style="text-align:right">5,120→5,376</td>
+<td style="text-align:right">+5.51%</td>
+<td style="text-align:right">+4.95%</td>
+<td style="text-align:right">+15.93%</td>
+</tr>
+<tr>
+<td style="text-align:right">72B</td>
+<td style="text-align:right">8,192→8,448</td>
+<td style="text-align:right">+3.70%</td>
+<td style="text-align:right">+3.10%</td>
+<td style="text-align:right">+18.54%</td>
+</tr>
+</tbody>
+</table>
+<p>可直接采用的结论是：</p>
+<ul>
+<li>私有权重增幅总体随隐藏维增大而下降；</li>
+<li>普通扩维投影的相对计算增量总体下降；</li>
+<li>完整推理时间是否下降，不能只由参数量判断；</li>
+<li>14B与72B的原始FLOP增量并不低于相邻较小型号，原因是层数、FFN宽度和精确RMS占比不同；</li>
+<li>目前只有0.5B完成原始/私有完整checkpoint配对实测，其他规模是结构核算，不是运行时间实测。</li>
+</ul>
+<hr />
+<h2 id="9-容量规划建议">9. 容量规划建议</h2>
+<h3 id="9-1-小型验证或内部业务">9.1 小型验证或内部业务</h3>
+<pre><code class="language-text">峰值 ≤ 50万总Token/s
+当前实现参考：4 vCPU / 8 GiB
+网络：千兆
+节点：建议2台主备或双活
+</code></pre>
+<h3 id="9-2-中型生产业务">9.2 中型生产业务</h3>
+<pre><code class="language-text">峰值约100万总Token/s
+所需私有规划算力：11.855 Gcycle/s
+当前实现参考：8 vCPU / 16 GiB或2×4C8G
+网络：千兆可用，建议预留双网口或10GbE升级能力
+节点：至少2台，按N+1部署
+</code></pre>
+<h3 id="9-3-大型高并发业务">9.3 大型高并发业务</h3>
+<pre><code class="language-text">峰值500万～1,000万总Token/s
+私有规划算力：59.3～118.6 Gcycle/s
+网络：10GbE
+部署：无状态网关水平扩展
+会话状态：外置或按一致性哈希固定到网关
+密钥：本地安全加载，不进入浏览器和云端模型服务器
+</code></pre>
+<p>商业上线前，在目标CPU和目标Tokenizer上运行相同基准，得到该硬件真实的Token/s、周期/Token、p99和RSS，再确定最终服务器数量。</p>
+<hr />
+<h2 id="10-成本换算">10. 成本换算</h2>
+<p>本地网关计算成本可以按Token业务量计算：</p>
+<pre><code class="language-text">每10亿总Token的私有计算周期
+= 10^9 × 8,298.511
+= 8,298.511 Gcycle
+</code></pre>
+<p>若供应商给出的有效计算能力价格为 <code>P 元/(Gcycle/s·小时)</code>，持续业务量为 <code>B Token/s</code>：</p>
+<pre><code class="language-text">每小时私有网关计算成本
+= B × 8,298.511 ÷ 10^9 ÷ 目标利用率 × P
+</code></pre>
+<p>实际服务器报价通常按实例小时或月计费，因此落地时采用：</p>
+<pre><code class="language-text">月费用 = 节点数量 × 实例月价
+隐私增量月费用 = 私有网关总价 - 普通网关总价
+</code></pre>
+<p>云端GPU模型费用需独立计算：</p>
+<pre><code class="language-text">GPU月费用
+= GPU单价 × GPU数量 × 运行小时
+</code></pre>
+<p>不能把网关CPU增量和云端GPU推理损耗相加成一个百分比。</p>
+<hr />
+<h2 id="11-结论">11. 结论</h2>
+<ol>
+<li>当前私有网关典型负载需要 <strong>8,299周期/总Token</strong>，比普通网关新增 <strong>5,179周期/总Token</strong>。</li>
+<li>峰值100万总Token/s时，按70%利用率应配置至少 <strong>11.855 Gcycle/s</strong> 的有效网关计算能力。</li>
+<li>当前Python实现4 Worker实测达到 <strong>90.01万总Token/s</strong>，按60%安全负载规划为 <strong>54.0万Token/s</strong>。</li>
+<li>Token置换不是主要资源来源；主要开销来自Tokenizer、SSE解析、增量Detokenize和Python运行时。</li>
+<li>可信网关不需要GPU，优先选择高主频CPU、充足内存和稳定网络。</li>
+<li>Qwen2.5-0.5B私有模型实测TTFT增加47.05%、TPOT增加49.61%，尚未达到15%目标。</li>
+<li>大模型能够稀释固定扩维的权重和普通投影开销，但完整推理损耗是否下降仍需真实7B及以上checkpoint配对测试。</li>
+</ol>
+<hr />
+<h2 id="附录a-复现工件">附录A：复现工件</h2>
+<p>本地网关：</p>
+<ul>
+<li><code>artifacts/performance/20260821-gateway-capacity/gateway-overhead-grid-20cell-v2.json</code></li>
+<li><code>artifacts/performance/20260821-gateway-capacity/gateway-cycles-v1.json</code></li>
+<li><code>artifacts/performance/20260821-gateway-capacity/gateway-concurrency-512x256-v2.json</code></li>
+<li><code>artifacts/performance/20260821-gateway-capacity/gateway-machine-capacity-v2.json</code></li>
+<li><code>artifacts/performance/20260821-gateway-capacity/compute-scaling-revised-v2.json</code></li>
+</ul>
+<p>云端模型：</p>
+<ul>
+<li><code>artifacts/performance/20260821-3090-qwen05b-expanded/full-50x64/balanced-comparison.json</code></li>
+<li><code>artifacts/performance/20260821-3090-qwen05b-expanded/expansion-scaling-3090.json</code></li>
+</ul>
+<h2 id="附录b-复现命令">附录B：复现命令</h2>
+<pre><code class="language-powershell">uv run python scripts/benchmark_gateway_cycles.py `
+  --tokenizer data/models/qwen2.5-0.5b-instruct `
+  --key-dir data/private/yinbian-model-keys/full `
+  --input-tokens 128 512 2048 `
+  --output-tokens 128 256 512 `
+  --samples 100 --batch-size 20 `
+  --out artifacts/performance/20260821-gateway-capacity/gateway-cycles-v1.json
+
+uv run python scripts/benchmark_gateway_concurrency.py `
+  --tokenizer data/models/qwen2.5-0.5b-instruct `
+  --key-dir data/private/yinbian-model-keys/full `
+  --input-tokens 512 --output-tokens 256 `
+  --workers 1 2 4 --requests-per-worker 300 --cpu-cores 4 `
+  --out artifacts/performance/20260821-gateway-capacity/gateway-concurrency-512x256-v2.json
+
+uv run python scripts/analyze_compute_scaling.py `
+  --gateway-grid artifacts/performance/20260821-gateway-capacity/gateway-overhead-grid-20cell-v2.json `
+  --gateway-concurrency artifacts/performance/20260821-gateway-capacity/gateway-concurrency-512x256-v2.json `
+  --expansion-h 128 --context-tokens 512 `
+  --out artifacts/performance/20260821-gateway-capacity/compute-scaling-revised-v2.json `
+  --csv artifacts/performance/20260821-gateway-capacity/model-scaling-revised-v2.csv
+</code></pre>
+</main>
+  </div>
+  <footer class="footer">隐变智模 · 并发容量与推理性能评估</footer>
+</body>
+</html>

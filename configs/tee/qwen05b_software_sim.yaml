@@ -1,0 +1,22 @@
+schema_version: 1
+model_id: qwen2.5-0.5b-instruct
+source: data/models/qwen2.5-0.5b-instruct
+security_mode: tee_gm
+boundary_mode: tee_split
+tee_backend: software_sim
+conversion:
+  expansion_h: 128
+  coefficient_lambda: 0.3
+  seed: 20260803
+  alpha_e: 0.0
+  alpha_h: 0.0
+  dtype: float32
+  attention_compute_dtype: float32
+  rms_mode: exact-metric
+  rms_representation: stable-factor
+runtime:
+  host: 127.0.0.1
+  head_mode: local
+  hardware_attested: false
+  production_allowed: false
+

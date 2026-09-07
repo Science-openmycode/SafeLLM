@@ -9,6 +9,7 @@ CANDIDATE_MODEL="${ALOEPRI_PRIVATE_MODEL:-data/packages/qwen05b-candidate-v47-st
 TOKENIZER="${ALOEPRI_TOKENIZER:-$BASELINE_MODEL}"
 PROMPTS="${ALOEPRI_PERFORMANCE_PROMPTS:-configs/eval/benchmark_prompts_20.json}"
 CANDIDATE_KEY="${ALOEPRI_FULL_KEY:-data/keys/dev-qwen05b-candidate-v47-best-single/paper_key.safetensors}"
+PAIRED_INPUTS="${ALOEPRI_PAIRED_PERFORMANCE_INPUTS:-}"
 OUTPUT_DIR="${ALOEPRI_PERFORMANCE_OUT:-artifacts/performance/v47/balanced-linux}"
 DTYPE="${ALOEPRI_PERFORMANCE_DTYPE:-float32}"
 GPU_FRACTION="${ALOEPRI_GPU_MEMORY_FRACTION:-0.65}"
@@ -31,10 +32,15 @@ for index in "${!roles[@]}"; do
   key_args=()
   if [[ "$role" == "candidate" ]]; then
     model="$CANDIDATE_MODEL"
-    key_args=(--key "$CANDIDATE_KEY")
+    if [[ -z "$PAIRED_INPUTS" ]]; then
+      key_args=(--key "$CANDIDATE_KEY")
+    fi
     candidate_files+=("$output")
   else
     baseline_files+=("$output")
+  fi
+  if [[ -n "$PAIRED_INPUTS" ]]; then
+    key_args=(--paired-inputs "$PAIRED_INPUTS")
   fi
   "$PYTHON" scripts/benchmark_hf.py \
     --model "$model" --tokenizer "$TOKENIZER" --prompts "$PROMPTS" \

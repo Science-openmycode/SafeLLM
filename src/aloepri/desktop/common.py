@@ -24,7 +24,10 @@ def run_desktop(
     *,
     width: int = 1280,
     height: int = 820,
+    initial_path: str = "/",
 ) -> None:
+    if not initial_path.startswith("/") or initial_path.startswith("//"):
+        raise ValueError("initial_path must be an absolute local application path")
     bundled_webview = Path(sys.executable).resolve().parent / "WebView2"
     if bundled_webview.is_dir():
         executable = next(bundled_webview.rglob("msedgewebview2.exe"), None)
@@ -47,7 +50,7 @@ def run_desktop(
     try:
         webview.create_window(
             title,
-            f"http://127.0.0.1:{port}/",
+            f"http://127.0.0.1:{port}{initial_path}",
             width=width,
             height=height,
             min_size=(1024, 700),

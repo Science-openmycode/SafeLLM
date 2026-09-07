@@ -1,0 +1,23 @@
+[Unit]
+Description=Yinbian Zhimo attested TEE gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yinbian
+Group=yinbian
+EnvironmentFile=/etc/yinbian-tee/runtime.env
+ExecStart=/opt/yinbian-tee/runtime/bin/yinbian-tee-gateway
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/yinbian-tee/encrypted-boundary /opt/yinbian-tee/logs
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+

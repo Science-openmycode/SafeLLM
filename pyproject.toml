@@ -31,6 +31,7 @@ aloepri = "aloepri.cli:legacy_main"
 yinbian = "aloepri.cli:app"
 yinbian-deploy = "aloepri.desktop.deploy:main"
 yinbian-chat = "aloepri.desktop.chat:main"
+yinbian-gm-client = "aloepri.tee.gm_client_entry:main"
 
 [project.entry-points."vllm.general_plugins"]
 aloepri = "aloepri.serving.vllm_plugin:register"

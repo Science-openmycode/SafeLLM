@@ -140,3 +140,14 @@ uv run python scripts\audit_conversion_plan.py `
 - [版本说明](docs/VERSION_0.5.0.md)
 
 旧Qwen、OpenSeek、论文复现、实验数据和错误推导文档仍保留在`docs/`与`artifacts/`中；0.5.0的Mock结果不得用于替代真实精度、攻击或云端性能数据。
+
+## TEE 国密模式（增量开发）
+
+新增 `security_mode=tee_gm`、`boundary_mode=tee_split`，旧置换模式和旧工件不迁移。
+Qwen2.5-0.5B 已完成真实权重的 Embedding/Transformer/Head 拆分、软件模拟 TEE
+问答、Local TEE Head 和一次性掩码外包 Head 闭环。开发启动与真实 TDX 的严格
+门禁见 [TEE 国密模式说明](docs/guides/TEE_GM_MODE.md)。
+
+当前发布证据级别为 `TEE_GM_SOFTWARE_SIM_PASS`。普通 RTX 3060/3090 不提供
+Intel TDX，尚未完成的 DCAP Quote、TDX Guest 和 RFC 8998 物理互操作不得标记为
+`TEE_GM_TDX_ATTESTED_PASS`。

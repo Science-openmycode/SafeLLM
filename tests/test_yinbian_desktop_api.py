@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
 
+import torch
 from fastapi.testclient import TestClient
+from safetensors.torch import save_file
 
 from aloepri.desktop.chat_api import create_chat_desktop_app
 from aloepri.desktop.deploy_api import create_deploy_desktop_app
@@ -22,15 +25,33 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
         assert "隐变智模部署" in page.text
         assert 'id="wizard-family"' in page.text
         assert 'id="wizard-model"' in page.text
+        assert 'id="wizard-source-mode"' in page.text
+        assert 'id="wizard-local-model-path"' in page.text
         assert 'id="wizard-server" hidden disabled' in page.text
         assert 'id="wizard-password"' in page.text
         assert 'id="model-grid" class="model-browser"' in page.text
         assert 'id="ssh-command"' in page.text
+        assert 'id="overview-route-title">总体技术路线' in page.text
+        assert 'src="/privacy-route-overview.png"' in page.text
+        assert 'id="overview-scenario-title">应用场景' in page.text
+        assert 'src="/deployment-scenario-framework.png?v=2"' in page.text
+        overview_route = client.get("/privacy-route-overview.png")
+        assert overview_route.status_code == 200
+        assert overview_route.headers["content-type"] == "image/png"
+        assert overview_route.content.startswith(b"\x89PNG\r\n\x1a\n")
+        scenario_framework = client.get("/deployment-scenario-framework.png")
+        assert scenario_framework.status_code == 200
+        assert scenario_framework.headers["content-type"] == "image/png"
+        assert scenario_framework.content.startswith(b"\x89PNG\r\n\x1a\n")
         script = client.get("/app.js")
         assert script.status_code == 200
         assert 'data-catalog-family="${escapeHtml(family)}"' in script.text
         assert "function updateDeploymentMode()" in script.text
+        assert "function updateModelSource()" in script.text
+        assert 'api("/api/models/inspect"' in script.text
         assert "function jobProgress(job)" in script.text
+        assert 'value="local-deploy"' in page.text
+        assert "function latestJobOperation(jobId)" in script.text
         assert "下载已完成，正在改造模型权重" in script.text
         assert 'activeElement.closest(".page.active")' in script.text
         assert 'document.querySelector("form:not([hidden])")' not in script.text
@@ -94,6 +115,69 @@ def test_deploy_desktop_is_loopback_session_scoped_and_branded(tmp_path: Path) -
             headers={"Origin": "https://attacker.example"},
         )
         assert rejected.status_code == 403
+
+
+def test_deploy_desktop_plans_an_already_downloaded_local_model(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "local-qwen"
+    source.mkdir()
+    (source / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen2",
+                "num_hidden_layers": 0,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "torch_dtype": "float32",
+            }
+        ),
+        encoding="utf-8",
+    )
+    save_file(
+        {
+            "model.embed_tokens.weight": torch.zeros(4, 2),
+            "model.norm.weight": torch.ones(2),
+            "lm_head.weight": torch.zeros(4, 2),
+        },
+        source / "model.safetensors",
+    )
+
+    with TestClient(create_deploy_desktop_app(state_path=tmp_path / "state.db")) as client:
+        assert client.get("/").status_code == 200
+        inspected = client.post("/api/models/inspect", json={"model": str(source)})
+        assert inspected.status_code == 200, inspected.text
+        assert inspected.json()["adapter_id"] == "qwen2"
+        assert inspected.json()["resolved_path"] == str(source.resolve())
+
+        inspected_parent = client.post(
+            "/api/models/inspect",
+            json={
+                "model": str(tmp_path),
+                "catalog_model": "qwen2.5-0.5b-instruct",
+            },
+        )
+        assert inspected_parent.status_code == 200, inspected_parent.text
+        assert inspected_parent.json()["resolved_path"] == str(source.resolve())
+        assert inspected_parent.json()["input_was_parent"] is True
+
+        planned = client.post(
+            "/api/plans",
+            json={
+                "model": str(source),
+                "catalog_model": "qwen2.5-0.5b-instruct",
+                "destination": str(tmp_path / "private"),
+                "mode": "local-deploy",
+            },
+        )
+        assert planned.status_code == 200, planned.text
+        payload = planned.json()
+        assert payload["source"]["type"] == "local"
+        assert payload["source"]["path"] == str(source.resolve())
+        assert payload["source"]["repo_id"] == "Qwen/Qwen2.5-0.5B-Instruct"
+        assert payload["output"]["model_id"] == "qwen2.5-0.5b-instruct"
+        assert payload["output"]["deployment_mode"] == "local-deploy"
+        assert payload["output"]["server_id"] is None
 
 
 def test_deploy_desktop_builds_kimi_k26_text_backbone_plan(tmp_path: Path) -> None:
@@ -223,6 +307,79 @@ def test_deploy_desktop_remembers_ssh_password_in_dpapi_vault(
     ).read_bytes()
 
 
+def test_deploy_desktop_updates_existing_server_and_saved_password(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    monkeypatch.setenv("YINBIAN_HOME", str(tmp_path / "yinbian-home"))  # type: ignore[attr-defined]
+    state_path = tmp_path / "state.db"
+    store = ProductStore(state_path)
+    store.add_server(
+        {
+            "server_id": "server-update",
+            "display_name": "Old GPU",
+            "host": "old.example",
+            "port": 2200,
+            "username": "root",
+            "auth_type": "password",
+            "credential_ref": "old-password",
+            "host_key_fingerprint": "SHA256:old",
+        }
+    )
+    store.create_job("linked-qwen-job", {})
+    store.put_deployment(
+        {
+            "deployment_id": "linked-qwen-deployment",
+            "server_id": "server-update",
+            "job_id": "linked-qwen-job",
+            "model_id": "qwen2.5-0.5b-instruct",
+            "model_version": "revision-qwen",
+            "key_id": "key-qwen",
+            "version_id": "version-qwen",
+            "remote_port": 18000,
+        }
+    )
+    CredentialVault(product_paths().credentials).put(
+        "old-password", "ssh_password", "old-secret"
+    )
+    with TestClient(create_deploy_desktop_app(state_path=state_path)) as client:
+        assert client.get("/").status_code == 200
+        updated = client.put(
+            "/api/servers/server-update",
+            json={
+                "display_name": "Current 3090",
+                "ssh_command": "ssh -p 51838 root@i-2.gpushare.com",
+                "auth_type": "password",
+                "password": "new-secret",
+                "remember_password": True,
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        payload = updated.json()
+        assert payload["server_id"] == "server-update"
+        assert payload["host"] == "i-2.gpushare.com"
+        assert payload["port"] == 51838
+        assert payload["host_key_fingerprint"] is None
+        assert payload["has_saved_password"] is True
+
+    record = store.get_server("server-update")
+    assert CredentialVault(product_paths().credentials).get(
+        str(record["credential_ref"])
+    )["secret"] == "new-secret"
+    assert store.get_deployment("linked-qwen-deployment")["server_id"] == "server-update"
+
+
+def test_deploy_dashboard_provides_default_ssh_private_key(tmp_path: Path) -> None:
+    with TestClient(
+        create_deploy_desktop_app(state_path=tmp_path / "state.db")
+    ) as client:
+        assert client.get("/").status_code == 200
+        dashboard = client.get("/api/dashboard")
+        assert dashboard.status_code == 200
+        default_key = Path(dashboard.json()["paths"]["default_ssh_private_key"])
+        assert default_key.name in {"id_ed25519", "id_rsa", "id_ecdsa"}
+        assert default_key.parent.name == ".ssh"
+
+
 def test_chat_desktop_hides_input_without_healthy_deployment(tmp_path: Path) -> None:
     with TestClient(create_chat_desktop_app(state_path=tmp_path / "state.db")) as client:
         page = client.get("/")
@@ -235,6 +392,58 @@ def test_chat_desktop_hides_input_without_healthy_deployment(tmp_path: Path) -> 
             headers={"Origin": "https://attacker.example"},
         )
         assert rejected.status_code == 403
+
+
+def test_chat_desktop_keeps_old_permutation_and_tee_modes_visible(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.db"
+    store = ProductStore(state_path)
+    store.create_job("old-job", {})
+    store.create_job("tee-job", {})
+    store.add_server(
+        {
+            "server_id": "yinbian-local-machine",
+            "display_name": "本机",
+            "host": "127.0.0.1",
+            "port": 22,
+            "username": "local",
+        }
+    )
+    for deployment_id, job_id, status, security_mode in (
+        ("old-permutation", "old-job", "STOPPED", "permutation"),
+        ("new-tee", "tee-job", "HEALTHY", "tee_gm"),
+    ):
+        store.put_deployment(
+            {
+                "deployment_id": deployment_id,
+                "server_id": "yinbian-local-machine",
+                "job_id": job_id,
+                "model_id": "qwen",
+                "model_version": "revision",
+                "key_id": "key",
+                "version_id": deployment_id,
+                "status": status,
+                "remote_port": 18131,
+                "metadata": {
+                    "target_type": "local",
+                    "security_mode": security_mode,
+                    "tee_backend": "software_sim" if security_mode == "tee_gm" else None,
+                },
+            }
+        )
+    with TestClient(create_chat_desktop_app(state_path=state_path)) as client:
+        page = client.get("/")
+        assert "旧版 · 词表置换" in page.text
+        assert "新版 · TEE国密" in page.text
+        assert "window.applySecurityMode" in page.text
+        deployments = client.get("/api/desktop/deployments").json()
+        assert {item["deployment_id"] for item in deployments} == {
+            "old-permutation",
+            "new-tee",
+        }
+        tee_page = client.get("/privacy/tee")
+        assert tee_page.status_code == 200
+        assert "yinbian-selected-deployment" in tee_page.text
+        assert "加密后的提示词" in tee_page.text
 
 
 def test_deployed_model_can_launch_chat_with_selected_deployment(

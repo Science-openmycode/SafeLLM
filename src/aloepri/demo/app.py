@@ -29,6 +29,7 @@ from torch import Tensor
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from aloepri.client.sdk import TokenKey
+from aloepri.client.tee_sdk import TeeInferenceClient
 from aloepri.serving.protocol import GenerateResponse
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -320,9 +321,7 @@ class DemoGateway:
                         f"got {sequence_no}"
                     )
                 private_id = int(event["output_id"])
-                recovered_id = int(
-                    self.key.decode_ids(torch.tensor([private_id], dtype=torch.int64))[0]
-                )
+                recovered_id = self.key.decode_id(private_id)
                 elapsed_ms = float(event["elapsed_ms"])
                 private_output_ids.append(private_id)
                 recovered_output_ids.append(recovered_id)
@@ -355,6 +354,238 @@ class DemoGateway:
             "tpot_ms": sum(durations[1:]) / max(1, len(durations) - 1),
             "client_roundtrip_ms": (time.perf_counter() - started) * 1000,
             "answer": self._decode(recovered_output_ids, skip_special_tokens=True),
+        }
+
+
+class TeeDemoGateway:
+    """Local UI adapter for ordinary Token IDs protected by an attested GM channel."""
+
+    def __init__(self, client: TeeInferenceClient, *, max_context_tokens: int = 1_800) -> None:
+        if max_context_tokens < 1:
+            raise ValueError("max_context_tokens must be positive")
+        self.client = client
+        self.max_context_tokens = max_context_tokens
+
+    def close(self) -> None:
+        self.client.close()
+
+    def _messages(self, request: DemoRequest) -> tuple[list[dict[str, str]], list[int], int]:
+        messages = [message.model_dump() for message in request.history]
+        messages.append({"role": "user", "content": request.prompt})
+        dropped = 0
+        while True:
+            token_ids = self.client.encode_chat_ids(messages)
+            if len(token_ids) <= self.max_context_tokens:
+                return messages, token_ids, dropped
+            if len(messages) == 1:
+                raise ValueError("current prompt exceeds the local demo context window")
+            drop_count = (
+                2
+                if len(messages) >= 3
+                and messages[0]["role"] == "user"
+                and messages[1]["role"] == "assistant"
+                else 1
+            )
+            del messages[:drop_count]
+            dropped += drop_count
+
+    def generate(self, request: DemoRequest) -> DemoResponse:
+        started = time.perf_counter()
+        messages, plain_ids, _ = self._messages(request)
+        result = self.client.chat(
+            messages,
+            max_new_tokens=request.max_new_tokens,
+            temperature=request.temperature,
+        )
+        request_ciphertext = getattr(
+            self.client.session, "last_request_ciphertext", "RFC8998 TLS ciphertext"
+        )
+        response_ciphertext = getattr(
+            self.client.session, "last_response_ciphertext", "RFC8998 TLS ciphertext"
+        )
+        return DemoResponse(
+            request_id=result.request_id,
+            model_id=self.client.deployment.model_id,
+            key_id=self.client.deployment.key_id,
+            prompt=request.prompt,
+            plain_input_ids=plain_ids,
+            private_input_ids=[],
+            private_input_text=str(request_ciphertext),
+            private_output_ids=[],
+            private_output_text=str(response_ciphertext),
+            recovered_output_ids=result.output_ids,
+            answer=result.text,
+            input_trace=[],
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            ttft_ms=result.ttft_ms,
+            tpot_ms=result.tpot_ms,
+            client_roundtrip_ms=(time.perf_counter() - started) * 1000,
+        )
+
+    def stream(self, request: DemoRequest) -> Iterator[dict[str, object]]:
+        started = time.perf_counter()
+        messages, plain_ids, dropped = self._messages(request)
+        chunks = iter(
+            self.client.stream_chat(
+                messages,
+                max_new_tokens=request.max_new_tokens,
+                temperature=request.temperature,
+                include_execution_trace=True,
+            )
+        )
+        try:
+            first_chunk = next(chunks)
+        except StopIteration as error:
+            raise RuntimeError("TEE returned no generated Token") from error
+        request_ciphertext = getattr(
+            self.client.session, "last_request_ciphertext", "RFC8998 TLS ciphertext"
+        )
+        first_privacy = first_chunk.privacy or {}
+        request_wire = cast(dict[str, object], first_privacy.get("request_wire_evidence") or {})
+        response_wire = cast(
+            dict[str, object], first_privacy.get("response_wire_evidence") or {}
+        )
+        token_bytes = json.dumps(plain_ids, separators=(",", ":")).encode("utf-8")
+        trace_events: list[dict[str, object]] = [
+            *cast(list[dict[str, object]], first_privacy.get("session_trace") or []),
+            {
+                "stage": "client_tokenize",
+                "actor": "客户端本地",
+                "title": "应用Chat Template并生成普通Token",
+                "status": "complete",
+                "detail": "本次请求的Token由当前部署对应的真实Tokenizer产生。",
+                "evidence": {
+                    "input_tokens": len(plain_ids),
+                    "token_ids_sha256_16": hashlib.sha256(token_bytes).hexdigest()[:16],
+                    "context_messages": len(messages),
+                    "dropped_history_messages": dropped,
+                },
+            },
+            {
+                "stage": "client_encrypt_request",
+                "actor": "客户端国密传输组件",
+                "title": "把本次Token请求加密为SM4-GCM记录",
+                "status": "complete",
+                "detail": "nonce、密文长度、密文摘要和Tag均来自本次真实HTTP请求。",
+                "evidence": request_wire,
+            },
+        ]
+        transport_trace = first_privacy.get("transport_trace")
+        if isinstance(transport_trace, dict) and transport_trace:
+            trace_events.append(cast(dict[str, object], transport_trace))
+        trace_events.extend(
+            cast(list[dict[str, object]], first_privacy.get("execution_trace") or [])
+        )
+        trace_events.extend(
+            [
+                {
+                    "stage": "tee_encrypt_response",
+                    "actor": "TEE国密传输组件",
+                    "title": "把首个普通输出Token加密为响应记录",
+                    "status": "complete",
+                    "detail": "密文由服务端在Token采样之后实际生成。",
+                    "evidence": response_wire,
+                },
+                {
+                    "stage": "client_decrypt_response",
+                    "actor": "客户端本地",
+                    "title": "验证响应Tag并解密普通Token",
+                    "status": "complete",
+                    "detail": "只有通过SM4-GCM认证的响应才进入增量解码器。",
+                    "evidence": {
+                        "sequence_no": first_chunk.sequence_no,
+                        "output_token_id": first_chunk.output_id,
+                        "tag_verified": True,
+                    },
+                },
+                {
+                    "stage": "client_incremental_decode",
+                    "actor": "客户端Tokenizer",
+                    "title": "增量解码并显示首段回答",
+                    "status": "complete",
+                    "detail": "页面显示文本来自本地IncrementalTokenDecoder的真实输出。",
+                    "evidence": {
+                        "decoded_chars": len(first_chunk.accumulated_text),
+                        "output_tokens": 1,
+                    },
+                },
+            ]
+        )
+        yield {
+            "type": "start",
+            "security_mode": "tee_gm",
+            "model_id": self.client.deployment.model_id,
+            "key_id": self.client.deployment.key_id,
+            "prompt": request.prompt,
+            "plain_input_ids": plain_ids,
+            "private_input_ids": [],
+            "private_input_text": str(request_ciphertext),
+            "input_trace": [],
+            "input_tokens": len(plain_ids),
+            "context_messages": len(messages),
+            "dropped_history_messages": dropped,
+            "trace_event_count": len(trace_events),
+            "execution_trace": trace_events,
+        }
+        output_ids: list[int] = []
+        durations: list[float] = []
+        request_id = ""
+        current_chunk = first_chunk
+        while True:
+            chunk = current_chunk
+            chunk_privacy = cast(dict[str, object], chunk.privacy or {})
+            chunk_trace = cast(
+                list[dict[str, object]], chunk_privacy.get("execution_trace") or []
+            )
+            head_route = next(
+                (
+                    cast(dict[str, object], event.get("evidence") or {})
+                    for event in chunk_trace
+                    if event.get("stage") == "token_step_complete"
+                ),
+                {},
+            )
+            request_id = chunk.request_id
+            output_ids.append(chunk.output_id)
+            durations.append(chunk.elapsed_ms)
+            yield {
+                "type": "token",
+                "security_mode": "tee_gm",
+                "request_id": request_id,
+                "sequence_no": chunk.sequence_no,
+                "private_output_id": -1,
+                "recovered_output_id": chunk.output_id,
+                "private_output_text": str(
+                    (chunk.privacy or {}).get("wire_ciphertext")
+                    or "RFC8998 TLS ciphertext"
+                ),
+                "answer": chunk.accumulated_text,
+                "elapsed_ms": chunk.elapsed_ms,
+                "ttft_ms": durations[0],
+                "tpot_ms": sum(durations[1:]) / max(1, len(durations) - 1),
+                "output_tokens": len(output_ids),
+                "execution_trace": chunk_trace,
+                "head_route": head_route,
+            }
+            try:
+                current_chunk = next(chunks)
+            except StopIteration:
+                break
+        decoded = self.client.tokenizer.decode(output_ids, skip_special_tokens=True)
+        if not isinstance(decoded, str):
+            raise TypeError("tokenizer returned a batch while decoding one TEE response")
+        yield {
+            "type": "done",
+            "security_mode": "tee_gm",
+            "request_id": request_id,
+            "model_id": self.client.deployment.model_id,
+            "key_id": self.client.deployment.key_id,
+            "output_tokens": len(output_ids),
+            "ttft_ms": durations[0] if durations else 0.0,
+            "tpot_ms": sum(durations[1:]) / max(1, len(durations) - 1),
+            "client_roundtrip_ms": (time.perf_counter() - started) * 1000,
+            "answer": decoded,
         }
 
 
@@ -471,6 +702,14 @@ def create_demo_app(
         return FileResponse(
             STATIC_DIR / "privacy.html",
             headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/privacy/tee", include_in_schema=False)
+    def tee_privacy() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "privacy-tee.html",
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get("/api/health")

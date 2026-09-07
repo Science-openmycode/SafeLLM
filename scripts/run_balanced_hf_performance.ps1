@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory=$true)][string]$CandidateModel,
   [Parameter(Mandatory=$true)][string]$Tokenizer,
   [Parameter(Mandatory=$true)][string]$Prompts,
-  [Parameter(Mandatory=$true)][string]$CandidateKey,
+  [string]$CandidateKey = "",
+  [string]$PairedInputs = "",
   [Parameter(Mandatory=$true)][string]$OutputDir,
   [string]$PythonExe = ".\.venv\Scripts\python.exe",
   [int]$MaxNewTokens = 100,
@@ -44,8 +45,13 @@ foreach ($run in $runs) {
     "--model-role", $run.Role,
     "--out", $out
   )
-  if ($run.Role -eq "candidate") {
+  if ($PairedInputs) {
+    $arguments += @("--paired-inputs", $PairedInputs)
+  } elseif ($run.Role -eq "candidate") {
+    if (-not $CandidateKey) { throw "CandidateKey is required without PairedInputs" }
     $arguments += @("--key", $CandidateKey)
+  }
+  if ($run.Role -eq "candidate") {
     $candidateFiles += $out
   } else {
     $baselineFiles += $out

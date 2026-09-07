@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -20,6 +21,9 @@ from aloepri.conversion.vocab_checkpoint import sha256_file
 from aloepri.keys.generate import generate_vocab_key
 from aloepri.models.configuration_aloepri_qwen2 import AloePriQwen2Config
 from aloepri.models.modeling_aloepri_qwen2 import AloePriQwen2ForCausalLM
+from aloepri.tee.attestation import sm3
+from aloepri.tee.config import BoundaryMode, SecurityMode, SecurityProfile, TeeBackend
+from aloepri.tee.gm import GmCryptoHelper
 from aloepri.transforms.paper_key_matrix import (
     make_compatible_inverse_family,
     make_paper_key_pair,
@@ -112,11 +116,88 @@ def _git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
+def _sm3_file(path: Path) -> str:
+    try:
+        digest = hashlib.new("sm3")
+    except ValueError as error:  # pragma: no cover - depends on platform OpenSSL
+        raise RuntimeError("the platform crypto provider has no SM3 implementation") from error
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_record(path: Path, *, root: Path) -> dict[str, object]:
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+        "sm3": _sm3_file(path),
+    }
+
+
+def _make_head_basis(hidden_size: int, *, seed: int) -> torch.Tensor:
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    gaussian = torch.randn(hidden_size, hidden_size, generator=generator, dtype=torch.float64)
+    basis = torch.linalg.qr(gaussian).Q.float().contiguous()
+    del gaussian
+    return basis
+
+
+def _write_signed_manifest(
+    path: Path,
+    payload: dict[str, object],
+    *,
+    signature_path: Path,
+    helper: GmCryptoHelper | None,
+    signing_key: str | None,
+) -> None:
+    encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    path.write_bytes(encoded)
+    if helper is None:
+        return
+    if not signing_key:
+        raise ValueError("an SM2 signing key reference is required with the GM helper")
+    signature_path.write_bytes(helper.sign_sm2_sm3(encoded, key_reference=signing_key))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Convert Qwen2 to the corrected-paper d+2h model")
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--key-dir", type=Path, required=True)
+    parser.add_argument(
+        "--security-mode",
+        choices=[item.value.replace("_", "-") for item in SecurityMode],
+        default="permutation",
+    )
+    parser.add_argument(
+        "--boundary-mode",
+        choices=[item.value.replace("_", "-") for item in BoundaryMode],
+        default="in-model",
+    )
+    parser.add_argument(
+        "--tee-backend",
+        choices=[item.value.replace("_", "-") for item in TeeBackend],
+    )
+    parser.add_argument(
+        "--tee-output",
+        type=Path,
+        help="Trusted boundary package; required for tee-gm mode.",
+    )
+    parser.add_argument(
+        "--gm-crypto-helper",
+        type=Path,
+        help="Reviewed Tongsuo-backed helper used for SM2 manifest signatures.",
+    )
+    parser.add_argument(
+        "--gm-signing-key",
+        help="Opaque SM2 signing-key reference understood by the GM helper.",
+    )
+    parser.add_argument(
+        "--gm-boundary-key",
+        help="Opaque SM4 boundary-key reference understood by the GM helper.",
+    )
     parser.add_argument("--h", type=int, default=128)
     parser.add_argument("--lambda", dest="coefficient_lambda", type=float, default=0.3)
     parser.add_argument("--seed", type=int, required=True)
@@ -188,18 +269,51 @@ def main() -> None:
         help="Reject Algorithm 2 Gaussian U_vo samples above this condition number.",
     )
     args = parser.parse_args()
+    profile = SecurityProfile.from_mapping(
+        {
+            "security_mode": args.security_mode.replace("-", "_"),
+            "boundary_mode": args.boundary_mode.replace("-", "_"),
+            "tee_backend": (
+                args.tee_backend.replace("-", "_") if args.tee_backend else None
+            ),
+        }
+    )
+    if profile.is_tee and args.tee_output is None:
+        parser.error("--tee-output is required for tee-gm mode")
+    if not profile.is_tee and args.tee_output is not None:
+        parser.error("--tee-output is only valid for tee-gm mode")
+    if profile.is_tee and (args.alpha_e != 0.0 or args.alpha_h != 0.0):
+        parser.error("tee-gm exact boundary conversion currently requires alpha-e=alpha-h=0")
+    if profile.tee_backend == TeeBackend.INTEL_TDX and args.gm_crypto_helper is None:
+        parser.error("intel-tdx conversion requires --gm-crypto-helper for SM2 signatures")
+    if profile.tee_backend == TeeBackend.INTEL_TDX and not args.gm_signing_key:
+        parser.error("intel-tdx conversion requires --gm-signing-key")
+    if profile.tee_backend == TeeBackend.INTEL_TDX and not args.gm_boundary_key:
+        parser.error("intel-tdx conversion requires --gm-boundary-key for SM4-GCM encryption")
+    gm_helper = GmCryptoHelper(args.gm_crypto_helper) if args.gm_crypto_helper else None
     embedding_noise_seed, head_noise_seed = resolve_noise_seeds(
         args.seed, args.embedding_noise_seed, args.head_noise_seed
     )
 
-    if args.output.exists() or args.key_dir.exists():
+    if args.output.exists() or args.key_dir.exists() or (
+        args.tee_output is not None and args.tee_output.exists()
+    ):
         raise FileExistsError("output or key directory already exists")
     output_partial = args.output.with_name(f"{args.output.name}.partial")
     key_partial = args.key_dir.with_name(f"{args.key_dir.name}.partial")
-    if output_partial.exists() or key_partial.exists():
+    tee_partial = (
+        args.tee_output.with_name(f"{args.tee_output.name}.partial")
+        if args.tee_output is not None
+        else None
+    )
+    if output_partial.exists() or key_partial.exists() or (
+        tee_partial is not None and tee_partial.exists()
+    ):
         raise FileExistsError("stale partial directory exists; inspect and remove it explicitly")
     output_partial.mkdir(parents=True)
     key_partial.mkdir(parents=True)
+    if tee_partial is not None:
+        tee_partial.mkdir(parents=True)
 
     dtype = torch.float32 if args.dtype == "float32" else torch.bfloat16
     source = AutoModelForCausalLM.from_pretrained(
@@ -222,7 +336,14 @@ def main() -> None:
     finally:
         torch.set_default_dtype(old_dtype)
 
-    tau, inverse_tau = generate_vocab_key(config.vocab_size, seed=args.seed + 1)
+    if profile.is_tee:
+        # tee_gm sends ordinary token IDs inside the attested encrypted channel.
+        # Identity is used only to reuse the unchanged body conversion routine;
+        # neither tensor is emitted into a TEE artifact.
+        tau = torch.arange(config.vocab_size, dtype=torch.int64)
+        inverse_tau = tau
+    else:
+        tau, inverse_tau = generate_vocab_key(config.vocab_size, seed=args.seed + 1)
     key_pair = make_paper_key_pair(
         source.config.hidden_size,
         args.h,
@@ -313,12 +434,37 @@ def main() -> None:
                 qk_scale_max=args.qk_scale_max,
                 value_condition_max=args.uvo_condition_max,
             )
+    embedding_private: torch.Tensor | None = None
+    exact_head: torch.Tensor | None = None
+    head_basis: torch.Tensor | None = None
+    outsourced_head: torch.Tensor | None = None
+    if profile.is_tee:
+        embedding_private = (
+            source.get_input_embeddings().weight.detach().float() @ key_pair.p.float()
+        ).contiguous()
+        exact_head = (
+            source.get_output_embeddings().weight.detach().float()
+            * source.model.norm.weight.detach().float().unsqueeze(0)
+        ).contiguous()
+        head_basis = _make_head_basis(source.config.hidden_size, seed=args.seed + 70000)
+        # For row-vector h and x=hB, F.linear(x, W_B) equals the exact Head
+        # when W_B = W_exact B for orthogonal B.
+        outsourced_head = (exact_head @ head_basis).contiguous()
+        with torch.no_grad():
+            # The server package must not contain either boundary.  These
+            # allocated tensors remain only to preserve the HF model schema.
+            target.get_input_embeddings().weight.zero_()
+            target.get_output_embeddings().weight.zero_()
     model_id = args.model_id or args.output.name
     key_id = args.key_id or args.key_dir.name
     metadata = {
         "schema_version": 2,
         "model_id": model_id,
         "key_id": key_id,
+        "security_mode": profile.security_mode.value,
+        "boundary_mode": profile.boundary_mode.value,
+        "tee_backend": profile.tee_backend.value if profile.tee_backend else None,
+        "hardware_attested": False,
         "transform_mode": "paper_d_plus_2h",
         "source": str(args.source.resolve()),
         "source_revision": args.source_revision,
@@ -390,18 +536,126 @@ def main() -> None:
     target.save_pretrained(
         output_partial, safe_serialization=True, max_shard_size=args.max_shard_size
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.source, local_files_only=True)
-    tokenizer.save_pretrained(output_partial)
+    if not profile.is_tee:
+        tokenizer = AutoTokenizer.from_pretrained(args.source, local_files_only=True)
+        tokenizer.save_pretrained(output_partial)
+
+    if profile.is_tee:
+        assert tee_partial is not None
+        assert embedding_private is not None
+        assert exact_head is not None
+        assert head_basis is not None
+        assert outsourced_head is not None
+        save_file(
+            {"embedding_private": embedding_private},
+            tee_partial / "embedding-private.safetensors",
+        )
+        save_file(
+            {"exact_head": exact_head},
+            tee_partial / "exact-head-archive.safetensors",
+        )
+        save_file(
+            {"q_final": inverse_family.head.float().contiguous()},
+            tee_partial / "final-coordinate-key.safetensors",
+        )
+        save_file(
+            {"head_basis": head_basis},
+            tee_partial / "head-coordinate-key.safetensors",
+        )
+        save_file(
+            {"outsourced_head": outsourced_head},
+            output_partial / "masked-head-worker.safetensors",
+        )
+        special_tokens = {
+            name: getattr(source.generation_config, name, None)
+            for name in ("bos_token_id", "eos_token_id", "pad_token_id")
+        }
+        (tee_partial / "special-tokens.json").write_text(
+            json.dumps(special_tokens, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        plaintext_records = [
+            _file_record(path, root=tee_partial)
+            for path in sorted(tee_partial.iterdir())
+            if path.is_file()
+        ]
+        plaintext_manifest = json.dumps(
+            plaintext_records,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        plaintext_manifest_sm3 = sm3(plaintext_manifest).hex()
+        encryption_records: list[dict[str, object]] = []
+        if profile.tee_backend == TeeBackend.INTEL_TDX:
+            assert gm_helper is not None
+            assert args.gm_boundary_key is not None
+            for path in sorted(tee_partial.iterdir()):
+                encrypted = path.with_name(f"{path.name}.gm-partial")
+                result = gm_helper.encrypt_file_sm4_gcm(
+                    path,
+                    encrypted,
+                    key_reference=args.gm_boundary_key,
+                    aad={
+                        "path": path.name,
+                        "model_id": model_id,
+                        "key_id": key_id,
+                        "model_version": args.source_revision,
+                        "plaintext_manifest_sm3": plaintext_manifest_sm3,
+                    },
+                )
+                plaintext_bytes = path.stat().st_size
+                path.unlink()
+                os.replace(encrypted, path)
+                encryption_records.append(
+                    {
+                        "path": path.name,
+                        "algorithm": result["algorithm"],
+                        "chunk_bytes": int(result["chunk_bytes"]),
+                        "plaintext_bytes": plaintext_bytes,
+                        "nonce_strategy": str(result["nonce_strategy"]),
+                    }
+                )
+
+        tee_files = [
+            _file_record(path, root=tee_partial)
+            for path in sorted(tee_partial.iterdir())
+            if path.is_file()
+        ]
+        tee_manifest = {
+            "schema_version": 1,
+            "security_mode": "tee_gm",
+            "boundary_mode": "tee_split",
+            "tee_backend": profile.tee_backend.value,
+            "model_id": model_id,
+            "key_id": key_id,
+            "model_version": args.source_revision,
+            "hardware_attested": False,
+            "encrypted_at_rest": profile.tee_backend == TeeBackend.INTEL_TDX,
+            "development_only": profile.tee_backend == TeeBackend.SOFTWARE_SIM,
+            "signature_algorithm": "SM2-with-SM3" if gm_helper else None,
+            "content_encryption": encryption_records,
+            "plaintext_manifest_sm3": plaintext_manifest_sm3,
+            "files": tee_files,
+        }
+        _write_signed_manifest(
+            tee_partial / "tee-manifest.json",
+            tee_manifest,
+            signature_path=tee_partial / "tee-manifest.sm2sig",
+            helper=gm_helper,
+            signing_key=args.gm_signing_key,
+        )
 
     key_tensors = {
         "p": key_pair.p,
         "q": key_pair.q,
-        "tau": tau,
-        "inverse_tau": inverse_tau,
         **(key_pair.algorithm1_base.tensors() if key_pair.algorithm1_base is not None else {}),
         **inverse_family.tensors(),
         **structural_key,
     }
+    if not profile.is_tee:
+        key_tensors["tau"] = tau
+        key_tensors["inverse_tau"] = inverse_tau
     save_file(key_tensors, key_partial / "paper_key.safetensors")
     # key.json belongs to the trusted client package.  Seeds remain here only for
     # reproducibility; the server receives neither this directory nor its contents.
@@ -426,8 +680,35 @@ def main() -> None:
         json.dumps({"metadata": server_metadata, "files": files}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if profile.is_tee:
+        server_files = [
+            _file_record(path, root=output_partial)
+            for path in sorted(output_partial.iterdir())
+            if path.is_file()
+            and path.name not in {"server-manifest.json", "server-manifest.sm2sig"}
+        ]
+        server_manifest = {
+            "schema_version": 1,
+            "security_mode": "tee_gm",
+            "boundary_mode": "tee_split",
+            "model_id": model_id,
+            "key_id": key_id,
+            "model_version": args.source_revision,
+            "hardware_attested": False,
+            "signature_algorithm": "SM2-with-SM3" if gm_helper else None,
+            "files": server_files,
+        }
+        _write_signed_manifest(
+            output_partial / "server-manifest.json",
+            server_manifest,
+            signature_path=output_partial / "server-manifest.sm2sig",
+            helper=gm_helper,
+            signing_key=args.gm_signing_key,
+        )
     os.replace(output_partial, args.output)
     os.replace(key_partial, args.key_dir)
+    if tee_partial is not None and args.tee_output is not None:
+        os.replace(tee_partial, args.tee_output)
     del target, source
     if output_partial.exists():
         shutil.rmtree(output_partial)

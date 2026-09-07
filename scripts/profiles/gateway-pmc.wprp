@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0">
+  <Profiles>
+    <SystemCollector Id="GatewayPMCSystemCollector" Name="Gateway PMC System Collector">
+      <BufferSize Value="1024" />
+      <Buffers Value="256" />
+    </SystemCollector>
+
+    <SystemProvider Id="GatewayPMCSystemProvider">
+      <Keywords>
+        <Keyword Value="ProcessThread" />
+        <Keyword Value="Loader" />
+        <Keyword Value="CSwitch" />
+      </Keywords>
+    </SystemProvider>
+
+    <HardwareCounter Id="GatewayPMCCounters" Base="" Strict="true">
+      <Counters>
+        <Counter Value="InstructionRetired" />
+        <Counter Value="TotalCycles" />
+        <Counter Value="LLCReference" />
+        <Counter Value="LLCMisses" />
+      </Counters>
+      <Events>
+        <Event Value="CSwitch" />
+      </Events>
+    </HardwareCounter>
+
+    <Profile
+      Id="GatewayPMC.Verbose.Memory"
+      Name="GatewayPMC"
+      Description="Yinbian gateway instructions, cycles, and LLC activity"
+      LoggingMode="Memory"
+      DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="GatewayPMCSystemCollector">
+          <SystemProviderId Value="GatewayPMCSystemProvider" />
+          <HardwareCounterId Value="GatewayPMCCounters" />
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

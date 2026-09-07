@@ -12,10 +12,18 @@ def main() -> None:
         "--deployment",
         help="启动后自动选择的健康部署 ID",
     )
+    parser.add_argument(
+        "--page",
+        default="/",
+        choices=("/", "/privacy", "/privacy/tee"),
+        help="启动后直接打开的页面",
+    )
     args = parser.parse_args()
+    initial_path = f"{args.page}?desktop_rev=20260831-principle"
     run_desktop(
         "隐变智模对话",
         lambda: create_chat_desktop_app(initial_deployment_id=args.deployment),
+        initial_path=initial_path,
     )
 
 

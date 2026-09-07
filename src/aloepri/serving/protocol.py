@@ -13,6 +13,7 @@ class GenerateRequest(BaseModel):
     top_k: int = Field(default=0, ge=0)
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
     seed: int | None = None
+    include_execution_trace: bool = False
 
 
 class Usage(BaseModel):

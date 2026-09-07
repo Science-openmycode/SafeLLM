@@ -35,6 +35,17 @@ class ConversionCancelled(RuntimeError):
     pass
 
 
+def _subprocess_python() -> str:
+    """Use a console interpreter so native crashes leave actionable diagnostics."""
+
+    executable = Path(sys.executable).resolve()
+    if executable.stem.casefold() == "pythonw":
+        console = executable.with_name("python.exe")
+        if console.is_file():
+            return str(console)
+    return str(executable)
+
+
 def _local_output(plan: ConversionPlan) -> Path:
     uri = str(plan.output["uri"])
     if uri.startswith("s3://"):
@@ -106,6 +117,78 @@ def _key_paths(plan: ConversionPlan, output: Path) -> tuple[Path, Path, Path]:
     )
 
 
+def finalize_qwen_key_package(
+    plan: ConversionPlan,
+    output: Path,
+    *,
+    offline_key_password: str | None = None,
+) -> tuple[Path, Path, Path]:
+    """Idempotently finish key splitting/encryption after a converter restart."""
+
+    full_key, online_key, offline_key = _key_paths(plan, output)
+    if not online_key.exists() and not offline_key.exists():
+        if not full_key.is_dir():
+            raise FileNotFoundError(f"full conversion key is missing: {full_key}")
+        split_key_package(full_key, online_key, offline_key)
+    elif not online_key.is_dir() or not offline_key.is_dir():
+        raise FileNotFoundError("online/offline key package is only partially finalized")
+    if bool(plan.security.get("offline_key_encrypted", True)):
+        plaintext_master = offline_key / "offline_master_key.safetensors"
+        encrypted_manifest = offline_key / "manifest.json"
+        if plaintext_master.is_file():
+            _encrypt_offline_if_required(
+                plan, offline_key, password=offline_key_password
+            )
+        elif not encrypted_manifest.is_file():
+            raise FileNotFoundError("encrypted offline-key manifest is missing")
+    return full_key, online_key, offline_key
+
+
+def finalize_tee_key_package(
+    plan: ConversionPlan,
+    output: Path,
+    *,
+    offline_key_password: str | None = None,
+) -> Path:
+    """Move the structural conversion key into one encrypted offline archive.
+
+    TEE mode has no online TokenKey.  Its online boundary material is emitted
+    separately under ``plan.keys.tee`` and is provisioned only after attestation.
+    """
+
+    full_key, _, offline_key = _key_paths(plan, output)
+    if not offline_key.exists():
+        if not full_key.is_dir():
+            raise FileNotFoundError(f"full TEE conversion key is missing: {full_key}")
+        offline_key.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(full_key, offline_key)
+        source_master = offline_key / "paper_key.safetensors"
+        target_master = offline_key / "offline_master_key.safetensors"
+        if not source_master.is_file():
+            raise FileNotFoundError("TEE structural key tensor archive is missing")
+        os.replace(source_master, target_master)
+        metadata_path = offline_key / "key.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ValueError("TEE offline key metadata is not an object")
+        metadata["vocab_file"] = target_master.name
+        metadata["package_type"] = "tee_structural_offline_key"
+        metadata_path.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (offline_key / "key_manifest.json").unlink(missing_ok=True)
+    if bool(plan.security.get("offline_key_encrypted", True)):
+        plaintext_master = offline_key / "offline_master_key.safetensors"
+        encrypted_manifest = offline_key / "manifest.json"
+        if plaintext_master.is_file():
+            _encrypt_offline_if_required(
+                plan, offline_key, password=offline_key_password
+            )
+        elif not encrypted_manifest.is_file():
+            raise FileNotFoundError("encrypted TEE offline-key manifest is missing")
+    return offline_key
+
+
 def _run_qwen(
     plan: ConversionPlan,
     output: Path,
@@ -115,11 +198,20 @@ def _run_qwen(
 ) -> dict[str, Any]:
     source = source or Path(str(plan.source["path"]))
     full_key, online_key, offline_key = _key_paths(plan, output)
+    security_profile = plan.security_profile()
+    tee_boundary = Path(
+        str(plan.keys.get("tee", output.parent / f"{output.name}-tee-boundary"))
+    )
     conversion = plan.conversion
     root = Path(__file__).resolve().parents[3]
     output_partial = output.with_name(f"{output.name}.partial")
     key_partial = full_key.with_name(f"{full_key.name}.partial")
-    for partial in (output_partial, key_partial):
+    tee_partial = tee_boundary.with_name(f"{tee_boundary.name}.partial")
+    partials = (output_partial, key_partial, tee_partial) if security_profile.is_tee else (
+        output_partial,
+        key_partial,
+    )
+    for partial in partials:
         if partial.is_dir():
             try:
                 partial.rmdir()
@@ -128,7 +220,7 @@ def _run_qwen(
                     f"non-empty partial conversion directory requires inspection: {partial}"
                 ) from error
     command = [
-        sys.executable,
+        _subprocess_python(),
         str(root / "scripts" / "convert_paper_qwen2_checkpoint.py"),
         "--source",
         str(source),
@@ -178,21 +270,79 @@ def _run_qwen(
         str(plan.output.get("key_id", f"key-{plan.job_id[:8]}")),
         "--algorithm2",
     ]
+    if security_profile.is_tee:
+        if security_profile.tee_backend is None:
+            raise ValueError("tee_gm conversion has no tee_backend")
+        command.extend(
+            [
+                "--security-mode",
+                "tee-gm",
+                "--boundary-mode",
+                "tee-split",
+                "--tee-backend",
+                str(security_profile.tee_backend.value).replace("_", "-"),
+                "--tee-output",
+                str(tee_boundary),
+            ]
+        )
+        gm_helper = plan.security.get("gm_crypto_helper")
+        gm_signing_key = plan.security.get("gm_signing_key")
+        gm_boundary_key = plan.security.get("gm_boundary_key")
+        if gm_helper:
+            command.extend(["--gm-crypto-helper", str(gm_helper)])
+        if gm_signing_key:
+            command.extend(["--gm-signing-key", str(gm_signing_key)])
+        if gm_boundary_key:
+            command.extend(["--gm-boundary-key", str(gm_boundary_key)])
     child_environment = os.environ.copy()
     child_environment.setdefault("PYTHONFAULTHANDLER", "1")
     child_environment.setdefault("OMP_NUM_THREADS", "4")
     child_environment.setdefault("MKL_NUM_THREADS", "4")
-    subprocess.run(command, cwd=root, check=True, env=child_environment)
-    split_key_package(full_key, online_key, offline_key)
-    _encrypt_offline_if_required(
-        plan, offline_key, password=offline_key_password
-    )
+    log_path = output.parent / f"{output.name}-conversion.log"
+    try:
+        with log_path.open("a", encoding="utf-8", errors="backslashreplace") as log:
+            subprocess.run(
+                command,
+                cwd=root,
+                check=True,
+                env=child_environment,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+    except subprocess.CalledProcessError as error:
+        tail = ""
+        if log_path.is_file():
+            tail = "\n".join(
+                log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
+            )
+        unsigned_code = int(error.returncode) & 0xFFFFFFFF
+        raise RuntimeError(
+            "Qwen checkpoint conversion failed: "
+            f"exit={error.returncode} (0x{unsigned_code:08X}), log={log_path}"
+            + (f", last output:\n{tail}" if tail else "")
+        ) from error
+    tee_offline_key: Path | None = None
+    if not security_profile.is_tee:
+        finalize_qwen_key_package(
+            plan, output, offline_key_password=offline_key_password
+        )
+    else:
+        tee_offline_key = finalize_tee_key_package(
+            plan, output, offline_key_password=offline_key_password
+        )
     return {
         "adapter": plan.adapter,
         "output": str(output.resolve()),
-        "full_key": str(full_key.resolve()),
-        "online_key": str(online_key.resolve()),
-        "offline_key": str(offline_key.resolve()),
+        "full_key": None if security_profile.is_tee else str(full_key.resolve()),
+        "online_key": None if security_profile.is_tee else str(online_key.resolve()),
+        "offline_key": (
+            str(tee_offline_key.resolve())
+            if tee_offline_key is not None
+            else str(offline_key.resolve())
+        ),
+        "tee_boundary": str(tee_boundary.resolve()) if security_profile.is_tee else None,
+        "security_mode": security_profile.security_mode.value,
+        "hardware_attested": False,
     }
 
 

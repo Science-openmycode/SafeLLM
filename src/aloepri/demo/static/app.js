@@ -27,6 +27,31 @@ let completedTurn = null;
 let activePrompt = "";
 let currentConversationId = null;
 let savedConversations = [];
+let currentSecurityMode = document.documentElement.dataset.securityMode || "permutation";
+
+function applySecurityMode(mode) {
+  currentSecurityMode = mode === "tee_gm" ? "tee_gm" : "permutation";
+  document.documentElement.dataset.securityMode = currentSecurityMode;
+  const tee = currentSecurityMode === "tee_gm";
+  text("trace-lock-mark", tee ? "国密" : "τ");
+  text("private-input-heading", tee ? "加密后的提示词" : "混淆后的提示词");
+  text("private-output-heading", tee ? "加密后的回答" : "混淆后的回答");
+  text("input-transform-label", tee ? "GM-TLS(input)" : "τ(input)");
+  text("output-transform-label", tee ? "GM-TLS(output)" : "τ(output)");
+  text("input-boundary-caption", tee ? "国密TLS密文仅在TEE内解密" : "模型服务器实际接收");
+  text("output-boundary-caption", tee ? "普通Token仅在TEE内采样" : "客户端逐 token 执行 τ⁻¹");
+  text("boundary-title", tee ? "TEE 国密可信边界" : "本地可信客户端");
+  text("boundary-detail", tee ? "普通Token仅进入软件模拟TEE，不进入GPU主体" : "明文不会进入模型服务请求");
+  text(
+    "welcome-boundary",
+    tee
+      ? "问题通过国密安全通道进入TEE；GPU模型主体只看到P/Q私有坐标。"
+      : "问题在本地完成分词和置换，模型服务只会看到混淆 token。",
+  );
+  const mapping = document.querySelector("#tau-mapping");
+  if (mapping) mapping.hidden = tee;
+}
+window.applySecurityMode = applySecurityMode;
 
 function newConversationId() {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
@@ -411,10 +436,16 @@ function archiveCompletedTurn() {
 }
 
 function renderStart(event) {
+  applySecurityMode(event.security_mode || currentSecurityMode);
   text("plain-prompt", event.prompt);
   text("private-input-text", event.private_input_text || "[请查看 token IDs]");
   text("plain-count", `${event.plain_input_ids.length} plain IDs`);
-  text("input-count", `${event.input_tokens} private IDs`);
+  text(
+    "input-count",
+    currentSecurityMode === "tee_gm"
+      ? `${event.input_tokens} Token · 国密加密传输`
+      : `${event.input_tokens} private IDs`,
+  );
   text("identity", `${event.model_id} · ${event.key_id}`);
   tokenRibbon("private-input-ids", event.private_input_ids);
   renderMapping(event.input_trace);
@@ -426,20 +457,38 @@ function renderStart(event) {
       ? `${retainedHistory} 条历史消息 · 已裁剪 ${dropped} 条`
       : `${retainedHistory} 条历史消息`,
   );
-  setState("running", "混淆输入已发送，正在等待模型生成首个私有 token……");
+  setState(
+    "running",
+    currentSecurityMode === "tee_gm"
+      ? "加密提示词已进入TEE，GPU主体正在生成私有隐藏状态……"
+      : "混淆输入已发送，正在等待模型生成首个私有 token……",
+  );
 }
 
 function renderToken(event) {
-  privateOutputIds.push(event.private_output_id);
+  applySecurityMode(event.security_mode || currentSecurityMode);
+  if (currentSecurityMode !== "tee_gm" && event.private_output_id >= 0) {
+    privateOutputIds.push(event.private_output_id);
+  }
   tokenRibbon("private-output-ids", privateOutputIds);
   text("private-output-text", event.private_output_text || "[该 token 无可视字符]");
-  text("output-count", `${event.output_tokens} private IDs`);
+  text(
+    "output-count",
+    currentSecurityMode === "tee_gm"
+      ? `${event.output_tokens} Token · 国密加密返回`
+      : `${event.output_tokens} private IDs`,
+  );
   text("request-id", event.request_id);
   text("ttft", event.ttft_ms.toFixed(1));
   text("tpot", event.tpot_ms.toFixed(1));
   text("throughput", event.output_tokens > 1 ? (1000 / Math.max(event.tpot_ms, 0.001)).toFixed(1) : "—");
   queueTypedAnswer(event.answer);
-  setState("running", `实时生成中：已接收并恢复 ${event.output_tokens} 个 token。`);
+  setState(
+    "running",
+    currentSecurityMode === "tee_gm"
+      ? `实时生成中：TEE已采样并加密返回 ${event.output_tokens} 个 token。`
+      : `实时生成中：已接收并恢复 ${event.output_tokens} 个 token。`,
+  );
 }
 
 async function renderDone(event) {
@@ -461,8 +510,12 @@ async function renderDone(event) {
   setState(
     "success",
     saved
-      ? `完成：${event.output_tokens} 个私有 token 已恢复；对话已保存在此浏览器。`
-      : `完成：${event.output_tokens} 个私有 token 已恢复；浏览器未允许保存历史。`,
+      ? currentSecurityMode === "tee_gm"
+        ? `完成：${event.output_tokens} 个Token已由TEE安全生成；对话已保存在本机。`
+        : `完成：${event.output_tokens} 个私有 token 已恢复；对话已保存在此浏览器。`
+      : currentSecurityMode === "tee_gm"
+        ? `完成：${event.output_tokens} 个Token已由TEE安全生成；本机未允许保存历史。`
+        : `完成：${event.output_tokens} 个私有 token 已恢复；浏览器未允许保存历史。`,
   );
 }
 
@@ -538,7 +591,12 @@ form.addEventListener("submit", async (event) => {
   resizePrompt();
   document.body.classList.add("has-run");
   resetRun();
-  setState("running", "正在本地应用 Chat Template 并置换输入 token……");
+  setState(
+    "running",
+    currentSecurityMode === "tee_gm"
+      ? "正在本地分词并建立TEE国密安全通道……"
+      : "正在本地应用 Chat Template 并置换输入 token……",
+  );
   try {
     const payload = {
       prompt,
@@ -603,6 +661,7 @@ try {
   // The app still runs when the browser blocks local storage.
 }
 setTraceVisibility(showPrivateTrace);
+applySecurityMode(currentSecurityMode);
 if (activeConversationId && savedConversations.some((item) => item.id === activeConversationId)) {
   restoreConversation(activeConversationId);
 }

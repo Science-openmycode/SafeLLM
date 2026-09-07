@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -243,16 +244,24 @@ def convert(
                     profile,
                     f"{profile.model_root}/uploads/{current_plan.job_id}",
                 )
-            result = pipeline.run_catalog_model(
-                current_plan,
-                mode=mode,
-                token=os.environ.get("YINBIAN_HF_TOKEN"),
-                sink=sink,
-                clean_source_after_commit=bool(
-                    current_plan.security.get("clean_source_after_commit", False)
-                ),
-                accept_license=accept_license,
-            )
+            if str(current_plan.source.get("type")) == "local":
+                result = pipeline.run_local_model(
+                    current_plan,
+                    mode=mode,
+                    sink=sink,
+                    offline_key_password=os.environ.get("YINBIAN_OFFLINE_KEY_PASSWORD"),
+                )
+            else:
+                result = pipeline.run_catalog_model(
+                    current_plan,
+                    mode=mode,
+                    token=os.environ.get("YINBIAN_HF_TOKEN"),
+                    sink=sink,
+                    clean_source_after_commit=bool(
+                        current_plan.security.get("clean_source_after_commit", False)
+                    ),
+                    accept_license=accept_license,
+                )
             typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
             return
         job = register_plan_job(plan)
@@ -453,6 +462,135 @@ def serve(
     )
 
 
+@app.command("serve-tee-sim")
+def serve_tee_sim(
+    model: Annotated[Path, typer.Option("--model", exists=True, file_okay=False)],
+    tee_boundary: Annotated[
+        Path, typer.Option("--tee-boundary", exists=True, file_okay=False)
+    ],
+    port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 8001,
+    device: Annotated[str, typer.Option("--device")] = "auto",
+    head_mode: Annotated[str, typer.Option("--head-mode")] = "local",
+) -> None:
+    """Run the explicit non-production TEE functional simulator."""
+
+    from aloepri.serving.tee_app import create_tee_app
+    from aloepri.serving.tee_runtime import TeeSplitHFRuntime
+    from aloepri.tee.attestation import SoftwareAttestor, sm3_files
+    from aloepri.tee.service import TeeAttestationService, TeeDeploymentIdentity
+
+    runtime = TeeSplitHFRuntime(
+        model,
+        tee_boundary,
+        device=device,
+        head_mode=head_mode,
+    )
+    manifest = json.loads((tee_boundary / "tee-manifest.json").read_text(encoding="utf-8"))
+    service = TeeAttestationService(
+        identity=TeeDeploymentIdentity(
+            model_id=runtime.model_id,
+            model_version=str(manifest.get("model_version", "unknown")),
+            key_id=runtime.key_id,
+            runtime_hash_sm3=sm3_files(
+                [Path(__file__), Path(__file__).parent / "serving" / "tee_runtime.py"]
+            ),
+            server_manifest_sm3=sm3_files([model / "server-manifest.json"]),
+            sm2_public_key_der=b"SOFTWARE-SIMULATION",
+            sm2_certificate_pem="SOFTWARE SIMULATION - NO CERTIFICATE",
+        ),
+        attestor=SoftwareAttestor(),
+        initially_provisioned=True,
+    )
+    uvicorn.run(
+        create_tee_app(runtime, service),
+        host="127.0.0.1",
+        port=port,
+        access_log=False,
+    )
+
+
+@app.command("chat-tee")
+def chat_tee(
+    tokenizer: Annotated[Path, typer.Option("--tokenizer", exists=True, file_okay=False)],
+    model_id: Annotated[str, typer.Option("--model-id")],
+    model_version: Annotated[str, typer.Option("--model-version")],
+    key_id: Annotated[str, typer.Option("--key-id")],
+    vocab_size: Annotated[int, typer.Option("--vocab-size", min=1)],
+    transport_mode: Annotated[str, typer.Option("--transport-mode")] = "tee_gm",
+    tee_backend: Annotated[str, typer.Option("--tee-backend")] = "intel_tdx",
+    server: Annotated[str | None, typer.Option("--server")] = None,
+    gm_client: Annotated[Path | None, typer.Option("--gm-client")] = None,
+    gm_profile: Annotated[Path | None, typer.Option("--gm-profile")] = None,
+    prompt: Annotated[str | None, typer.Option("--prompt")] = None,
+    max_new_tokens: Annotated[int, typer.Option("--max-new-tokens", min=1, max=2048)] = 128,
+) -> None:
+    """Chat through ordinary Token IDs inside a TEE/GM transport (never a TokenKey)."""
+
+    from transformers import AutoTokenizer
+
+    from aloepri.client.tee_sdk import (
+        NativeGmSession,
+        SoftwareSimSession,
+        TeeDeployment,
+        TeeGmSession,
+        TeeInferenceClient,
+    )
+
+    if transport_mode != "tee_gm":
+        raise typer.BadParameter("--transport-mode must be tee_gm")
+    session: TeeGmSession
+    if tee_backend == "software_sim":
+        if server is None:
+            raise typer.BadParameter("software_sim requires --server http://127.0.0.1:PORT")
+        session = SoftwareSimSession(server)
+    elif tee_backend == "intel_tdx":
+        if gm_client is None or gm_profile is None:
+            raise typer.BadParameter("intel_tdx requires --gm-client and --gm-profile")
+        session = NativeGmSession(gm_client, gm_profile)
+    else:
+        raise typer.BadParameter("--tee-backend must be software_sim or intel_tdx")
+    client = TeeInferenceClient(
+        tokenizer=AutoTokenizer.from_pretrained(tokenizer, local_files_only=True),
+        deployment=TeeDeployment(
+            model_id=model_id,
+            model_version=model_version,
+            key_id=key_id,
+            vocab_size=vocab_size,
+        ),
+        session=session,
+    )
+    history: list[dict[str, str]] = []
+
+    def run_turn(user_prompt: str) -> None:
+        history.append({"role": "user", "content": user_prompt})
+        pieces: list[str] = []
+        for chunk in client.stream_chat(
+            history,
+            max_new_tokens=max_new_tokens,
+            temperature=0.0,
+        ):
+            typer.echo(chunk.text, nl=False)
+            pieces.append(chunk.text)
+        typer.echo()
+        history.append({"role": "assistant", "content": "".join(pieces)})
+
+    try:
+        if prompt is not None:
+            run_turn(prompt)
+            return
+        while True:
+            user_prompt = typer.prompt("你")
+            if user_prompt.strip() in {"/exit", "/quit"}:
+                break
+            if user_prompt.strip() == "/clear":
+                history.clear()
+                typer.echo("本地上下文已清除。")
+                continue
+            run_turn(user_prompt)
+    finally:
+        client.close()
+
+
 @app.command("chat-direct", hidden=True)
 def chat_direct(
     server: Annotated[str, typer.Option("--server")],
@@ -588,6 +726,7 @@ def _deployment_client(
     from aloepri.client.sdk import PrivateInferenceClient
     from aloepri.cloud.ssh import SSHProfile
     from aloepri.cloud.tunnel import ManagedTunnel
+    from aloepri.keys.directory_vault import materialize_online_key_directory
     from aloepri.keys.vault import CredentialVault
     from aloepri.product.paths import product_paths
     from aloepri.product.state import DeploymentStatus, ProductStore
@@ -623,7 +762,8 @@ def _deployment_client(
         endpoint = f"http://127.0.0.1:{status.local_port}"
     tokenizer_dir = metadata.get("tokenizer_dir")
     online_key_dir = metadata.get("online_key_dir")
-    if not tokenizer_dir or not online_key_dir:
+    online_key_credential = metadata.get("online_key_credential_id")
+    if not tokenizer_dir or (not online_key_dir and not online_key_credential):
         if tunnel is not None:
             tunnel.close()
         raise typer.BadParameter("deployment has no local tokenizer or online key path")
@@ -631,12 +771,26 @@ def _deployment_client(
     credential_id = metadata.get("bearer_credential_id")
     if credential_id:
         bearer = CredentialVault(product_paths().credentials).get(str(credential_id))["secret"]
-    client = PrivateInferenceClient.from_directories(
-        base_url=str(endpoint),
-        tokenizer_dir=Path(str(tokenizer_dir)),
-        key_dir=Path(str(online_key_dir)),
-        bearer_token=bearer,
-    )
+    if online_key_credential:
+        with tempfile.TemporaryDirectory(prefix="yinbian-cli-online-key-") as temporary:
+            key_dir = materialize_online_key_directory(
+                CredentialVault(product_paths().credentials),
+                str(online_key_credential),
+                Path(temporary) / "key",
+            )
+            client = PrivateInferenceClient.from_directories(
+                base_url=str(endpoint),
+                tokenizer_dir=Path(str(tokenizer_dir)),
+                key_dir=key_dir,
+                bearer_token=bearer,
+            )
+    else:
+        client = PrivateInferenceClient.from_directories(
+            base_url=str(endpoint),
+            tokenizer_dir=Path(str(tokenizer_dir)),
+            key_dir=Path(str(online_key_dir)),
+            bearer_token=bearer,
+        )
     return client, tunnel
 
 

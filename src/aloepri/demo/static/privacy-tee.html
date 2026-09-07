@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="隐变智模TEE隐私推理技术路线与真实运行数据" />
+    <title>隐变智模 · TEE隐私原理</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260831-principle" />
+    <link rel="stylesheet" href="/assets/privacy-tee.css?v=20260831-principle" />
+  </head>
+  <body class="principle-app">
+    <div class="app-shell">
+      <aside class="sidebar principle-sidebar">
+        <a class="brand" href="/"><span class="brand-mark">隐</span><strong>隐变智模</strong></a>
+        <a class="new-chat back-chat" href="/"><span aria-hidden="true">←</span>返回对话</a>
+        <a class="privacy-link" href="/privacy"><span aria-hidden="true">τ</span>置换隐私原理</a>
+        <a class="privacy-link active" href="/privacy/tee"><span aria-hidden="true">盾</span>TEE 国密原理</a>
+
+        <nav class="story-index" aria-label="本页讲解顺序">
+          <div class="saved-chats-heading"><span>讲解顺序</span><small>4</small></div>
+          <a class="story-link active" href="#overview"><b>01</b><span>总体路线<small>改造与推理两部分</small></span></a>
+          <a class="story-link" href="#tee-route"><b>02</b><span>TEE推理<small>首尾可信，中间GPU</small></span></a>
+          <a class="story-link" href="#run"><b>03</b><span>真实运行<small>一次请求的关键数据</small></span></a>
+          <a class="story-link" href="#security"><b>04</b><span>安全增强<small>边界与保护能力</small></span></a>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+        <div class="security-note"><span class="live-dot"></span><div><strong>真实模型推理</strong><small>路线图负责讲清原理，运行区负责展示实际数据。</small></div></div>
+        <div class="model-note"><span>当前视图</span><strong>TEE 国密原理</strong></div>
+      </aside>
+
+      <main class="chat-shell principle-shell">
+        <header class="topbar principle-topbar">
+          <div><strong>隐私保护推理原理</strong><span id="tee-active-deployment">正在读取当前部署</span></div>
+          <div class="topbar-actions"><a href="/privacy">置换模式</a><a class="primary" href="/">返回对话</a></div>
+        </header>
+
+        <div class="principle-scroll">
+          <section class="principle-hero">
+            <p class="eyebrow">PRIVACY-PRESERVING LLM INFERENCE</p>
+            <h1>明文留在可信边界，<br />重计算交给云端 GPU</h1>
+            <p>先看完整技术路线，再沿着一次真实请求观察五个关键数据：加密 Token、TEE Embedding、GPU 隐藏向量、外包 LM Head 与返回自循环。</p>
+          </section>
+
+          <section id="overview" class="principle-section route-section">
+            <header class="section-heading">
+              <span>01</span>
+              <div><h2>总体技术路线</h2><p>系统分成离线模型改造与在线隐私推理两部分。</p></div>
+            </header>
+            <figure class="route-figure">
+              <img src="/assets/privacy-route-overview.png?v=20260831" alt="隐变智模总体技术路线图" loading="eager" />
+              <figcaption>离线阶段生成混淆模型与云端部署包；在线阶段只把受保护的数据交给服务器计算。</figcaption>
+            </figure>
+          </section>
+
+          <section id="tee-route" class="principle-section route-section">
+            <header class="section-heading">
+              <span>02</span>
+              <div><h2>TEE 推理主线</h2><p>Embedding 与 LM Head 留在可信边界，Transformer 主体在不可信 GPU 上运行。</p></div>
+            </header>
+            <figure class="route-figure">
+              <img src="/assets/privacy-route-tee.png?v=20260831" alt="TEE Embedding、GPU混淆模型与TEE LM Head数据流" loading="lazy" />
+              <figcaption>入口由 TEE 解密 Token 并查询私有 Embedding；出口由 TEE 控制 LM Head、校验结果并采样普通 Token。</figcaption>
+            </figure>
+            <div class="route-summary" aria-label="技术路线三句话总结">
+              <p><b>入口</b><span>客户端发送密文，TEE 得到普通 Token 并输出私有向量 z₀。</span></p>
+              <p><b>中间</b><span>GPU 只接触 z₀、zL、私有 KV Cache 与改造后的模型权重。</span></p>
+              <p><b>出口</b><span>LM Head 大矩阵计算可安全外包，Token 仍由 TEE 校验和采样。</span></p>
+            </div>
+          </section>
+
+          <section id="run" class="principle-section live-section" aria-label="真实TEE推理演示">
+            <header class="section-heading">
+              <span>03</span>
+              <div><h2>运行一次，看实际数据如何变化</h2><p>下面只保留讲解所需的五个结果，不展示开发审计细节。</p></div>
+            </header>
+
+            <form id="tee-lab-form" class="runner-form">
+              <label for="tee-lab-prompt">输入一个问题</label>
+              <div><textarea id="tee-lab-prompt" rows="2" maxlength="2000">请用一句话说明北京是什么地方。</textarea><button id="tee-lab-submit" type="submit">开始推理</button></div>
+            </form>
+            <div class="runner-status">
+              <div><span class="proof-live-dot"></span><strong id="tee-lab-state">等待输入</strong></div>
+              <span id="runner-current-stage">尚未开始</span>
+              <em id="runner-progress-text">0 / 5</em>
+            </div>
+            <div class="runner-progress"><i id="runner-progress-bar"></i></div>
+
+            <div class="runtime-story" aria-live="polite">
+              <article id="stage-entry" class="runtime-step">
+                <header><b>1</b><div><h3>客户端：Token 加密后发出</h3><p>明文与普通 Token 不进入宿主机网络。</p></div></header>
+                <pre id="stage-entry-value" class="runtime-value placeholder">等待运行：这里显示普通 Token 与加密后的提示词。</pre>
+              </article>
+              <article id="stage-embedding" class="runtime-step">
+                <header><b>2</b><div><h3>TEE：解密 Token，查询 Embedding</h3><p>TEE 输出私有坐标 z₀ 给 GPU。</p></div></header>
+                <pre id="stage-embedding-value" class="runtime-value placeholder">等待运行：这里显示 z₀ 的形状和真实数值样本。</pre>
+              </article>
+              <article id="stage-body" class="runtime-step">
+                <header><b>3</b><div><h3>GPU：混淆模型主体完成计算</h3><p>输入 z₀，经过 Transformer 后输出 zL。</p></div></header>
+                <pre id="stage-body-value" class="runtime-value placeholder">等待运行：这里显示 GPU 输入 z₀ 与输出 zL。</pre>
+              </article>
+              <article id="stage-head" class="runtime-step">
+                <header><b>4</b><div><h3>LM Head：大矩阵计算安全外包</h3><p>TEE 发掩码向量 u，GPU 返回 y，TEE 恢复、校验并采样。</p></div></header>
+                <pre id="stage-head-value" class="runtime-value placeholder">等待运行：这里显示 h × B、u × W 与最终 Token。</pre>
+              </article>
+              <article id="stage-loop" class="runtime-step">
+                <header><b>5</b><div><h3>返回与自循环</h3><p>Token 加密返回客户端，同时送回 TEE Embedding 进入下一轮。</p></div></header>
+                <pre id="stage-loop-value" class="runtime-value placeholder">等待运行：这里显示一个 Token 的完整返回与下一轮路径。</pre>
+                <div id="tee-loop-sample" hidden></div>
+              </article>
+            </div>
+
+            <section class="answer-panel">
+              <div><span>网络上的加密回答</span><pre id="tee-encrypted-output" class="answer-cipher placeholder">等待首个 Token</pre></div>
+              <div class="answer-result"><span>客户端最终看到的回答</span><pre id="tee-answer" class="answer-text placeholder">等待模型回答</pre><footer><strong id="tee-token-count">—</strong><span id="tee-latency">—</span></footer></div>
+            </section>
+          </section>
+
+          <section id="security" class="principle-section route-section">
+            <header class="section-heading">
+              <span>04</span>
+              <div><h2>安全增强与边界</h2><p>基础方案保证单次推理安全，增强方案进一步应对多次交互攻击。</p></div>
+            </header>
+            <figure class="route-figure">
+              <img src="/assets/privacy-route-security.png?v=20260831" alt="隐变智模安全增强技术路线图" loading="lazy" />
+              <figcaption>服务器无法直接获得用户提示词和恢复后的真实回答；边界外主要暴露长度、时序和私有坐标计算。</figcaption>
+            </figure>
+          </section>
+
+          <section class="closing-line" aria-label="流程总结">
+            <strong>一句话总结</strong>
+            <p>普通 Token 只在客户端与 TEE 内出现，GPU 负责最重的模型与矩阵计算，最终 Token 由 TEE 校验后加密返回。</p>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script src="/assets/privacy-tee.js?v=20260831-principle" defer></script>
+  </body>
+</html>

@@ -19,6 +19,20 @@ def test_client_token_round_trip() -> None:
     assert key.decode_stream(key.encode_ids(plain[0]).tolist()) == plain[0].tolist()
 
 
+def test_online_key_is_not_revalidated_in_the_request_hot_path(monkeypatch) -> None:
+    tau, inverse = generate_vocab_key(23, seed=99)
+    key = TokenKey("model", "key", tau, inverse)
+
+    def reject_revalidation(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the complete permutation must only be checked at key load")
+
+    monkeypatch.setattr("aloepri.client.sdk.validate_permutation", reject_revalidation)
+    assert key.encode_id(4) == int(tau[4])
+    assert key.decode_id(int(tau[4])) == 4
+    plain = torch.tensor([1, 4, 22])
+    assert torch.equal(key.decode_ids(key.encode_ids(plain)), plain)
+
+
 def test_client_rejects_mismatched_inverse_permutation(tmp_path) -> None:
     tau, _ = generate_vocab_key(23, seed=99)
     _, wrong_inverse = generate_vocab_key(23, seed=100)
