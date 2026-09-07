@@ -788,7 +788,9 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
             "resources": inspect_local_resources(paths.cache),
             "paths": {
                 "cache": str(paths.cache.resolve()),
-                "local_private": str((paths.cache / "private").resolve()),
+                "source_models": str(paths.source_models.resolve()),
+                "local_private": str(paths.private_models.resolve()),
+                "evidence": str(paths.evidence.resolve()),
                 "default_ssh_private_key": _default_ssh_private_key_path(),
             },
         }
@@ -981,7 +983,7 @@ def create_deploy_desktop_app(*, state_path: Path | None = None) -> FastAPI:
                 if path.is_dir()
                 else find_catalog_entry(request.model).catalog_id
             )
-            destination = str(product_paths().cache / "private" / model_name)
+            destination = str(product_paths().private_models / model_name)
         plan = (
             build_local_plan(path, output_uri=destination)
             if path.is_dir()

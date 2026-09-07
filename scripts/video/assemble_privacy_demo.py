@@ -7,7 +7,6 @@ from pathlib import Path
 
 import imageio_ffmpeg
 
-
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "artifacts" / "video" / "yinbian-privacy-demo"
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
@@ -76,7 +75,9 @@ def main() -> None:
         "scenes": len(generated),
         "resolution": "1600x900",
     }
-    (OUT / "build-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), "utf-8")
+    (OUT / "build-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), "utf-8"
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

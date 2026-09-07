@@ -14,8 +14,8 @@ from transformers import AutoModelForCausalLM
 from aloepri.models.modeling_aloepri_qwen2 import register_aloepri_qwen2
 from aloepri.secure_head import MaskedOutsourceHeadEngine, OneTimeMaskPool
 from aloepri.serving.protocol import GenerateRequest, GenerateResponse, Usage
-from aloepri.tee.boundary import GenerationParameters, SoftwareTrustedBoundary
 from aloepri.tee.execution_trace import tensor_evidence, trace_event
+from aloepri.tee.trusted_boundary import GenerationParameters, SoftwareTrustedBoundary
 
 
 class TeeSplitHFRuntime:

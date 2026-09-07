@@ -12,6 +12,7 @@ from aloepri.adapters.registry import AdapterRegistry, default_adapter_registry
 from aloepri.catalog.download import find_catalog_entry
 from aloepri.catalog.inspect import inspect_local_checkpoint
 from aloepri.catalog.models import ArchitectureFingerprint, MatchStatus
+from aloepri.product.paths import product_paths
 from aloepri.tee.config import SecurityProfile
 
 
@@ -202,7 +203,7 @@ def build_catalog_plan(
             "type": "huggingface",
             "repo_id": entry.repo_id,
             "revision": entry.revision,
-            "cache_path": str((Path("data/models") / entry.catalog_id).resolve()),
+            "cache_path": str((product_paths().source_models / entry.catalog_id).resolve()),
             "download_endpoint": download_endpoint,
         },
         adapter=entry.adapter_id,

@@ -21,8 +21,12 @@ from aloepri.packaging import inspect_server_package
 from aloepri.product.paths import product_paths
 from aloepri.product.resources import inspect_local_resources
 from aloepri.product.state import DeploymentStatus, ProductStore
-from aloepri.tee.package import inspect_server_package as inspect_tee_server_package
-from aloepri.tee.package import verify_manifest_files as verify_tee_manifest_files
+from aloepri.tee.package_integrity import (
+    inspect_server_package as inspect_tee_server_package,
+)
+from aloepri.tee.package_integrity import (
+    verify_manifest_files as verify_tee_manifest_files,
+)
 
 LOCAL_SERVER_ID = "yinbian-local-machine"
 LOCAL_TARGET_TYPE = "local"

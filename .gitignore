@@ -12,6 +12,13 @@ __pycache__/
 *.py[cod]
 .env
 .env.*
+!.env.example
+.vscode/
+projects/
+*.ipynb
+/*.png
+/*.jpg
+/*.jpeg
 data/*
 !data/eval/
 data/eval/*

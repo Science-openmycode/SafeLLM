@@ -23,7 +23,7 @@ from aloepri.models.configuration_aloepri_qwen2 import AloePriQwen2Config
 from aloepri.models.modeling_aloepri_qwen2 import AloePriQwen2ForCausalLM
 from aloepri.tee.attestation import sm3
 from aloepri.tee.config import BoundaryMode, SecurityMode, SecurityProfile, TeeBackend
-from aloepri.tee.gm import GmCryptoHelper
+from aloepri.tee.gm_cryptography import GmCryptoHelper
 from aloepri.transforms.paper_key_matrix import (
     make_compatible_inverse_family,
     make_paper_key_pair,

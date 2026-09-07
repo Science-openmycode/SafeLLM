@@ -9,7 +9,7 @@ import uvicorn
 from aloepri.serving.tee_app import create_tee_app
 from aloepri.serving.tee_runtime import TeeSplitHFRuntime
 from aloepri.tee.attestation import SoftwareAttestor, sm3_file, sm3_files
-from aloepri.tee.service import TeeAttestationService, TeeDeploymentIdentity
+from aloepri.tee.attestation_service import TeeAttestationService, TeeDeploymentIdentity
 
 
 def main() -> None:

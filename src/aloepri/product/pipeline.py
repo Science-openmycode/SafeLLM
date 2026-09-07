@@ -42,8 +42,12 @@ from aloepri.product.state import (
     ProductStore,
     ShardStatus,
 )
-from aloepri.tee.package import inspect_server_package as inspect_tee_server_package
-from aloepri.tee.package import verify_manifest_files as verify_tee_manifest_files
+from aloepri.tee.package_integrity import (
+    inspect_server_package as inspect_tee_server_package,
+)
+from aloepri.tee.package_integrity import (
+    verify_manifest_files as verify_tee_manifest_files,
+)
 
 
 class ArtifactSink(Protocol):

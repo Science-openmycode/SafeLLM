@@ -201,6 +201,7 @@ def test_deploy_desktop_defaults_offline_preparation_to_product_cache(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     cache = tmp_path / "large-model-cache"
+    monkeypatch.delenv("YINBIAN_DATA_DIR", raising=False)  # type: ignore[attr-defined]
     monkeypatch.setenv("YINBIAN_CACHE_DIR", str(cache))  # type: ignore[attr-defined]
     with TestClient(create_deploy_desktop_app(state_path=tmp_path / "state.db")) as client:
         assert client.get("/").status_code == 200

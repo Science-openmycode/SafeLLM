@@ -17,13 +17,13 @@ from fastapi.responses import StreamingResponse
 
 from aloepri.serving.app import Runtime
 from aloepri.serving.protocol import GenerateRequest, GenerateResponse
-from aloepri.tee.protocol import (
+from aloepri.tee.attestation_models import (
     AttestationRequest,
     AttestationResponse,
     ProvisionRequest,
     ProvisionResponse,
 )
-from aloepri.tee.service import TeeAttestationService
+from aloepri.tee.attestation_service import TeeAttestationService
 from aloepri.tee.software_crypto import (
     SoftwareCipherEnvelope,
     decrypt_software_json,

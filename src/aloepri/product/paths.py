@@ -24,12 +24,18 @@ def _configured_path(new_name: str, legacy_name: str) -> Path | None:
 
 @dataclass(frozen=True)
 class ProductPaths:
+    """Mutable application paths, kept outside the source checkout."""
+
     root: Path
     state: Path
     chat: Path
     credentials: Path
     logs: Path
     cache: Path
+    data: Path
+    source_models: Path
+    private_models: Path
+    evidence: Path
 
     @property
     def state_db(self) -> Path:
@@ -49,6 +55,10 @@ class ProductPaths:
             self.credentials,
             self.logs,
             self.cache,
+            self.data,
+            self.source_models,
+            self.private_models,
+            self.evidence,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -62,7 +72,17 @@ def product_paths() -> ProductPaths:
         root = local / "YinbianZhimo"
     else:
         root = Path.home() / ".local" / "share" / "yinbian"
-    cache = _configured_path("YINBIAN_CACHE_DIR", "ALOEPRI_CACHE_DIR") or root / "cache"
+    configured_data = _configured_path("YINBIAN_DATA_DIR", "ALOEPRI_DATA_DIR")
+    configured_cache = _configured_path("YINBIAN_CACHE_DIR", "ALOEPRI_CACHE_DIR")
+    data = configured_data or root / "data"
+    cache = configured_cache or data / "cache"
+    # Preserve the 1.0 behavior for users who configured only the cache path.
+    # A dedicated data root takes precedence for all new installations.
+    private_models = (
+        data / "private-models"
+        if configured_data is not None or configured_cache is None
+        else configured_cache / "private"
+    )
     return ProductPaths(
         root=root,
         state=root / "state",
@@ -70,6 +90,10 @@ def product_paths() -> ProductPaths:
         credentials=root / "credentials",
         logs=root / "logs",
         cache=cache,
+        data=data,
+        source_models=data / "source-models",
+        private_models=private_models,
+        evidence=data / "evidence",
     )
 
 

@@ -20,7 +20,7 @@ from aloepri.tee.attestation import (
     build_report_data,
     enforce_attestation_policy,
 )
-from aloepri.tee.protocol import AttestationResponse
+from aloepri.tee.attestation_models import AttestationResponse
 
 
 @dataclass(frozen=True)
