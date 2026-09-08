@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from pathlib import Path
 from typing import Any
 
-from transformers import AutoTokenizer
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from transformers import PreTrainedTokenizerFast
 
 from aloepri.client.tee_sdk import TeeDeployment, TeeInferenceClient
 from aloepri.demo.app import DemoRequest, TeeDemoGateway
@@ -24,7 +26,7 @@ class FakeGmSession:
             "request_id": "request",
             "model_id": "qwen",
             "key_id": "tee-key",
-            "output_ids": [9707],
+            "output_ids": [3],
             "usage": {"input_tokens": len(body["input_ids"]), "output_tokens": 1},
             "ttft_ms": 2.0,
             "tpot_ms": 0.0,
@@ -38,7 +40,7 @@ class FakeGmSession:
         yield {
             "request_id": "stream",
             "sequence_no": 0,
-            "output_id": 9707,
+            "output_id": 3,
             "elapsed_ms": 2.0,
             "_wire_ciphertext": "software_sim · SM4-128-GCM\nnonce: output",
         }
@@ -49,8 +51,22 @@ class FakeGmSession:
 
 
 def _client() -> tuple[TeeInferenceClient, FakeGmSession]:
-    tokenizer = AutoTokenizer.from_pretrained(
-        Path("data/models/qwen2.5-0.5b-instruct"), local_files_only=True
+    backend = Tokenizer(
+        WordLevel(
+            {"<unk>": 0, "<bos>": 1, "<eos>": 2, "你好": 3, "user": 4, "assistant": 5},
+            unk_token="<unk>",
+        )
+    )
+    backend.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="<unk>",
+        bos_token="<bos>",
+        eos_token="<eos>",
+        chat_template=(
+            "{% for message in messages %}{{ message['role'] + ' ' + message['content'] "
+            "+ ' ' }}{% endfor %}{% if add_generation_prompt %}{{ 'assistant ' }}{% endif %}"
+        ),
     )
     session = FakeGmSession()
     return (
@@ -80,7 +96,7 @@ def test_tee_client_sends_ordinary_chat_template_ids_without_token_key() -> None
     assert session.last_body is not None
     assert session.last_body["input_ids"] == expected
     assert "tau" not in session.last_body
-    assert result.output_ids == [9707]
+    assert result.output_ids == [3]
 
 
 def test_tee_client_stream_preserves_ordinary_output_id() -> None:
@@ -88,7 +104,7 @@ def test_tee_client_stream_preserves_ordinary_output_id() -> None:
     chunks = list(
         client.stream_chat([{"role": "user", "content": "你好"}], max_new_tokens=1)
     )
-    assert [chunk.output_id for chunk in chunks] == [9707]
+    assert [chunk.output_id for chunk in chunks] == [3]
 
 
 def test_tee_demo_gateway_exposes_ciphertext_stage_without_token_permutation() -> None:
@@ -101,4 +117,4 @@ def test_tee_demo_gateway_exposes_ciphertext_stage_without_token_permutation() -
     assert "SM4-128-GCM" in str(events[0]["private_input_text"])
     assert "nonce: input" in str(events[0]["private_input_text"])
     assert "nonce: output" in str(events[1]["private_output_text"])
-    assert events[1]["recovered_output_id"] == 9707
+    assert events[1]["recovered_output_id"] == 3

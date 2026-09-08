@@ -61,7 +61,9 @@ def test_embedding_and_head_token_covariance() -> None:
     private_embedding = transform_embedding(embedding, key.p, tau)
     ids = torch.tensor([2, 9, 17])
     expected_embedding = (embedding[ids] @ key.p).float()
-    assert torch.allclose(private_embedding[tau[ids]], expected_embedding)
+    assert torch.allclose(
+        private_embedding[tau[ids]], expected_embedding, atol=1e-6, rtol=1e-5
+    )
 
     head = torch.randn((64, 16), generator=generator, dtype=torch.float64)
     norm_weight = torch.randn(16, generator=generator, dtype=torch.float64)

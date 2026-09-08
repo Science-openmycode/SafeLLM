@@ -6,7 +6,7 @@
 
 | 层级 | 是否只靠 GitHub | 验收内容 |
 |---|---:|---|
-| 安装、静态检查、单元与模拟集成测试 | 是 | 399 条通过，1 条真实模型测试跳过 |
+| 安装、静态检查、单元与模拟集成测试 | 是 | Windows：399 通过、1 跳过；Linux：394 通过、6 跳过 |
 | Python wheel 与 CLI | 是 | 构建 sdist/wheel、运行 `yinbian --help`、导入包 |
 | Qwen2.5-0.5B 私有 API 往返 | 否 | 需要固定原始模型、改造模型、在线密钥和 CUDA GPU |
 | 云端一键部署 | 否 | 需要 Ubuntu GPU 服务器、SSH、足够磁盘和模型工件 |
@@ -69,11 +69,15 @@ uv run yinbian --help
 ```text
 Ruff: All checks passed
 Mypy: no issues found
-Pytest: 399 passed, 1 skipped
+Pytest (Windows): 399 passed, 1 skipped
+Pytest (Ubuntu CI): 394 passed, 6 skipped
 Build: yinbian_zhimo-1.1.0.tar.gz 和 yinbian_zhimo-1.1.0-py3-none-any.whl
 ```
 
-跳过项 `tests/integration/test_real_private_api.py` 需要未上传 GitHub 的真实模型工件。首次冷安装会下载约 2.7 GiB 的 CUDA PyTorch wheel；建议仅 Python 环境预留至少 8 GiB 可用空间。Qwen2.5-0.5B 下载与转换另建议预留至少 12 GiB。
+Windows 跳过项 `tests/integration/test_real_private_api.py` 需要未上传 GitHub 的真实模型工件。
+Linux 另外跳过5项仅适用于Windows DPAPI的桌面凭据测试。首次冷安装会下载约
+2.7 GiB 的 CUDA PyTorch wheel；建议仅 Python 环境预留至少8 GiB可用空间。
+Qwen2.5-0.5B下载与转换另建议预留至少12 GiB。
 
 普通使用、不运行完整评测测试时可以执行：
 

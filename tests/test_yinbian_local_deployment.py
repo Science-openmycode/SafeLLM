@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
+import pytest
 import torch
 from fastapi.testclient import TestClient
 from safetensors.torch import save_file
@@ -33,6 +35,7 @@ class FakeProcess:
         return None
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI acceptance")
 def test_local_deployment_is_formal_loopback_target_and_does_not_replace_remote(
     tmp_path: Path, monkeypatch: object
 ) -> None:

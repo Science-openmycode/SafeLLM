@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
 
+import pytest
 import torch
 from fastapi.testclient import TestClient
 from safetensors.torch import save_file
@@ -274,6 +276,7 @@ def test_deploy_desktop_accepts_rental_ssh_command_without_storing_password(
         assert rejected.status_code == 400
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI acceptance")
 def test_deploy_desktop_remembers_ssh_password_in_dpapi_vault(
     tmp_path: Path, monkeypatch: object
 ) -> None:
@@ -308,6 +311,7 @@ def test_deploy_desktop_remembers_ssh_password_in_dpapi_vault(
     ).read_bytes()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI acceptance")
 def test_deploy_desktop_updates_existing_server_and_saved_password(
     tmp_path: Path, monkeypatch: object
 ) -> None:
