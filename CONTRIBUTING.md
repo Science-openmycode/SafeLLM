@@ -23,9 +23,9 @@
 
 ```powershell
 uv sync --frozen --extra eval
-python -m pytest
-python -m ruff check .
-python -m mypy src/aloepri
+uv run pytest
+uv run ruff check .
+uv run mypy src/aloepri
 ```
 
 真实模型、GPU、云服务器和 TDX 测试必须单独标注环境；软件模拟结果不得写成硬件证明结果。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -20,3 +21,21 @@ def test_python_and_windows_release_versions_match() -> None:
     assert f'#define AppVersion "{version}"' in installer
     assert f"YinbianZhimo-{version}-Windows-x64-Offline.exe" in build_script
     assert "Compression=zip" in installer
+
+
+def test_readme_local_links_exist() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    targets = re.findall(r"\[[^]]+\]\(([^)]+)\)", readme)
+
+    missing = [
+        target
+        for target in targets
+        if not target.startswith(("http://", "https://", "#"))
+        and not (ROOT / target).exists()
+    ]
+    assert missing == []
+
+
+def test_github_quality_job_installs_test_dependencies() -> None:
+    workflow = (ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+    assert "uv sync --frozen --extra eval" in workflow

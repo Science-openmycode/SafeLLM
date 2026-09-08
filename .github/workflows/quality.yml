@@ -34,7 +34,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Synchronize locked environment
-        run: uv sync --frozen
+        run: uv sync --frozen --extra eval
 
       - name: Lint
         run: uv run ruff check src scripts tests

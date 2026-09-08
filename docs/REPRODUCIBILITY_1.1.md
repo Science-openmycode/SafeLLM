@@ -6,7 +6,7 @@
 
 | 层级 | 是否只靠 GitHub | 验收内容 |
 |---|---:|---|
-| 安装、静态检查、单元与模拟集成测试 | 是 | 397 条通过，1 条真实模型测试跳过 |
+| 安装、静态检查、单元与模拟集成测试 | 是 | 399 条通过，1 条真实模型测试跳过 |
 | Python wheel 与 CLI | 是 | 构建 sdist/wheel、运行 `yinbian --help`、导入包 |
 | Qwen2.5-0.5B 私有 API 往返 | 否 | 需要固定原始模型、改造模型、在线密钥和 CUDA GPU |
 | 云端一键部署 | 否 | 需要 Ubuntu GPU 服务器、SSH、足够磁盘和模型工件 |
@@ -52,7 +52,7 @@
 ```powershell
 git clone https://github.com/Science-openmycode/SafeLLM.git
 cd SafeLLM
-git checkout codex/project-organization-20260908
+git checkout main
 
 uv python install 3.11
 uv sync --frozen --extra eval
@@ -69,7 +69,7 @@ uv run yinbian --help
 ```text
 Ruff: All checks passed
 Mypy: no issues found
-Pytest: 397 passed, 1 skipped
+Pytest: 399 passed, 1 skipped
 Build: yinbian_zhimo-1.1.0.tar.gz 和 yinbian_zhimo-1.1.0-py3-none-any.whl
 ```
 
