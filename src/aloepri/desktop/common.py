@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 
 import uvicorn
@@ -35,7 +36,9 @@ def run_desktop(
         os.environ.setdefault(
             "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(runtime_root)
         )
-    import webview
+    # PyWebView is a Windows-only dependency in this project. Import it only when
+    # the desktop entry point runs so Linux CI can still inspect the shared code.
+    webview = import_module("webview")
 
     port = _free_port()
     config = uvicorn.Config(factory(), host="127.0.0.1", port=port, log_level="warning")
