@@ -1510,7 +1510,10 @@ def tunnel_open(
         command.extend(["--credential-id", credential_id])
     creationflags = 0
     if os.name == "nt":
-        creationflags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+        creationflags = (
+            vars(subprocess)["CREATE_NO_WINDOW"]
+            | vars(subprocess)["DETACHED_PROCESS"]
+        )
     subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,

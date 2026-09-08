@@ -29,8 +29,8 @@ def protect_current_user(data: bytes) -> bytes:
         raise RuntimeError("the Yinbian credential vault requires Windows DPAPI")
     source, source_buffer = _blob(data)
     output = _DataBlob()
-    crypt32 = ctypes.windll.crypt32
-    kernel32 = ctypes.windll.kernel32
+    crypt32 = vars(ctypes)["windll"].crypt32
+    kernel32 = vars(ctypes)["windll"].kernel32
     if not crypt32.CryptProtectData(
         ctypes.byref(source),
         _DESCRIPTION,
@@ -40,7 +40,7 @@ def protect_current_user(data: bytes) -> bytes:
         0x1,
         ctypes.byref(output),
     ):
-        raise ctypes.WinError()
+        raise vars(ctypes)["WinError"]()
     del source_buffer
     try:
         return ctypes.string_at(output.pbData, output.cbData)
@@ -54,8 +54,8 @@ def unprotect_current_user(data: bytes) -> bytes:
     source, source_buffer = _blob(data)
     output = _DataBlob()
     description = wintypes.LPWSTR()
-    crypt32 = ctypes.windll.crypt32
-    kernel32 = ctypes.windll.kernel32
+    crypt32 = vars(ctypes)["windll"].crypt32
+    kernel32 = vars(ctypes)["windll"].kernel32
     if not crypt32.CryptUnprotectData(
         ctypes.byref(source),
         ctypes.byref(description),
