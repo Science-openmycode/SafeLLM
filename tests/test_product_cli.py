@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import torch
+from click import unstyle
 from safetensors.torch import save_file
 from typer.testing import CliRunner
 
@@ -121,7 +122,7 @@ def test_product_cli_plan_job_upload_and_mock_deploy(tmp_path: Path) -> None:
 def test_convert_requires_exactly_one_input() -> None:
     result = CliRunner().invoke(app, ["convert"])
     assert result.exit_code != 0
-    assert "one of --plan or --config is required" in result.output
+    assert "one of --plan or --config is required" in unstyle(result.output)
 
 
 def test_yinbian_product_command_surface(tmp_path: Path) -> None:
