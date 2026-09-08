@@ -15,6 +15,9 @@
 - 修复 Qwen3 tied embedding、逐层 RoPE buffer、GLM4-MoE 全局共享 MTP embedding/head、OpenSeek 缺失 MTP 声明、Kimi packed INT4 等权重清单问题。
 - GLM 0414/Z1 因额外的 Attention/MLP 分支后置 RMSNorm 与当前轻量变换不等价，改为明确拒绝转换，防止生成错误模型。
 - 新增 `YINBIAN_CACHE_DIR`，允许把模型下载缓存独立放到非系统盘。
+- 新增 `YINBIAN_DATA_DIR`，统一保存原始模型、改造模型、缓存和验收证据，源码仓库不再作为新数据的默认目录。
+- TEE、国密、证明、包校验、可信边界和掩码 Head 模块采用职责化名称；旧导入路径继续兼容。
+- Windows 安装器、Python 包和文档版本统一为 `1.1.0`。
 - 修正 Ubuntu 22.04 Python 3.10 环境的 NumPy 版本兼容问题。
 - 当前测试与目录审计结果见 `docs/MODEL_SUPPORT_AUDIT_2026-08-15.md`。
 

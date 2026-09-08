@@ -1,4 +1,6 @@
-# 隐变智模 1.0 安装与运行手册
+# 隐变智模 1.1 安装与运行手册
+
+本文保留原文件名以兼容旧链接；当前安装包与源码版本均为 `1.1.0`。
 
 ## 客户端要求
 
@@ -17,8 +19,8 @@
 1. 校验安装包：
 
 ```powershell
-Get-FileHash .\YinbianZhimo-1.0.0-Windows-x64-Offline.exe -Algorithm SHA256
-Get-Content .\YinbianZhimo-1.0.0-Windows-x64-Offline.exe.sha256
+Get-FileHash .\YinbianZhimo-1.1.0-Windows-x64-Offline.exe -Algorithm SHA256
+Get-Content .\YinbianZhimo-1.1.0-Windows-x64-Offline.exe.sha256
 ```
 
 2. 运行安装包。安装范围固定为 Windows 当前用户，不要求管理员权限。
@@ -40,8 +42,15 @@ yinbian.exe
 ├── chat\
 ├── credentials\
 ├── logs\
-└── cache\
+└── data\
+    ├── source-models\
+    ├── private-models\
+    ├── cache\
+    └── evidence\
 ```
+
+大模型建议通过 `YINBIAN_DATA_DIR` 放到非系统盘。已经设置旧版
+`YINBIAN_CACHE_DIR` 的机器仍沿用原目录，不需要迁移。
 
 ## 第一次部署
 

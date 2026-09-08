@@ -33,7 +33,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "GUI launcher build failed" }
     & $Iscc "build\windows\YinbianZhimo.iss"
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
-    $installer = Get-ChildItem "dist\installer\YinbianZhimo-1.0.0-Windows-x64-Offline.exe"
+    $installer = Get-ChildItem "dist\installer\YinbianZhimo-1.1.0-Windows-x64-Offline.exe"
     if ($env:YINBIAN_SIGNTOOL -and $env:YINBIAN_SIGN_CERT_SHA1) {
         & $env:YINBIAN_SIGNTOOL sign /sha1 $env:YINBIAN_SIGN_CERT_SHA1 /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $installer.FullName
         if ($LASTEXITCODE -ne 0) { throw "Windows code signing failed" }

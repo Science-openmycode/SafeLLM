@@ -65,7 +65,9 @@ E:\YinbianData\
 
 ## 安装
 
-环境要求：Python 3.11、Windows 10/11；云端部署目标为 Ubuntu GPU 服务器。
+源码环境要求 Python 3.11 和 Windows 10/11 x64。当前锁文件实测组合为 Python
+3.11.15、uv 0.12.1、PyTorch 2.9.1+cu128、Transformers 5.12.0。云端部署使用独立的
+Ubuntu 22.04、PyTorch 2.5.1+cu121 运行环境，不与本地开发环境混用。
 
 ```powershell
 uv sync --frozen
@@ -79,7 +81,9 @@ uv run yinbian-deploy
 uv run yinbian-chat
 ```
 
-构建后的 Windows 程序名为 `隐变智模部署.exe` 和 `隐变智模对话.exe`。详细步骤见 [安装与运行手册](docs/YINBIAN_1.0_INSTALLATION.md)。
+构建后的 Windows 程序名为 `隐变智模部署.exe` 和 `隐变智模对话.exe`。详细步骤见
+[安装与运行手册](docs/YINBIAN_1.0_INSTALLATION.md)；从 GitHub 干净克隆、安装、测试、
+构建和真实模型验收的完整口径见 [1.1 可复现说明](docs/REPRODUCIBILITY_1.1.md)。
 
 ## 常用流程
 
@@ -118,9 +122,11 @@ tee_backend: software_sim | intel_tdx
 ## 开发与验证
 
 ```powershell
+uv sync --frozen --extra eval
 uv run pytest
 uv run ruff check .
 uv run mypy src/aloepri
+uv build
 ```
 
 修改前请阅读 [开发约定](CONTRIBUTING.md)。版本状态、模型族边界和历史研究证据分别见：

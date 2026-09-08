@@ -1,5 +1,5 @@
 #define AppName "隐变智模"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppPublisher "Science OpenMyCode"
 #define BuildRoot "..\..\dist\YinbianZhimo"
 #define LauncherRoot "bin"
@@ -14,10 +14,10 @@ DefaultGroupName={#AppName}
 PrivilegesRequired=lowest
 OutputDir=..\..\dist\installer
 OutputBaseFilename=YinbianZhimo-{#AppVersion}-Windows-x64-Offline
-; LZ4 and non-solid archives trade a larger installer for much faster local
+; ZIP and non-solid archives trade a larger installer for much faster local
 ; installation and repair.  The Python runtime contains thousands of already
 ; compressed binary files which gain little from LZMA solid compression.
-Compression=lz4
+Compression=zip
 SolidCompression=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

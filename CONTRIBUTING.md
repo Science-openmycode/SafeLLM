@@ -22,6 +22,7 @@
 4. 提交前运行：
 
 ```powershell
+uv sync --frozen --extra eval
 python -m pytest
 python -m ruff check .
 python -m mypy src/aloepri
